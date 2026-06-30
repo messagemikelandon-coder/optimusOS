@@ -12,6 +12,7 @@ const escapeHtml = (value) => String(value ?? "")
   .replaceAll(">", "&gt;")
   .replaceAll('"', "&quot;")
   .replaceAll("'", "&#039;");
+const API_BASE_URL = (window.VITE_API_BASE_URL || "http://localhost:8000").replace(/\/$/, "");
 
 const state = {
   coordinates: null,
@@ -58,6 +59,18 @@ function authHeaders() {
   const accessToken = $("access-token").value.trim();
   if (accessToken) headers.Authorization = `Bearer ${accessToken}`;
   return headers;
+}
+
+function apiUrl(path) {
+  return `${API_BASE_URL}${path}`;
+}
+
+function apiFetch(path, options = {}) {
+  const { auth = true, headers = {}, ...fetchOptions } = options;
+  return fetch(apiUrl(path), {
+    ...fetchOptions,
+    headers: auth ? { ...authHeaders(), ...headers } : headers,
+  });
 }
 
 async function readApiPayload(response) {
@@ -388,9 +401,8 @@ async function runChat(message) {
   const loading = appendMessage("assistant", "", { id: "chat-loading", loading: true, status: "Researching" });
 
   try {
-    const response = await fetch("/api/chat", {
+    const response = await apiFetch("/api/chat", {
       method: "POST",
-      headers: authHeaders(),
       body: JSON.stringify({
         message: text,
         mode: $("chat-mode").value,
@@ -581,9 +593,8 @@ function initializeEstimate() {
     };
 
     try {
-      const response = await fetch("/api/estimate", {
+      const response = await apiFetch("/api/estimate", {
         method: "POST",
-        headers: authHeaders(),
         body: JSON.stringify(payload),
       });
       const data = await readApiPayload(response);
@@ -613,7 +624,7 @@ function setStatus(id, text, online = null) {
 
 async function loadHealth(showNotification = false) {
   try {
-    const response = await fetch("/health", { cache: "no-store" });
+    const response = await apiFetch("/health", { auth: false, cache: "no-store" });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const data = await response.json();
     state.health = data;

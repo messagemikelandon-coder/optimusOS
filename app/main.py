@@ -8,6 +8,7 @@ from typing import Annotated
 from urllib.parse import urlparse
 
 from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -39,6 +40,13 @@ app = FastAPI(
     version=__version__,
     docs_url="/docs",
     redoc_url=None,
+)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=("http://127.0.0.1:5173", "http://localhost:5173"),
+    allow_credentials=False,
+    allow_methods=("GET", "POST", "OPTIONS"),
+    allow_headers=("Authorization", "Content-Type"),
 )
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 _rate_limiter: SlidingWindowRateLimiter | None = None
@@ -77,7 +85,7 @@ async def security_headers(request: Request, call_next):  # type: ignore[no-unty
     response.headers["Permissions-Policy"] = "geolocation=(self)"
     response.headers["Content-Security-Policy"] = (
         "default-src 'self'; script-src 'self'; style-src 'self'; "
-        "img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; "
+        "img-src 'self' data:; connect-src 'self' http://127.0.0.1:8000 http://localhost:8000; frame-ancestors 'none'; base-uri 'self'; "
         "form-action 'self'"
     )
     return response
