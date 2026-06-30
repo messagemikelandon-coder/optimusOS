@@ -1,0 +1,32 @@
+include .env.example
+include Dockerfile
+include docker-compose.yml
+include INTEGRATION.md
+include SECURITY.md
+include OPTIMUS_MANAGER_PATCH.md
+include VALIDATION.md
+recursive-include scripts *.py
+recursive-include tests *.py *.json
+recursive-include app/static *
+include README.md
+include WINDOWS_SETUP.md
+include WINDOWS_SETUP.bat
+include local.bat
+include RUN_OPTIMUS_LOCAL.bat
+include CHECK_OPTIMUS.bat
+include CHANGES_6.2.md
+include CHANGES_6.2.1.md
+recursive-include scripts *.ps1
+include README_FIRST_WINDOWS.txt
+include RESET_OPENAI_KEY.bat
+include DIAGNOSE_OPENAI.bat
+include CHANGES_6.2.2.md
+include CHANGES_7.0.0.md
+include UPGRADE_FROM_6.2.2.md
+include PREVIEW_DESKTOP.png
+include PREVIEW_MOBILE.png
+
+include DIAGNOSE_ESTIMATOR.bat
+include CHANGES_7.0.1.md
+include ESTIMATOR_SECURITY_REPORT.md
+include UPGRADE_FROM_7.0.0.md
