@@ -1,0 +1,371 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#07111d">
+  <meta name="description" content="Landon Motor Works Optimus command center for mechanic research, parts pricing, labor time, and job estimates.">
+  <title>Optimus Command Center | Landon Motor Works</title>
+  <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+  <link rel="manifest" href="/static/manifest.webmanifest">
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <div class="ambient-layer ambient-grid" aria-hidden="true"></div>
+  <div class="ambient-layer ambient-glow" aria-hidden="true"></div>
+  <div class="ambient-layer ambient-noise" aria-hidden="true"></div>
+
+  <div class="app-shell">
+    <aside class="sidebar" id="sidebar" aria-label="Primary navigation">
+      <div class="brand-lockup">
+        <img class="brand-mark" src="/static/logo-mark.svg" alt="Landon Motor Works">
+        <div>
+          <span class="eyebrow">Landon</span>
+          <strong>Motor Works</strong>
+          <small>Optimus Command Center</small>
+        </div>
+      </div>
+
+      <nav class="primary-nav">
+        <button class="nav-item is-active" type="button" data-view="dashboard" aria-current="page">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 13h6V4H4v9Zm0 7h6v-5H4v5Zm10 0h6v-9h-6v9Zm0-16v5h6V4h-6Z"/></svg>
+          <span>Command deck</span>
+        </button>
+        <button class="nav-item" type="button" data-view="chat">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5h14v10H8.5L5 18.5V5Zm3 4v2h8V9H8Z"/></svg>
+          <span>Talk to Optimus</span>
+        </button>
+        <button class="nav-item" type="button" data-view="estimate">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 3h10v2h2v16H5V5h2V3Zm2 2h6V4H9v1Zm0 5h6V8H9v2Zm0 4h6v-2H9v2Zm0 4h4v-2H9v2Z"/></svg>
+          <span>Job estimator</span>
+        </button>
+        <button class="nav-item" type="button" data-view="system">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 2 2 3.2 3.7-.4.9 3.6 3.4 1.6-1.6 3.4.4 3.7-3.6.9L16 22l-4-2-4 2-1.2-3.6-3.6-.9.4-3.7L2 10.4l3.4-1.6.9-3.6 3.7.4L12 2Zm0 7a3 3 0 1 0 0 6 3 3 0 0 0 0-6Z"/></svg>
+          <span>System bay</span>
+        </button>
+      </nav>
+
+      <div class="sidebar-spacer"></div>
+
+      <div class="system-rail-card">
+        <div class="status-orb" id="sidebar-status-orb" aria-hidden="true"></div>
+        <div>
+          <strong id="sidebar-status-title">Checking Optimus</strong>
+          <span id="sidebar-status-detail">Connecting to local server…</span>
+        </div>
+      </div>
+
+      <div class="sidebar-footer">
+        <span>Official build</span>
+        <strong>Optimus 7.0.1</strong>
+      </div>
+    </aside>
+
+    <main class="workspace">
+      <header class="topbar">
+        <button class="icon-button mobile-menu-button" id="mobile-menu" type="button" aria-label="Open navigation" aria-expanded="false">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16v2H4V6Zm0 5h16v2H4v-2Zm0 5h16v2H4v-2Z"/></svg>
+        </button>
+        <div class="topbar-title">
+          <span class="eyebrow" id="view-eyebrow">Operations</span>
+          <h1 id="view-title">Command deck</h1>
+        </div>
+        <div class="topbar-actions">
+          <button class="location-chip" type="button" data-view="system" aria-label="Open location settings">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2a7 7 0 0 0-7 7c0 5.2 7 13 7 13s7-7.8 7-13a7 7 0 0 0-7-7Zm0 10a3 3 0 1 1 0-6 3 3 0 0 1 0 6Z"/></svg>
+            <span id="top-location-label">Location not set</span>
+          </button>
+          <div class="operator-badge" title="Owner access">
+            <span>DL</span>
+            <div><strong>Dejake</strong><small>Owner</small></div>
+          </div>
+        </div>
+      </header>
+
+      <div class="view-stack">
+        <section class="app-view is-active" id="view-dashboard" data-view-panel="dashboard">
+          <div class="hero-panel tilt-surface" data-tilt-strength="5">
+            <div class="hero-copy">
+              <span class="section-kicker"><i></i> Shop intelligence online</span>
+              <h2>Mechanic decisions.<br><em>Built on current data.</em></h2>
+              <p>Direct access to Optimus for live parts research, local availability, labor-time analysis, diagnostics, and customer-ready estimates.</p>
+              <div class="hero-actions">
+                <button class="primary-button" type="button" data-view="chat">
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5h14v10H8.5L5 18.5V5Zm4 3v2h6V8H9Z"/></svg>
+                  Talk to Optimus
+                </button>
+                <button class="secondary-button" type="button" data-view="estimate">
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 3h10v2h2v16H5V5h2V3Zm2 7h6V8H9v2Zm0 4h6v-2H9v2Z"/></svg>
+                  Build an estimate
+                </button>
+              </div>
+              <div class="hero-proof">
+                <div><strong>$100/hr</strong><span>Default labor rate</span></div>
+                <div><strong>Live web</strong><span>Price research</span></div>
+                <div><strong>Owner mode</strong><span>Direct control</span></div>
+              </div>
+            </div>
+
+            <div class="mechanic-stage" aria-label="Three-dimensional mechanic diagnostic display">
+              <div class="stage-grid"></div>
+              <div class="stage-glow"></div>
+              <div class="rotor-assembly">
+                <div class="rotor-shadow"></div>
+                <div class="rotor-disc">
+                  <span class="lug lug-1"></span><span class="lug lug-2"></span><span class="lug lug-3"></span><span class="lug lug-4"></span><span class="lug lug-5"></span>
+                  <div class="rotor-hub"><span>LMW</span></div>
+                </div>
+                <div class="caliper"><span>OPTIMUS</span></div>
+              </div>
+              <div class="diagnostic-tablet">
+                <div class="tablet-camera"></div>
+                <div class="tablet-screen">
+                  <div class="screen-header"><span>Vehicle Intelligence</span><i></i></div>
+                  <div class="scan-ring"><span>READY</span></div>
+                  <div class="screen-lines"><i></i><i></i><i></i></div>
+                  <div class="screen-footer"><b>WEB</b><b>VIN</b><b>PARTS</b></div>
+                </div>
+              </div>
+              <div class="floating-nut nut-one"></div>
+              <div class="floating-nut nut-two"></div>
+              <div class="floating-wrench"></div>
+            </div>
+          </div>
+
+          <div class="capability-grid">
+            <article class="capability-card tilt-surface" data-tilt-strength="3">
+              <div class="capability-icon blue"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v14H4V5Zm3 3v3h3V8H7Zm5 0v3h5V8h-5ZM7 13v3h10v-3H7Z"/></svg></div>
+              <div><span>Parts intelligence</span><strong>Current pricing</strong><p>Official retailer links, visible prices, fitment notes, and confidence labels.</p></div>
+              <button type="button" class="arrow-button quick-prompt" data-prompt="Find current local prices and availability for the parts I need. Ask me for the vehicle and repair details that materially affect fitment." aria-label="Ask Optimus about parts pricing">→</button>
+            </article>
+            <article class="capability-card tilt-surface" data-tilt-strength="3">
+              <div class="capability-icon green"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2a7 7 0 0 0-7 7c0 5.2 7 13 7 13s7-7.8 7-13a7 7 0 0 0-7-7Zm0 10a3 3 0 1 1 0-6 3 3 0 0 1 0 6Z"/></svg></div>
+              <div><span>Store network</span><strong>Local availability</strong><p>Uses browser location, ZIP, or city and state to research nearby inventory.</p></div>
+              <button type="button" class="arrow-button" data-view="system" aria-label="Configure location">→</button>
+            </article>
+            <article class="capability-card tilt-surface" data-tilt-strength="3">
+              <div class="capability-icon amber"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a9 9 0 1 0 9 9 9 9 0 0 0-9-9Zm1 5v4.6l3.2 1.9-1 1.7-4.2-2.5V8h2Z"/></svg></div>
+              <div><span>Time analysis</span><strong>Labor guidance</strong><p>Published-time research separated from practical mobile-mechanic working time.</p></div>
+              <button type="button" class="arrow-button quick-prompt" data-prompt="Research the published labor time and realistic mobile-mechanic time for my next job. Ask for the vehicle and repair." aria-label="Ask Optimus about labor time">→</button>
+            </article>
+            <article class="capability-card tilt-surface" data-tilt-strength="3">
+              <div class="capability-icon violet"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 3h14v18H5V3Zm3 4h8V5H8v2Zm0 5h3V9H8v3Zm5 0h3V9h-3v3Zm-5 5h3v-3H8v3Zm5 0h3v-3h-3v3Z"/></svg></div>
+              <div><span>Business output</span><strong>Complete estimate</strong><p>Labor, selected parts, fees, supplies, taxes, warnings, tools, and source links.</p></div>
+              <button type="button" class="arrow-button" data-view="estimate" aria-label="Open job estimator">→</button>
+            </article>
+          </div>
+
+          <div class="dashboard-lower-grid">
+            <section class="panel command-panel">
+              <div class="panel-heading">
+                <div><span class="section-kicker"><i></i> Direct command</span><h3>What needs to get done?</h3></div>
+                <span class="mode-badge">Optimus only speaks to you</span>
+              </div>
+              <div class="command-entry">
+                <div class="optimus-avatar small"><span class="avatar-core"></span></div>
+                <textarea id="dashboard-command" maxlength="12000" placeholder="Example: Find a starter near me for a 2020 Challenger 6.4L, compare prices, and give me labor time."></textarea>
+                <button class="primary-button compact" id="dashboard-send" type="button">Run command</button>
+              </div>
+              <div class="prompt-row">
+                <button class="prompt-chip quick-prompt" type="button" data-prompt="Decode a VIN and summarize the exact vehicle configuration.">Decode VIN</button>
+                <button class="prompt-chip quick-prompt" type="button" data-prompt="Help me diagnose a vehicle complaint like a master technician. Ask for the symptoms, vehicle, codes, and tests already performed.">Diagnose a fault</button>
+                <button class="prompt-chip quick-prompt" type="button" data-prompt="Find local parts prices and availability for a repair.">Find parts</button>
+                <button class="prompt-chip" type="button" data-view="estimate">Price a job</button>
+              </div>
+            </section>
+
+            <section class="panel system-snapshot">
+              <div class="panel-heading"><div><span class="section-kicker"><i></i> Live systems</span><h3>Operational status</h3></div><button class="text-button" id="refresh-health" type="button">Refresh</button></div>
+              <div class="status-list">
+                <div><span><i class="status-dot" id="health-server-dot"></i>Local server</span><strong id="health-server">Checking</strong></div>
+                <div><span><i class="status-dot" id="health-web-dot"></i>Web research</span><strong id="health-web">Checking</strong></div>
+                <div><span><i class="status-dot" id="health-owner-dot"></i>Autonomy</span><strong id="health-owner">Checking</strong></div>
+                <div><span><i class="status-dot" id="health-agent-dot"></i>Agent routing</span><strong id="health-agent">Checking</strong></div>
+              </div>
+            </section>
+          </div>
+        </section>
+
+        <section class="app-view" id="view-chat" data-view-panel="chat" hidden>
+          <div class="chat-layout">
+            <section class="panel chat-workbench">
+              <div class="panel-heading chat-heading">
+                <div class="heading-with-avatar">
+                  <div class="optimus-avatar"><span class="avatar-core"></span></div>
+                  <div><span class="section-kicker"><i></i> Owner channel</span><h2>Talk directly to Optimus</h2><p>Optimus remains the only agent speaking to you. Specialist input stays internal.</p></div>
+                </div>
+                <label class="mode-selector">Mode
+                  <select id="chat-mode">
+                    <option value="auto">Auto routing</option>
+                    <option value="direct">Direct only</option>
+                    <option value="team">Team review</option>
+                  </select>
+                </label>
+              </div>
+
+              <div class="chat-feed" id="chat-feed" aria-live="polite">
+                <article class="message assistant-message">
+                  <div class="message-avatar"><span class="avatar-core"></span></div>
+                  <div class="message-content"><header><strong>Optimus</strong><span>Ready</span></header><p>Give me the vehicle, complaint, repair, or business task. I will handle routine research directly and use silent specialist review only when it improves the answer.</p></div>
+                </article>
+              </div>
+
+              <form id="chat-form" class="chat-composer">
+                <textarea id="chat-message" maxlength="12000" required placeholder="Message Optimus…"></textarea>
+                <div class="composer-footer">
+                  <span>Ctrl + Enter to send</span>
+                  <button class="primary-button" type="submit" id="chat-submit">
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m3 20 18-8L3 4v6l12 2-12 2v6Z"/></svg>
+                    Send
+                  </button>
+                </div>
+              </form>
+            </section>
+
+            <aside class="chat-context">
+              <section class="panel">
+                <span class="section-kicker"><i></i> Quick commands</span>
+                <div class="stacked-actions">
+                  <button class="context-action quick-prompt" type="button" data-prompt="Find the best current parts options near me. Ask for missing vehicle and repair information."><b>01</b><span><strong>Parts search</strong><small>Price, stock, distance, links</small></span></button>
+                  <button class="context-action quick-prompt" type="button" data-prompt="Research labor time for a repair and separate book time from realistic mobile working time."><b>02</b><span><strong>Labor research</strong><small>Book and practical hours</small></span></button>
+                  <button class="context-action quick-prompt" type="button" data-prompt="Walk through a diagnostic plan using the complaint, codes, scan data, and tests already completed."><b>03</b><span><strong>Diagnostic plan</strong><small>Evidence-first testing</small></span></button>
+                  <button class="context-action" type="button" data-view="estimate"><b>04</b><span><strong>Structured estimate</strong><small>Itemized customer pricing</small></span></button>
+                </div>
+              </section>
+              <section class="panel location-mini-card">
+                <div class="mini-map"><span class="map-pin"></span></div>
+                <div><span class="section-kicker"><i></i> Search area</span><h3 id="chat-location-label">Not configured</h3><p>Set location for nearby parts stores.</p><button class="text-button" type="button" data-view="system">Configure location</button></div>
+              </section>
+            </aside>
+          </div>
+        </section>
+
+        <section class="app-view" id="view-estimate" data-view-panel="estimate" hidden>
+          <div class="estimate-layout">
+            <form id="estimate-form" class="panel estimate-form-panel">
+              <div class="panel-heading">
+                <div><span class="section-kicker"><i></i> Structured workflow</span><h2>Build a job estimate</h2><p>Research current parts, labor, practical time, special tools, and risk factors.</p></div>
+                <span class="estimate-number">LMW / LIVE</span>
+              </div>
+
+              <fieldset>
+                <legend><span>01</span> Vehicle identification</legend>
+                <label class="field full">VIN
+                  <input id="vin" maxlength="17" autocomplete="off" placeholder="17-character VIN">
+                  <small>VIN takes priority. Otherwise enter year, make, and model.</small>
+                </label>
+                <div class="form-grid three">
+                  <label class="field">Year <input id="year" type="number" min="1900" max="2100" placeholder="2020"></label>
+                  <label class="field">Make <input id="make" placeholder="Dodge"></label>
+                  <label class="field">Model <input id="model" placeholder="Challenger"></label>
+                </div>
+                <div class="form-grid two">
+                  <label class="field">Engine <input id="engine" placeholder="6.4L V8"></label>
+                  <label class="field">Drivetrain <input id="drivetrain" placeholder="RWD / AWD / 4x4"></label>
+                </div>
+              </fieldset>
+
+              <fieldset>
+                <legend><span>02</span> Repair scope</legend>
+                <label class="field full">Repair requested
+                  <textarea id="job" maxlength="500" required placeholder="Describe the exact job, side, axle, symptoms, and any known part requirements."></textarea>
+                </label>
+              </fieldset>
+
+              <fieldset>
+                <legend><span>03</span> Business pricing</legend>
+                <div class="form-grid four">
+                  <label class="field">Labor rate <div class="input-prefix"><span>$</span><input id="labor-rate" type="number" min="0" step="0.01" value="100"></div></label>
+                  <label class="field">Mobile fee <div class="input-prefix"><span>$</span><input id="mobile-fee" type="number" min="0" step="0.01" value="0"></div></label>
+                  <label class="field">Supplies <div class="input-suffix"><input id="supplies" type="number" min="0" max="25" step="0.01" value="0"><span>%</span></div></label>
+                  <label class="field">Parts tax <div class="input-suffix"><input id="tax-rate" type="number" min="0" max="20" step="0.01" value="0"><span>%</span></div></label>
+                </div>
+              </fieldset>
+
+              <div class="estimate-submit-row">
+                <div><strong>Current-source research</strong><span>Optimus will cite the sources used.</span></div>
+                <button class="primary-button large" type="submit" id="submit">
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 13h8V3h2v8h8v2h-8v8h-2v-8H3v-2Z"/></svg>
+                  Research and estimate
+                </button>
+              </div>
+            </form>
+
+            <aside class="estimate-side-rail">
+              <section class="panel readiness-card">
+                <span class="section-kicker"><i></i> Estimate readiness</span>
+                <div class="readiness-gauge"><div><strong>LIVE</strong><span>web research</span></div></div>
+                <ul>
+                  <li><i></i> Vehicle fitment review</li>
+                  <li><i></i> Local retailer comparison</li>
+                  <li><i></i> Labor-time analysis</li>
+                  <li><i></i> Tool and risk review</li>
+                </ul>
+              </section>
+              <section class="panel estimate-policy-card">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2 4 5v6c0 5.2 3.4 9.7 8 11 4.6-1.3 8-5.8 8-11V5l-8-3Zm-1 14-4-4 1.4-1.4L11 13.2l4.6-4.6L17 10l-6 6Z"/></svg>
+                <div><strong>Evidence standard</strong><p>Unknown price or inventory stays unknown. Optimus does not manufacture availability.</p></div>
+              </section>
+            </aside>
+          </div>
+          <section id="result" class="estimate-result panel" hidden aria-live="polite"></section>
+        </section>
+
+        <section class="app-view" id="view-system" data-view-panel="system" hidden>
+          <div class="system-grid">
+            <section class="panel system-hero">
+              <div><span class="section-kicker"><i></i> Configuration</span><h2>System bay</h2><p>Control local access, location services, and verify the Optimus runtime.</p></div>
+              <div class="server-stack" aria-hidden="true"><span></span><span></span><span></span><i></i></div>
+            </section>
+
+            <section class="panel access-panel">
+              <div class="panel-heading"><div><span class="section-kicker"><i></i> Local security</span><h3>Optimus access</h3></div><span class="security-badge">Loopback only</span></div>
+              <label class="field full">Optimus access token
+                <div class="token-control"><input id="access-token" type="password" autocomplete="current-password" placeholder="Automatically loaded by local.bat"><button id="toggle-token" type="button" aria-label="Show or hide access token">Show</button></div>
+                <small>This is the local app token, not the OpenAI API key. It stays in this browser tab.</small>
+              </label>
+            </section>
+
+            <section class="panel location-panel">
+              <div class="panel-heading"><div><span class="section-kicker"><i></i> Parts radius</span><h3>Service location</h3></div><button class="secondary-button compact" type="button" id="use-location">Use current location</button></div>
+              <div class="location-display"><div class="location-radar"><span></span></div><div><strong id="location-status">Location not supplied</strong><p>Used for nearby stores. Coordinates are not persisted by the server.</p></div></div>
+              <div class="form-grid three">
+                <label class="field">ZIP <input id="postal-code" inputmode="numeric" maxlength="10" placeholder="95677"></label>
+                <label class="field">City <input id="city" placeholder="Rocklin"></label>
+                <label class="field">State / region <input id="region" placeholder="CA"></label>
+              </div>
+            </section>
+
+            <section class="panel runtime-panel">
+              <div class="panel-heading"><div><span class="section-kicker"><i></i> Runtime</span><h3>Live diagnostics</h3></div><button class="secondary-button compact" id="system-refresh-health" type="button">Run check</button></div>
+              <div class="runtime-grid">
+                <div><span>Server</span><strong id="system-server-status">Checking…</strong><small id="system-version">Version —</small></div>
+                <div><span>OpenAI / web</span><strong id="system-web-status">Checking…</strong><small>Configured key status</small></div>
+                <div><span>Autonomy</span><strong id="system-autonomy-status">Checking…</strong><small>Owner control mode</small></div>
+                <div><span>Delegation</span><strong id="system-agent-status">Checking…</strong><small>Silent specialist routing</small></div>
+              </div>
+            </section>
+
+            <section class="panel mechanic-principles">
+              <span class="section-kicker"><i></i> Operating standard</span>
+              <h3>Verify before replacing</h3>
+              <p>Optimus is configured to separate evidence from assumptions, identify missing fitment details, cite current sources, and label uncertain inventory instead of guessing.</p>
+              <div class="principle-tags"><span>Evidence first</span><span>Current sources</span><span>Owner controlled</span><span>No fabricated stock</span></div>
+            </section>
+          </div>
+        </section>
+      </div>
+    </main>
+  </div>
+
+  <nav class="mobile-bottom-nav" aria-label="Mobile navigation">
+    <button class="is-active" type="button" data-view="dashboard"><span>⌂</span>Deck</button>
+    <button type="button" data-view="chat"><span>◉</span>Optimus</button>
+    <button type="button" data-view="estimate"><span>＋</span>Estimate</button>
+    <button type="button" data-view="system"><span>⚙</span>System</button>
+  </nav>
+
+  <div class="toast-region" id="toast-region" aria-live="polite" aria-atomic="true"></div>
+  <script src="/static/app.js" defer></script>
+</body>
+</html>
