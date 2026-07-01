@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from datetime import datetime
 from enum import StrEnum
 from typing import Annotated, Literal
 
@@ -75,7 +76,9 @@ class VehicleInput(BaseModel):
             return None
         cleaned = "".join(value.upper().split())
         if not re.fullmatch(r"[A-HJ-NPR-Z0-9]{11,17}", cleaned):
-            raise ValueError("VIN must contain 11-17 valid letters and digits and cannot contain I, O, or Q.")
+            raise ValueError(
+                "VIN must contain 11-17 valid letters and digits and cannot contain I, O, or Q."
+            )
         return cleaned
 
     @model_validator(mode="after")
@@ -85,7 +88,13 @@ class VehicleInput(BaseModel):
         return self
 
     def display_name(self) -> str:
-        parts = [str(self.year) if self.year else None, self.make, self.model, self.trim, self.engine]
+        parts = [
+            str(self.year) if self.year else None,
+            self.make,
+            self.model,
+            self.trim,
+            self.engine,
+        ]
         return " ".join(part for part in parts if part) or self.vin or "Unknown vehicle"
 
 
@@ -102,7 +111,13 @@ class DecodedVehicle(BaseModel):
     error_text: str | None = None
 
     def display_name(self) -> str:
-        parts = [str(self.year) if self.year else None, self.make, self.model, self.trim, self.engine]
+        parts = [
+            str(self.year) if self.year else None,
+            self.make,
+            self.model,
+            self.trim,
+            self.engine,
+        ]
         return " ".join(part for part in parts if part) or self.vin or "Unknown vehicle"
 
 
@@ -282,3 +297,169 @@ class ChatResponse(BaseModel):
     approval_required: bool = False
     approval_reason: str = "Direct owner conversation; no extra approval needed for research."
     generated_at_utc: str
+
+
+class AuthLoginRequest(BaseModel):
+    username: NonBlank = Field(max_length=120)
+    password: NonBlank = Field(min_length=8, max_length=256)
+
+
+class AuthUser(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    username: str
+    display_name: str
+    role: str
+
+
+class AuthSessionResponse(BaseModel):
+    user: AuthUser
+    expires_at: datetime
+    session_expires_in_seconds: int
+
+
+class AuthMeResponse(BaseModel):
+    authenticated: bool = True
+    user: AuthUser
+    expires_at: datetime
+
+
+class CustomerBase(BaseModel):
+    full_name: NonBlank = Field(max_length=180)
+    email: str | None = Field(default=None, max_length=180)
+    phone: str | None = Field(default=None, max_length=40)
+    notes: str | None = Field(default=None, max_length=4000)
+
+
+class CustomerCreate(CustomerBase):
+    pass
+
+
+class CustomerUpdate(BaseModel):
+    full_name: str | None = Field(default=None, max_length=180)
+    email: str | None = Field(default=None, max_length=180)
+    phone: str | None = Field(default=None, max_length=40)
+    notes: str | None = Field(default=None, max_length=4000)
+
+
+class CustomerRead(CustomerBase):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    created_at: datetime
+    updated_at: datetime
+
+
+class VehicleBase(BaseModel):
+    customer_id: int | None = None
+    vin: str | None = Field(default=None, min_length=11, max_length=17)
+    year: int | None = Field(default=None, ge=1900, le=2100)
+    make: NonBlank = Field(max_length=100)
+    model: NonBlank = Field(max_length=100)
+    trim: str | None = Field(default=None, max_length=120)
+    engine: str | None = Field(default=None, max_length=120)
+    drivetrain: str | None = Field(default=None, max_length=80)
+    mileage: int | None = Field(default=None, ge=0, le=1_000_000)
+    notes: str | None = Field(default=None, max_length=4000)
+
+
+class VehicleCreate(VehicleBase):
+    pass
+
+
+class VehicleUpdate(BaseModel):
+    customer_id: int | None = None
+    vin: str | None = Field(default=None, min_length=11, max_length=17)
+    year: int | None = Field(default=None, ge=1900, le=2100)
+    make: str | None = Field(default=None, max_length=100)
+    model: str | None = Field(default=None, max_length=100)
+    trim: str | None = Field(default=None, max_length=120)
+    engine: str | None = Field(default=None, max_length=120)
+    drivetrain: str | None = Field(default=None, max_length=80)
+    mileage: int | None = Field(default=None, ge=0, le=1_000_000)
+    notes: str | None = Field(default=None, max_length=4000)
+
+
+class VehicleRead(VehicleBase):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    created_at: datetime
+    updated_at: datetime
+    customer_name: str | None = None
+
+
+class WorkOrderBase(BaseModel):
+    customer_id: int | None = None
+    vehicle_id: int | None = None
+    status: str = Field(default="open", max_length=40)
+    title: NonBlank = Field(max_length=180)
+    complaint: NonBlank = Field(max_length=10_000)
+    diagnosis: str | None = Field(default=None, max_length=10_000)
+    estimate_total: float | None = Field(default=None, ge=0, le=1_000_000)
+    labor_hours_estimate: float | None = Field(default=None, ge=0, le=500)
+    notes: str | None = Field(default=None, max_length=10_000)
+    internal_notes: str | None = Field(default=None, max_length=10_000)
+
+
+class WorkOrderCreate(WorkOrderBase):
+    pass
+
+
+class WorkOrderUpdate(BaseModel):
+    customer_id: int | None = None
+    vehicle_id: int | None = None
+    status: str | None = Field(default=None, max_length=40)
+    title: str | None = Field(default=None, max_length=180)
+    complaint: str | None = Field(default=None, max_length=10_000)
+    diagnosis: str | None = Field(default=None, max_length=10_000)
+    estimate_total: float | None = Field(default=None, ge=0, le=1_000_000)
+    labor_hours_estimate: float | None = Field(default=None, ge=0, le=500)
+    notes: str | None = Field(default=None, max_length=10_000)
+    internal_notes: str | None = Field(default=None, max_length=10_000)
+
+
+class WorkOrderRead(WorkOrderBase):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    created_at: datetime
+    updated_at: datetime
+    customer_name: str | None = None
+    vehicle_name: str | None = None
+    approval_status: str | None = None
+
+
+class ApprovalBase(BaseModel):
+    work_order_id: int
+    status: str = Field(default="pending", max_length=30)
+    requested_reason: str | None = Field(default=None, max_length=4000)
+    decision_reason: str | None = Field(default=None, max_length=4000)
+
+
+class ApprovalCreate(ApprovalBase):
+    pass
+
+
+class ApprovalUpdate(BaseModel):
+    status: str | None = Field(default=None, max_length=30)
+    requested_reason: str | None = Field(default=None, max_length=4000)
+    decision_reason: str | None = Field(default=None, max_length=4000)
+
+
+class ApprovalRead(ApprovalBase):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    created_at: datetime
+    updated_at: datetime
+    decided_at: datetime | None = None
+    decided_by_user_id: int | None = None
+    customer_name: str | None = None
+    vehicle_name: str | None = None
+    work_order_title: str | None = None
+
+
+class ApprovalDecisionRequest(BaseModel):
+    reason: str | None = Field(default=None, max_length=4000)

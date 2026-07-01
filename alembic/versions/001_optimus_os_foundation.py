@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from alembic import op
 import sqlalchemy as sa
+
+from alembic import op
 
 revision = "001_optimus_os_foundation"
 down_revision = None
@@ -19,7 +20,9 @@ def upgrade() -> None:
         sa.Column("vehicle_model", sa.Text(), nullable=False),
         sa.Column("job_description", sa.Text(), nullable=False),
         sa.Column("postal_code", sa.Text(), nullable=False),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+        sa.Column(
+            "created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
+        ),
     )
 
 

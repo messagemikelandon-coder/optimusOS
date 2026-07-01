@@ -6,7 +6,7 @@ _PLACEHOLDERS = {
     "replace_me",
     "your_actual_openai_api_key",
     "replace_with_a_long_random_token",
-    "the_random_token_you_generated",
+    "replace_with_a_long_owner_password",
 }
 
 
@@ -21,10 +21,12 @@ def main() -> None:
 
     if is_missing_or_placeholder(settings.openai_api_key):
         errors.append("OPENAI_API_KEY is missing or still contains the example value.")
-    if is_missing_or_placeholder(settings.optimus_access_token):
-        errors.append("OPTIMUS_ACCESS_TOKEN is missing or still contains the example value.")
-    elif len(settings.optimus_access_token) < 32:
-        errors.append("OPTIMUS_ACCESS_TOKEN must be at least 32 characters.")
+    if not settings.optimus_owner_username:
+        errors.append("OPTIMUS_OWNER_USERNAME is missing.")
+    if is_missing_or_placeholder(settings.optimus_owner_password):
+        errors.append("OPTIMUS_OWNER_PASSWORD is missing or still contains the example value.")
+    elif len(settings.optimus_owner_password) < 12:
+        errors.append("OPTIMUS_OWNER_PASSWORD must be at least 12 characters.")
 
     if errors:
         print("Optimus configuration is not ready:")

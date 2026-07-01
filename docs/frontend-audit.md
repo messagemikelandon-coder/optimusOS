@@ -4,153 +4,87 @@ Date: 2026-07-01
 
 ## Scope
 
-This resumed the existing frontend audit from the stack-start step against the live local Docker stack at:
+This audit verified the live Docker stack on branch `feat/optimus-frontend-integration` after:
+
+- the authentication migration was applied;
+- the owner account was bootstrapped against the live database;
+- backend, worker, and frontend were rebuilt and restarted.
+
+Live URLs used:
 
 - Frontend: `http://127.0.0.1:5173`
+- Login: `http://127.0.0.1:5173/login`
 - Backend: `http://127.0.0.1:8000`
-- Repository: `/home/dejake/optimus-server`
-
-Per instruction, this document stops before implementation changes.
+- OpenAPI: `http://127.0.0.1:8000/openapi.json`
 
 ## Stack Verification
 
-Verified with `docker ps` on 2026-07-01:
-
-| Service | Container | Status | Published ports |
-| --- | --- | --- | --- |
-| Frontend | `optimus-server-frontend-1` | Up | `127.0.0.1:5173->80/tcp` |
-| Backend | `optimus-server-backend-1` | Up | `127.0.0.1:8000->8000/tcp` |
-| Worker | `optimus-server-worker-1` | Up | internal only |
-| Postgres | `optimus-server-postgres-1` | Up, healthy | internal `5432` |
-| Redis | `optimus-server-redis-1` | Up, healthy | internal `6379` |
-
-Verified HTTP responses:
+Verified on 2026-07-01:
 
 | Check | Result |
 | --- | --- |
-| `GET /` on frontend | `200 OK` |
-| `GET /static/app.js` | `200 OK`, `Content-Type: application/javascript` |
-| `GET /static/styles.css` | `200 OK`, `Content-Type: text/css` |
-| `GET /health` | `200 OK` |
-| `GET /ready` | `200 OK`, `postgres: true`, `redis: true` |
-| `GET /openapi.json` | `200 OK` |
-| `OPTIONS /api/chat` from `http://127.0.0.1:5173` | `200 OK`, CORS origin allowed |
+| `docker compose ps` | `postgres`, `redis`, `backend`, `worker`, `frontend` all running |
+| `GET http://127.0.0.1:8000/health` | `200 OK` |
+| `GET http://127.0.0.1:5173/` | `200 OK` |
+| `GET http://127.0.0.1:8000/openapi.json` | `200 OK` |
+| Alembic current | `002_authentication_tables (head)` |
+| Auth tables | `user_accounts`, `auth_sessions` present |
+| Owner bootstrap | owner row exists and is active |
+| Startup logs | no backend, worker, or frontend startup exceptions in the current tail |
 
-Observed `/health` payload summary:
+Observed `/health` summary after the final rebuild:
 
-- Version: `7.0.1`
-- Business name: `Landon Motor Works`
-- `web_search_configured: true`
-- `owner_full_control: true`
-- `agent_delegation_enabled: true`
+- version `7.0.1`
+- `auth_configured: true`
+- `estimator_model: gpt-4.1-mini`
+- `estimator_fallback_model: gpt-4.1-mini`
 
-## Baseline Screenshots
+## Authenticated Browser Audit
 
-Fresh screenshots captured from the running stack:
+`node scripts/ui_connection_audit_playwright.js` completed successfully against the live stack.
 
-- [baseline-dashboard-desktop.png](/home/dejake/optimus-server/docs/screenshots/baseline-dashboard-desktop.png)
-- [baseline-dashboard-mobile.png](/home/dejake/optimus-server/docs/screenshots/baseline-dashboard-mobile.png)
-- [repaired-dashboard.png](/home/dejake/optimus-server/docs/screenshots/repaired-dashboard.png)
-- [optimus-chat.png](/home/dejake/optimus-server/docs/screenshots/optimus-chat.png)
-- [estimates.png](/home/dejake/optimus-server/docs/screenshots/estimates.png)
-- [system-status.png](/home/dejake/optimus-server/docs/screenshots/system-status.png)
+Verified in the browser:
 
-Reference images already present in the repo:
+- unauthenticated `/login` screen renders correctly;
+- invalid login returns visible failure handling using fixture credentials;
+- successful login works with the local owner credentials without exposing them;
+- `GET /api/auth/me` returns `200` after login;
+- page reload restores the authenticated session;
+- browser receives an `HttpOnly` `optimus_session` cookie;
+- only the session-token hash is stored in the database;
+- `localStorage` and `sessionStorage` contain no bearer token or raw session token;
+- location resolution succeeds after login with `200`;
+- chat succeeds after login with `200` and no `401`;
+- estimate succeeds after login with `200` and no `401`;
+- logout revokes the server-side session and `/api/auth/me` returns `401`;
+- an expired server-side session returns the browser to `/login`;
+- no unexpected browser console errors or failed requests were observed.
 
-- [original-reference-desktop.png](/home/dejake/optimus-server/docs/screenshots/original-reference-desktop.png)
-- [original-reference-mobile.png](/home/dejake/optimus-server/docs/screenshots/original-reference-mobile.png)
+Expected `401` responses during the audit:
 
-## Frontend Surface Found
+- initial unauthenticated `GET /api/auth/me`
+- invalid login attempt
+- post-logout `GET /api/auth/me`
+- expired-session `GET /api/auth/me`
 
-The served UI is a static single-page app from:
+These were explicitly verified and are not treated as failures.
 
-- `app/static/index.html`
-- `app/static/app.js`
-- `app/static/styles.css`
+## Safe Screenshots
 
-Primary in-app views:
+Captured during the live authenticated audit:
 
-- `dashboard`
-- `chat`
-- `estimate`
-- `system`
+- [01-login-screen.png](/home/dejake/optimus-server/docs/screenshots/auth-integration/01-login-screen.png)
+- [02-dashboard-authenticated.png](/home/dejake/optimus-server/docs/screenshots/auth-integration/02-dashboard-authenticated.png)
+- [03-chat-authenticated.png](/home/dejake/optimus-server/docs/screenshots/auth-integration/03-chat-authenticated.png)
+- [04-estimate-authenticated.png](/home/dejake/optimus-server/docs/screenshots/auth-integration/04-estimate-authenticated.png)
+- [05-logged-out.png](/home/dejake/optimus-server/docs/screenshots/auth-integration/05-logged-out.png)
+- [06-expired-session-login.png](/home/dejake/optimus-server/docs/screenshots/auth-integration/06-expired-session-login.png)
 
-No customer-management or work-order-management screens were found in the live frontend for:
+## Implementation Notes From Live Verification
 
-- Customers
-- Vehicles
-- Work orders
-- Approval queue
+Two live-stack compatibility issues surfaced during this audit and were fixed:
 
-## Backend Route Inventory Relevant To Frontend
+- model names from `.env` needed normalization because a spaced model id was invalid for OpenAI;
+- chat and estimate fallback request shapes needed compatibility adjustments for the live Responses API.
 
-Routes present in OpenAPI and observed live:
-
-- `GET /health`
-- `GET /ready`
-- `POST /api/location/resolve`
-- `POST /api/chat`
-- `POST /api/estimate`
-
-Routes requested by the broader shop workflow but not present:
-
-- `GET/POST /api/auth/login` -> `404`
-- `GET /api/auth/status` -> `404`
-- `GET/POST /api/customers` -> `404`
-- `GET/POST /api/vehicles` -> `404`
-- `GET/POST /api/work-orders` -> `404`
-- `GET/POST /api/approvals` -> `404`
-
-## Exercised UI Behavior
-
-Observed in Playwright against the live stack:
-
-| Flow | Observed result | Pass/Fail |
-| --- | --- | --- |
-| Initial load | Dashboard renders successfully | Pass |
-| Hero `Talk to Optimus` | Navigates to chat view | Pass |
-| Hero `Build an estimate` | Navigates to estimate view | Pass |
-| `Decode VIN` prompt chip | Navigates to chat and pre-fills prompt text | Pass |
-| Topbar location chip | Navigates to system view | Pass |
-| Mobile menu button | Expands sidebar on mobile baseline | Pass |
-| `Run check` in system view | Shows backend online state | Pass |
-| Chat submit without token | Visible `Command failed` state after `401` | Fail for authenticated workflow |
-| Estimate submit without token after setting ZIP | Visible `Estimate failed` state after `401` | Fail for authenticated workflow |
-| Location resolve without token | Backend returns `401` | Fail for authenticated workflow |
-
-Important audit constraint: a UI flow is not counted as passing merely because the request fired. The authenticated business workflows do not pass in the current baseline because they end in `401 Unauthorized` and no successful signed-in flow was available to verify.
-
-## Browser Audit Output
-
-`node scripts/ui_connection_audit_playwright.js` completed successfully and reported:
-
-- Console errors: 2
-- Failed requests: 0 transport failures
-- API network observed:
-  - `200 GET http://localhost:8000/health`
-  - `401 POST http://localhost:8000/api/chat`
-  - `401 POST http://localhost:8000/api/estimate`
-  - `200 GET http://localhost:8000/health`
-
-Console errors were the browser reporting the `401` API responses. No separate frontend JavaScript exception was observed in this run.
-
-## Assessment
-
-What is working:
-
-- Docker stack is up and healthy.
-- Frontend assets are served with the expected response types.
-- The static SPA renders and navigates correctly between its four built-in views.
-- Health-check wiring from frontend to backend works.
-- Error states for protected chat and estimate actions are visible rather than silent.
-
-What is not passing:
-
-- No authenticated frontend workflow was available to verify successful chat, location resolve, or estimate generation.
-- No login entry point exists in the served UI.
-- No backend auth/login route exists for the frontend to use.
-- No customers, vehicles, work-orders, or approvals routes or views exist in the current baseline.
-
-## Stop Point
-
-This audit resumed from stack-start, verified the live stack, captured the current baseline screenshots, and documented the frontend and API baseline. No implementation changes were made as instructed.
+After those fixes, the existing login, chat, estimate, and location workflows passed end to end on the running stack.

@@ -66,7 +66,9 @@ class EstimateService:
         location: ResolvedLocation,
         research: ResearchBundle,
     ) -> EstimateResponse:
-        labor_rate = request.labor_rate if request.labor_rate is not None else self._settings.labor_rate
+        labor_rate = (
+            request.labor_rate if request.labor_rate is not None else self._settings.labor_rate
+        )
         mobile_fee = (
             request.mobile_service_fee
             if request.mobile_service_fee is not None
@@ -124,7 +126,8 @@ class EstimateService:
         ]
         if missing_required:
             warnings.append(
-                "No usable priced option was found for required part(s): " + ", ".join(missing_required)
+                "No usable priced option was found for required part(s): "
+                + ", ".join(missing_required)
             )
         low_confidence_selected = [
             part.part_name for part in selected_parts if part.confidence == Confidence.LOW

@@ -12,11 +12,13 @@ dependencies = [
   "uvicorn[standard]>=0.30,<1",
   "openai>=1.100,<3",
   "httpx>=0.27,<1",
+  "argon2-cffi>=23.1,<26",
   "pydantic>=2.8,<3",
   "pydantic-settings>=2.4,<3",
   "python-dotenv>=1.0,<2",
   "alembic>=1.13,<2",
   "psycopg[binary]>=3.2,<4",
+  "sqlalchemy>=2.0.51",
 ]
 
 [project.optional-dependencies]
@@ -46,7 +48,17 @@ strict = true
 plugins = ["pydantic.mypy"]
 
 [tool.setuptools.packages.find]
-include = ["app*", "integration*"]
+include = ["app*", "integration*", "scripts*"]
 
 [tool.setuptools.package-data]
 app = ["static/*"]
+
+[dependency-groups]
+dev = [
+    "pyright>=1.1.411",
+    "pytest>=9.1.1",
+    "pytest-asyncio>=1.4.0",
+    "pytest-cov>=7.1.0",
+    "pytest-playwright>=0.8.0",
+    "ruff>=0.15.20",
+]

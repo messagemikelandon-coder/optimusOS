@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pydantic import HttpUrl
+
 from app.models import (
     Availability,
     Confidence,
@@ -22,7 +24,7 @@ def option(*, price: float, availability: Availability, retailer: str = "AutoZon
         retailer=retailer,
         unit_price=price,
         availability=availability,
-        url="https://www.autozone.com/test",
+        url=HttpUrl("https://www.autozone.com/test"),
         confidence=Confidence.MEDIUM,
     )
 
@@ -133,7 +135,7 @@ def test_link_only_option_is_not_used_in_totals(settings) -> None:  # type: igno
                             retailer="Dealer",
                             unit_price=None,
                             availability=Availability.UNKNOWN,
-                            url="https://parts.example.com/starter",
+                            url=HttpUrl("https://parts.example.com/starter"),
                         )
                     ],
                 )
@@ -157,14 +159,14 @@ def test_prefers_higher_confidence_price_before_stock_rank() -> None:
         retailer="Unknown seller",
         unit_price=40,
         availability=Availability.CONFIRMED_IN_STOCK,
-        url="https://example.com/low",
+        url=HttpUrl("https://example.com/low"),
         confidence=Confidence.LOW,
     )
     medium_confidence_unknown = PartOption(
         retailer="NAPA",
         unit_price=65,
         availability=Availability.UNKNOWN,
-        url="https://www.napaonline.com/high",
+        url=HttpUrl("https://www.napaonline.com/high"),
         confidence=Confidence.MEDIUM,
     )
     selected = choose_part([low_confidence_stock, medium_confidence_unknown])
@@ -194,7 +196,7 @@ def test_low_confidence_selected_price_adds_verification_warning(settings) -> No
                             retailer="Retailer",
                             unit_price=200,
                             availability=Availability.UNKNOWN,
-                            url="https://example.com/starter",
+                            url=HttpUrl("https://example.com/starter"),
                             confidence=Confidence.LOW,
                         )
                     ],

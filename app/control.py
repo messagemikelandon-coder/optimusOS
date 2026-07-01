@@ -151,7 +151,9 @@ class OptimusConversationRouter:
         text = self._normalize(request.message)
         requested = self._dedupe(request.requested_agents)
 
-        if request.mode == ConversationMode.DIRECT or self._contains_any(text, _EXPLICIT_DIRECT_TERMS):
+        if request.mode == ConversationMode.DIRECT or self._contains_any(
+            text, _EXPLICIT_DIRECT_TERMS
+        ):
             return ConversationPlan(mode=ConversationMode.DIRECT, consultations=())
 
         if not self._settings.agent_delegation_enabled:
@@ -172,9 +174,7 @@ class OptimusConversationRouter:
         )
 
         if explicit_team:
-            team_agents = matched or [
-                AgentName.DIAGNOSTIC, AgentName.ESTIMATOR, AgentName.PARTS
-            ]
+            team_agents = matched or [AgentName.DIAGNOSTIC, AgentName.ESTIMATOR, AgentName.PARTS]
             return ConversationPlan(
                 mode=ConversationMode.TEAM,
                 consultations=tuple(
@@ -192,9 +192,7 @@ class OptimusConversationRouter:
             auto_consultations = self._auto_select(text, matched)
             return ConversationPlan(
                 mode=ConversationMode.AUTO,
-                consultations=tuple(
-                    auto_consultations[: self._settings.max_agent_consultations]
-                ),
+                consultations=tuple(auto_consultations[: self._settings.max_agent_consultations]),
             )
 
         return ConversationPlan(mode=ConversationMode.DIRECT, consultations=())
@@ -249,7 +247,9 @@ class OptimusConversationRouter:
 
     @staticmethod
     def _match_agents(text: str) -> list[AgentName]:
-        return [agent for agent, terms in _AGENT_TERMS.items() if any(term in text for term in terms)]
+        return [
+            agent for agent, terms in _AGENT_TERMS.items() if any(term in text for term in terms)
+        ]
 
     @staticmethod
     def _contains_any(text: str, terms: tuple[str, ...]) -> bool:

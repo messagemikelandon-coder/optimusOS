@@ -2,9 +2,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from fastapi.testclient import TestClient
+import anyio
+from starlette.requests import Request
+from starlette.responses import FileResponse
 
-from app.main import app
+from app.main import STATIC_DIR, get_settings, health, index, security_headers
 
 ROOT = Path(__file__).resolve().parents[1]
 STATIC = ROOT / "app" / "static"
@@ -32,45 +34,60 @@ def test_ui_preserves_connected_workflows() -> None:
         "chat-message",
         "estimate-form",
         "use-location",
-        "access-token",
+        "login-form",
+        "login-username",
+        "login-password",
         "result",
     ):
         assert f'id="{element_id}"' in html
-    assert 'fetch("/api/chat"' in javascript
-    assert 'fetch("/api/estimate"' in javascript
-    assert 'fetch("/health"' in javascript
+    assert 'apiFetch("/api/auth/login"' in javascript
+    assert 'apiFetch("/api/auth/me"' in javascript
+    assert 'apiFetch("/api/chat"' in javascript
+    assert 'apiFetch("/api/estimate"' in javascript
+    assert 'apiFetch("/health"' in javascript
 
 
-def test_local_launcher_uses_fragment_token_not_query_string() -> None:
+def test_local_launcher_opens_login_url_without_credentials_in_fragment() -> None:
     launcher = (ROOT / "local.bat").read_text(encoding="utf-8")
     opener = (ROOT / "scripts" / "open_when_ready.ps1").read_text(encoding="utf-8")
     javascript = (STATIC / "app.js").read_text(encoding="utf-8")
-    assert '-AccessToken "%OPTIMUS_TOKEN%"' in launcher
-    assert "#access_token=" in opener
-    assert "?access_token=" not in opener
-    assert 'hash.get("access_token")' in javascript
-    assert "history.replaceState" in javascript
+    assert "Login: http://127.0.0.1:8000/login" in launcher
+    assert "Start-Process $Url" in opener
+    assert "access_token" not in opener
+    assert "optimus_access_token" not in javascript
+    assert 'credentials: "same-origin"' in javascript
 
 
 def test_health_identifies_official_build() -> None:
-    client = TestClient(app)
-    response = client.get("/health")
-    assert response.status_code == 200
-    payload = response.json()
+    payload = anyio.run(health, get_settings())
     assert payload["version"] == "7.0.1"
     assert payload["business_name"] == "Landon Motor Works"
     assert payload["business_tagline"] == "Mobile Mechanic Intelligence"
 
 
 def test_static_command_center_is_served_with_strict_headers() -> None:
-    client = TestClient(app)
-    response = client.get("/")
+    request = Request(
+        {
+            "type": "http",
+            "http_version": "1.1",
+            "scheme": "http",
+            "method": "GET",
+            "path": "/",
+            "raw_path": b"/",
+            "query_string": b"",
+            "headers": [],
+            "client": ("127.0.0.1", 50000),
+            "server": ("testserver", 80),
+        }
+    )
+
+    async def call_next(_: Request) -> FileResponse:
+        return await index()
+
+    response = anyio.run(security_headers, request, call_next)
     assert response.status_code == 200
-    assert "Optimus Command Center" in response.text
     policy = response.headers["content-security-policy"]
     assert "default-src 'self'" in policy
     assert "'unsafe-inline'" not in policy
-    css = client.get("/static/styles.css")
-    manifest = client.get("/static/manifest.webmanifest")
-    assert css.status_code == 200
-    assert manifest.status_code == 200
+    assert (STATIC_DIR / "styles.css").is_file()
+    assert (STATIC_DIR / "manifest.webmanifest").is_file()

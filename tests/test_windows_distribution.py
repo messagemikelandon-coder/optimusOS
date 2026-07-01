@@ -34,16 +34,18 @@ def test_local_launcher_is_loopback_only() -> None:
 
 def test_windows_setup_generates_token_and_uses_venv() -> None:
     setup = (ROOT / "scripts/windows_setup.ps1").read_text(encoding="utf-8")
-    assert 'token_urlsafe(48)' in setup
     assert '"-m", "venv"' in setup
-    assert 'OPENAI_API_KEY' in setup
-    assert 'AUTONOMY_MODE' in setup
+    assert "OPENAI_API_KEY" in setup
+    assert "OPTIMUS_OWNER_USERNAME" in setup
+    assert "OPTIMUS_OWNER_PASSWORD" in setup
+    assert "AUTONOMY_MODE" in setup
 
 
-def test_access_token_is_kept_in_session_storage() -> None:
+def test_browser_uses_same_origin_cookie_auth_flow() -> None:
     javascript = (ROOT / "app/static/app.js").read_text(encoding="utf-8")
-    assert 'sessionStorage.getItem("optimus_access_token")' in javascript
-    assert 'sessionStorage.setItem("optimus_access_token", token)' in javascript
+    assert 'credentials: "same-origin"' in javascript
+    assert "/api/auth/login" in javascript
+    assert "/api/auth/logout" in javascript
 
 
 def test_placeholder_detection() -> None:

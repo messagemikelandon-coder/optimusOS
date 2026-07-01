@@ -57,6 +57,7 @@ def test_price_lookup_is_one_direct_optimus_call() -> None:
     assert result.answer.startswith("I found")
     assert result.consultations == []
     assert len(client.responses.calls) == 1
+    assert "reasoning" not in client.responses.calls[0]
     assert result.used_web_search is True
     assert len(result.citations) == 1
 
@@ -73,3 +74,4 @@ def test_complex_diagnosis_uses_silent_adviser_then_optimus() -> None:
     assert result.speaker == "optimus"
     assert [item.agent for item in result.consultations] == ["diagnostic"]
     assert len(client.responses.calls) == 2
+    assert all("reasoning" not in call for call in client.responses.calls)

@@ -12,9 +12,9 @@ const escapeHtml = (value) => String(value ?? "")
   .replaceAll(">", "&gt;")
   .replaceAll('"', "&quot;")
   .replaceAll("'", "&#039;");
-const API_BASE_URL = (window.VITE_API_BASE_URL || "http://localhost:8000").replace(/\/$/, "");
 
 const state = {
+  auth: { authenticated: false, user: null, expiresAt: null },
   coordinates: null,
   chatHistory: [],
   currentView: "dashboard",
@@ -23,6 +23,7 @@ const state = {
 };
 
 const viewMeta = {
+  login: { eyebrow: "Authentication", title: "Sign in" },
   dashboard: { eyebrow: "Operations", title: "Command deck" },
   chat: { eyebrow: "Owner channel", title: "Talk to Optimus" },
   estimate: { eyebrow: "Pricing workflow", title: "Job estimator" },
@@ -38,38 +39,12 @@ function showToast(message, type = "info") {
   window.setTimeout(() => toast.remove(), 4800);
 }
 
-function initializeToken() {
-  const hash = new URLSearchParams(window.location.hash.replace(/^#/, ""));
-  const fragmentToken = hash.get("access_token") || hash.get("token");
-  if (fragmentToken) {
-    sessionStorage.setItem("optimus_access_token", fragmentToken.trim());
-    history.replaceState(null, "", `${window.location.pathname}${window.location.search}`);
-  }
-  const input = $("access-token");
-  input.value = sessionStorage.getItem("optimus_access_token") || "";
-  input.addEventListener("input", () => {
-    const token = input.value.trim();
-    if (token) sessionStorage.setItem("optimus_access_token", token);
-    else sessionStorage.removeItem("optimus_access_token");
-  });
-}
-
-function authHeaders() {
-  const headers = { "Content-Type": "application/json" };
-  const accessToken = $("access-token").value.trim();
-  if (accessToken) headers.Authorization = `Bearer ${accessToken}`;
-  return headers;
-}
-
-function apiUrl(path) {
-  return `${API_BASE_URL}${path}`;
-}
-
 function apiFetch(path, options = {}) {
-  const { auth = true, headers = {}, ...fetchOptions } = options;
-  return fetch(apiUrl(path), {
+  const { headers = {}, ...fetchOptions } = options;
+  return fetch(path, {
     ...fetchOptions,
-    headers: auth ? { ...authHeaders(), ...headers } : headers,
+    credentials: "same-origin",
+    headers,
   });
 }
 
@@ -102,8 +77,109 @@ function apiError(response, data, fallback) {
   return new Error(`${fallback} (HTTP ${response.status})`);
 }
 
+function setAuthState(authenticated, user = null, expiresAt = null) {
+  state.auth = { authenticated, user, expiresAt };
+  $("topbar-login-link").hidden = authenticated;
+  $("topbar-logout").hidden = !authenticated;
+  $("system-login-link").hidden = authenticated;
+  $("system-logout").hidden = !authenticated;
+
+  if (authenticated && user) {
+    $("operator-name").textContent = user.display_name || user.username;
+    $("operator-role").textContent = user.role;
+    $("system-auth-state").textContent = "Authenticated";
+    $("system-auth-detail").textContent = expiresAt
+      ? `Session active until ${new Date(expiresAt).toLocaleString()}.`
+      : "Session active.";
+    $("auth-status-title").textContent = "Signed in";
+    $("auth-status-detail").textContent = "Authenticated workflows are available.";
+    return;
+  }
+
+  $("operator-name").textContent = "Signed out";
+  $("operator-role").textContent = "Authentication required";
+  $("system-auth-state").textContent = "Authentication required";
+  $("system-auth-detail").textContent = "Sign in before using chat, estimates, or location research.";
+  $("auth-status-title").textContent = "Authentication required";
+  $("auth-status-detail").textContent = "Sign in before using chat, estimates, or location research.";
+}
+
+async function loadSession() {
+  try {
+    const response = await apiFetch("/api/auth/me", { cache: "no-store" });
+    const data = await readApiPayload(response);
+    if (response.status === 401) {
+      setAuthState(false);
+      return false;
+    }
+    if (!response.ok || !data) throw apiError(response, data, "Session check failed");
+    setAuthState(true, data.user, data.expires_at);
+    return true;
+  } catch (error) {
+    setAuthState(false);
+    showToast(`Session check failed: ${error.message}`, "error");
+    return false;
+  }
+}
+
+async function requireAuthenticated(view = "login") {
+  if (state.auth.authenticated) return true;
+  await loadSession();
+  if (state.auth.authenticated) return true;
+  showToast("Sign in is required for this workflow.", "error");
+  navigate(view);
+  return false;
+}
+
+async function handleLoginSubmit(event) {
+  event.preventDefault();
+  const submit = $("login-submit");
+  submit.disabled = true;
+  submit.textContent = "Signing in…";
+  try {
+    const response = await apiFetch("/api/auth/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        username: $("login-username").value.trim(),
+        password: $("login-password").value,
+      }),
+    });
+    const data = await readApiPayload(response);
+    if (!response.ok || !data) throw apiError(response, data, "Sign-in failed");
+    setAuthState(true, data.user, data.expires_at);
+    $("login-password").value = "";
+    showToast("Signed in.", "success");
+    navigate("dashboard");
+  } catch (error) {
+    setAuthState(false);
+    showToast(`Sign-in failed: ${error.message}`, "error");
+  } finally {
+    submit.disabled = false;
+    submit.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m10 17 5-5-5-5v10Zm-6 4V3h2v18H4Zm14 0h2V3h-2v18Z"/></svg> Sign in';
+  }
+}
+
+async function performLogout() {
+  try {
+    const response = await apiFetch("/api/auth/logout", { method: "POST" });
+    const data = await readApiPayload(response);
+    if (!response.ok) throw apiError(response, data, "Sign-out failed");
+  } catch (error) {
+    showToast(`Sign-out failed: ${error.message}`, "error");
+  } finally {
+    setAuthState(false);
+    state.chatHistory = [];
+    navigate("login");
+  }
+}
+
 function navigate(view) {
   if (!viewMeta[view]) return;
+  if (view !== "login" && !state.auth.authenticated) {
+    history.replaceState(null, "", "/login");
+    return navigate("login");
+  }
   state.currentView = view;
   $$('[data-view-panel]').forEach((panel) => {
     const active = panel.dataset.viewPanel === view;
@@ -122,13 +198,29 @@ function navigate(view) {
   $("view-title").textContent = viewMeta[view].title;
   $("sidebar").classList.remove("is-open");
   $("mobile-menu").setAttribute("aria-expanded", "false");
+  if (view === "login") history.replaceState(null, "", "/login");
+  else if (window.location.pathname === "/login") history.replaceState(null, "", "/");
   window.scrollTo({ top: 0, behavior: "smooth" });
   if (view === "chat") window.setTimeout(() => $("chat-message").focus(), 180);
+  if (view === "login") window.setTimeout(() => $("login-username").focus(), 180);
 }
 
 function initializeNavigation() {
   $$('[data-view]').forEach((button) => {
     button.addEventListener("click", () => navigate(button.dataset.view));
+  });
+  $("topbar-login-link").addEventListener("click", (event) => {
+    event.preventDefault();
+    navigate("login");
+  });
+  $("system-login-link").addEventListener("click", (event) => {
+    event.preventDefault();
+    navigate("login");
+  });
+  ["topbar-logout", "system-logout"].forEach((id) => {
+    $(id).addEventListener("click", () => {
+      void performLogout();
+    });
   });
   $("mobile-menu").addEventListener("click", () => {
     const sidebar = $("sidebar");
@@ -403,6 +495,7 @@ async function runChat(message) {
   try {
     const response = await apiFetch("/api/chat", {
       method: "POST",
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         message: text,
         mode: $("chat-mode").value,
@@ -434,6 +527,7 @@ async function runChat(message) {
 function initializeChat() {
   $("chat-form").addEventListener("submit", async (event) => {
     event.preventDefault();
+    if (!await requireAuthenticated("login")) return;
     const input = $("chat-message");
     const message = input.value.trim();
     if (!message) return;
@@ -447,6 +541,7 @@ function initializeChat() {
     }
   });
   $("dashboard-send").addEventListener("click", async () => {
+    if (!await requireAuthenticated("login")) return;
     const input = $("dashboard-command");
     const message = input.value.trim();
     if (!message) {
@@ -568,6 +663,7 @@ function initializeEstimate() {
   ["labor-rate", "mobile-fee", "supplies", "tax-rate"].forEach((id) => $(id).addEventListener("input", savePricingPreferences));
   $("estimate-form").addEventListener("submit", async (event) => {
     event.preventDefault();
+    if (!await requireAuthenticated("login")) return;
     const submit = $("submit");
     const result = $("result");
     const location = locationPayload();
@@ -595,6 +691,7 @@ function initializeEstimate() {
     try {
       const response = await apiFetch("/api/estimate", {
         method: "POST",
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
       const data = await readApiPayload(response);
@@ -624,7 +721,7 @@ function setStatus(id, text, online = null) {
 
 async function loadHealth(showNotification = false) {
   try {
-    const response = await apiFetch("/health", { auth: false, cache: "no-store" });
+    const response = await apiFetch("/health", { cache: "no-store" });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const data = await response.json();
     state.health = data;
@@ -660,16 +757,16 @@ async function loadHealth(showNotification = false) {
 function initializeSystem() {
   $("refresh-health").addEventListener("click", () => loadHealth(true));
   $("system-refresh-health").addEventListener("click", () => loadHealth(true));
-  $("toggle-token").addEventListener("click", () => {
-    const input = $("access-token");
-    const show = input.type === "password";
-    input.type = show ? "text" : "password";
-    $("toggle-token").textContent = show ? "Hide" : "Show";
+}
+
+function initializeAuth() {
+  $("login-form").addEventListener("submit", (event) => {
+    void handleLoginSubmit(event);
   });
 }
 
 function initializeApp() {
-  initializeToken();
+  setAuthState(false);
   initializeNavigation();
   initializeTilt();
   loadSavedPreferences();
@@ -677,7 +774,16 @@ function initializeApp() {
   initializeChat();
   initializeEstimate();
   initializeSystem();
-  loadHealth(false);
+  initializeAuth();
+  if (window.location.pathname === "/login") navigate("login");
+  void loadSession().then((authenticated) => {
+    if (!authenticated) {
+      navigate("login");
+      return;
+    }
+    if (window.location.pathname === "/login") navigate("dashboard");
+  });
+  void loadHealth(false);
   window.setInterval(() => loadHealth(false), 60000);
 }
 

@@ -5,6 +5,8 @@ import random
 from decimal import ROUND_HALF_UP, Decimal
 from pathlib import Path
 
+from pydantic import HttpUrl
+
 from app.config import Settings
 from app.control import OptimusConversationRouter
 from app.models import Availability, ChatRequest, Confidence, ConversationMode, PartOption
@@ -55,7 +57,9 @@ def routing_backtest() -> int:
     for _ in range(5000):
         phrase = random.choice(price_phrases)
         vehicle = random.choice(vehicles)
-        plan = router.plan(ChatRequest(message=f"{phrase} for a {vehicle}", mode="auto"))
+        plan = router.plan(
+            ChatRequest(message=f"{phrase} for a {vehicle}", mode=ConversationMode.AUTO)
+        )
         assert plan.consultations == ()
         assert plan.owner_visible_speaker == "optimus"
         checks += 1
@@ -75,18 +79,24 @@ def routing_backtest() -> int:
 def authority_backtest() -> int:
     checks = 0
     for _ in range(2500):
-        assert approval_for_action(random.choice(["search", "lookup_price", "estimate"])).required is False
+        assert (
+            approval_for_action(random.choice(["search", "lookup_price", "estimate"])).required
+            is False
+        )
         assert approval_for_action("edit_code", origin="owner").required is False
-        assert approval_for_action(
-            "send_message", origin="owner", explicit_owner_instruction=True
-        ).required is False
+        assert (
+            approval_for_action(
+                "send_message", origin="owner", explicit_owner_instruction=True
+            ).required
+            is False
+        )
         assert approval_for_action("purchase", origin="owner").required is True
-        assert approval_for_action(
-            "purchase", origin="owner", current_turn_confirmation=True
-        ).required is False
+        assert (
+            approval_for_action("purchase", origin="owner", current_turn_confirmation=True).required
+            is False
+        )
         checks += 5
     return checks
-
 
 
 def estimator_selection_backtest() -> int:
@@ -107,7 +117,7 @@ def estimator_selection_backtest() -> int:
                 retailer=f"Retailer {candidate}",
                 unit_price=random.uniform(1, 5000),
                 availability=random.choice(availability_values),
-                url=f"https://example.com/{index}/{candidate}",
+                url=HttpUrl(f"https://example.com/{index}/{candidate}"),
                 confidence=random.choice(confidence_values),
             )
             for candidate in range(3)
@@ -145,6 +155,7 @@ def url_security_backtest() -> int:
         else:
             raise AssertionError(f"Unsafe URL was accepted: {candidate}")
     return checks
+
 
 def main() -> None:
     estimate_checks = estimate_backtest()

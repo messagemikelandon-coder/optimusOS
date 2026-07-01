@@ -39,6 +39,9 @@ This is a single-confirmation model. It prevents agents from inferring irreversi
 
 ## API protection
 
-- Set `OPTIMUS_ACCESS_TOKEN` for any deployment beyond a private localhost session.
+- Set `OPTIMUS_OWNER_USERNAME` and `OPTIMUS_OWNER_PASSWORD` before bootstrapping the first owner account.
+- Passwords are stored only as Argon2id hashes in `user_accounts`.
+- Session tokens are issued to an HttpOnly cookie and only their SHA-256 hashes are stored in `auth_sessions`.
+- The bootstrap command creates the first owner only when no owner exists; startup does not overwrite an existing owner password.
 - Chat and estimate requests are rate-limited by client address.
 - Use HTTPS for remote browser geolocation.
