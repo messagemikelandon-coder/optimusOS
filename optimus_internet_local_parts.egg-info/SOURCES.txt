@@ -29,8 +29,11 @@ local.bat
 pyproject.toml
 app/__init__.py
 app/auth.py
+app/bootstrap_owner.py
 app/config.py
 app/control.py
+app/db.py
+app/db_models.py
 app/errors.py
 app/main.py
 app/models.py
@@ -64,12 +67,15 @@ scripts/check_openai.py
 scripts/diagnose_estimator.py
 scripts/diagnose_openai_config.py
 scripts/open_when_ready.ps1
+scripts/optimus_worker.py
 scripts/regression_backtest.py
 scripts/reset_openai_key.ps1
 scripts/validate_runtime.py
 scripts/windows_setup.ps1
+tests/__init__.py
 tests/conftest.py
 tests/test_api.py
+tests/test_auth.py
 tests/test_chat_service.py
 tests/test_config_precedence.py
 tests/test_control.py

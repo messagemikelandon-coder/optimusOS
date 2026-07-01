@@ -1,0 +1,4 @@
+[mcp_servers.openai_docs]
+url = "https://developers.openai.com/mcp"
+required = true
+default_tools_approval_mode = "approve"

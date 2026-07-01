@@ -2,9 +2,13 @@ fastapi<1,>=0.115
 uvicorn[standard]<1,>=0.30
 openai<3,>=1.100
 httpx<1,>=0.27
+argon2-cffi<26,>=23.1
 pydantic<3,>=2.8
 pydantic-settings<3,>=2.4
 python-dotenv<2,>=1.0
+alembic<2,>=1.13
+psycopg[binary]<4,>=3.2
+sqlalchemy>=2.0.51
 
 [dev]
 pytest<10,>=8

@@ -9,3 +9,6 @@ node_modules/
 *.pyc
 *.log
 backups/
+
+# Python packaging output
+*.egg-info/
