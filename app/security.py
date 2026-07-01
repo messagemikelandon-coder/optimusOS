@@ -40,7 +40,9 @@ def validate_https_url(url: str, allowed_hosts: tuple[str, ...] | None = None) -
     hostname = parsed.hostname.lower().rstrip(".")
     if allowed_hosts:
         normalized = {host.lower().rstrip(".") for host in allowed_hosts}
-        if hostname not in normalized and not any(hostname.endswith(f".{host}") for host in normalized):
+        if hostname not in normalized and not any(
+            hostname.endswith(f".{host}") for host in normalized
+        ):
             raise UnsafeUrlError(f"Host is not allowlisted: {hostname}")
 
     if not _hostname_is_public(hostname):
@@ -153,7 +155,9 @@ def approval_for_action(
                 False,
                 "The owner's explicit instruction in the current request is the approval.",
             )
-        return ApprovalDecision(True, "External side effects require an explicit owner instruction.")
+        return ApprovalDecision(
+            True, "External side effects require an explicit owner instruction."
+        )
 
     if normalized in FINANCIAL_OR_DESTRUCTIVE_ACTIONS:
         if current_turn_confirmation and (owner_direct or delegated_by_optimus):
@@ -163,8 +167,10 @@ def approval_for_action(
             "Money movement or destructive actions require current-turn owner confirmation.",
         )
 
-    if autonomy_mode == "owner_full_control" and explicit_owner_instruction and (
-        owner_direct or delegated_by_optimus
+    if (
+        autonomy_mode == "owner_full_control"
+        and explicit_owner_instruction
+        and (owner_direct or delegated_by_optimus)
     ):
         return ApprovalDecision(False, "Unknown action allowed by explicit owner instruction.")
 

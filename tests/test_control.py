@@ -6,9 +6,7 @@ from app.models import AgentName, ChatRequest, ConversationMode
 
 
 def router() -> OptimusConversationRouter:
-    return OptimusConversationRouter(
-        Settings(openai_api_key="test", max_agent_consultations=3)
-    )
+    return OptimusConversationRouter(Settings(openai_api_key="test", max_agent_consultations=3))
 
 
 def test_price_lookup_stays_direct_to_optimus() -> None:

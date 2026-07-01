@@ -24,6 +24,10 @@ migrate() {
   compose run --rm backend alembic upgrade head
 }
 
+bootstrap_owner() {
+  compose run --rm backend python -m app.bootstrap_owner
+}
+
 seed() {
   compose exec -T postgres psql -U "${POSTGRES_USER:-optimus}" -d "${POSTGRES_DB:-optimus_os}" -v ON_ERROR_STOP=1 < "$ROOT/ops/db/002_seed_demo_data.sql"
 }
@@ -47,6 +51,9 @@ case "${1:-help}" in
     ;;
   migrate)
     migrate
+    ;;
+  bootstrap-owner)
+    bootstrap_owner
     ;;
   seed)
     seed
@@ -80,6 +87,7 @@ Commands:
   status    Show container status
   logs      Follow logs, optionally pass service names
   migrate   Apply local PostgreSQL foundation migration
+  bootstrap-owner  Create the first owner account if none exists
   seed      Insert synthetic demonstration data
   backup    Write a local PostgreSQL dump under backups/
   update    Pull base images, rebuild backend/worker, and restart

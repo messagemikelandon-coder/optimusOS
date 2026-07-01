@@ -92,9 +92,7 @@ class FakeResponses:
             {
                 "type": "web_search_call",
                 "action": {
-                    "sources": [
-                        {"url": "https://www.autozone.com/test", "title": "AutoZone test"}
-                    ]
+                    "sources": [{"url": "https://www.autozone.com/test", "title": "AutoZone test"}]
                 },
             }
         ]
@@ -118,7 +116,7 @@ class FakeClient:
         self.responses = FakeResponses(fail_structured=fail_structured)
 
 
-def service(client: FakeClient) -> OpenAIWebResearchService:
+def service(client: Any) -> OpenAIWebResearchService:
     return OpenAIWebResearchService(
         Settings(
             openai_api_key="test",
@@ -160,6 +158,7 @@ def test_structured_failure_uses_json_compatibility_fallback() -> None:
     assert client.responses.create_calls == 1
     assert client.responses.last_create_kwargs is not None
     assert "Compatibility mode" in client.responses.last_create_kwargs["input"][-1]["content"]
+    assert "text" not in client.responses.last_create_kwargs
     assert result.research_mode == "json_fallback"
     assert any("compatibility parser" in warning for warning in result.warnings)
 
@@ -192,3 +191,118 @@ def test_json_fallback_receives_an_explicit_valid_json_contract() -> None:
     client = FakeClient(fail_structured=True)
     run_research(client)
     assert client.responses.create_calls == 1
+
+
+class RetryFallbackResponses(FakeResponses):
+    def create(self, **kwargs):  # type: ignore[no-untyped-def]
+        self.create_calls += 1
+        self.last_create_kwargs = kwargs
+        if self.create_calls == 1:
+            return FakeResponse(output_text='{"labor":')
+        payload = self.envelope().model_dump(mode="json")
+        return FakeResponse(output=self.sources(), output_text=json.dumps(payload))
+
+
+class RetryFallbackClient:
+    def __init__(self) -> None:
+        self.responses = RetryFallbackResponses(fail_structured=True)
+
+
+def test_json_fallback_retries_once_after_invalid_json() -> None:
+    client = RetryFallbackClient()
+    result = service(client).research(
+        vehicle=DecodedVehicle(year=2020, make="Toyota", model="Camry"),
+        job="Replace front brake pads",
+        location=ResolvedLocation(city="Rocklin", region="CA", postal_code="95677"),
+    )
+
+    assert client.responses.parse_calls == 1
+    assert client.responses.create_calls == 2
+    assert result.research_mode == "json_fallback"
+
+
+class PartialFallbackResponses(FakeResponses):
+    def create(self, **kwargs):  # type: ignore[no-untyped-def]
+        self.create_calls += 1
+        self.last_create_kwargs = kwargs
+        return FakeResponse(
+            output=self.sources(),
+            output_text=json.dumps(
+                {
+                    "labor": {"book_hours": "2.0"},
+                    "parts": {"requirements": [{"part_name": "Brake pad set"}]},
+                    "summary": "Partial payload",
+                }
+            ),
+        )
+
+
+class PartialFallbackClient:
+    def __init__(self) -> None:
+        self.responses = PartialFallbackResponses(fail_structured=True)
+
+
+def test_json_fallback_coerces_partial_schema_to_safe_defaults() -> None:
+    client = PartialFallbackClient()
+    result = service(client).research(
+        vehicle=DecodedVehicle(year=2020, make="Toyota", model="Camry"),
+        job="Replace front brake pads",
+        location=ResolvedLocation(city="Rocklin", region="CA", postal_code="95677"),
+    )
+
+    assert result.research_mode == "json_fallback"
+    assert result.labor.book_hours == 2.0
+    assert result.labor.practical_hours_low == 0.0
+    assert result.parts.requirements[0].part_name == "Brake pad set"
+    assert result.parts.requirements[0].options == []
+
+
+class MarkdownFallbackResponses(FakeResponses):
+    def create(self, **kwargs):  # type: ignore[no-untyped-def]
+        self.create_calls += 1
+        self.last_create_kwargs = kwargs
+        return FakeResponse(
+            output=self.sources(),
+            output_text="""
+**Labor:**
+- **Book Time:** Approximately 1.0 to 1.5 hours per axle.
+- **Practical Time:** 1.0 to 1.5 hours per axle.
+- **Confidence:** High
+- **Basis:** Industry standards and manufacturer recommendations.
+- **Special Tools:** None identified.
+- **Risk Flags:** None identified.
+
+**Parts:**
+- Front brake pad set (quantity: 1 set).
+    - Powerstop Z17 Evolution Plus Ceramic Brake Pad Set (Part Number: 17-1324) priced at $57.99. ([autozone.com](https://www.autozone.com/test))
+
+**Notes:**
+- Replace pads in pairs.
+
+**Summary:**
+Brake pad research summary.
+
+**Warnings:**
+- Verify rotor condition.
+""".strip(),
+        )
+
+
+class MarkdownFallbackClient:
+    def __init__(self) -> None:
+        self.responses = MarkdownFallbackResponses(fail_structured=True)
+
+
+def test_markdown_fallback_is_coerced_into_structured_research() -> None:
+    client = MarkdownFallbackClient()
+    result = service(client).research(
+        vehicle=DecodedVehicle(year=2020, make="Toyota", model="Camry"),
+        job="Replace front brake pads",
+        location=ResolvedLocation(city="Rocklin", region="CA", postal_code="95677"),
+    )
+
+    assert result.research_mode == "json_fallback"
+    assert result.labor.book_hours == 1.5
+    assert result.parts.requirements[0].part_name == "Front brake pad set"
+    assert result.parts.requirements[0].options[0].unit_price == 57.99
+    assert result.summary == "Brake pad research summary."

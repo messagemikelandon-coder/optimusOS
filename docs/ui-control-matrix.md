@@ -4,49 +4,46 @@ Date: 2026-07-01
 
 Status meanings:
 
-- `Pass`: exercised in the live browser and observed working as intended for its available scope.
-- `Fail`: exercised in the live browser or API and observed not completing the intended workflow.
-- `Source-only`: wiring is present in the current frontend source, but this specific control was not separately exercised in the browser.
-- `Not reachable`: control exists but its success state could not be reached from the current baseline.
-- `Missing`: requested workflow/control is not present in the current frontend.
+- `Pass`: exercised live and completed the intended workflow.
+- `Expected auth guard`: exercised live and intentionally returned the required `401` or login redirect.
+- `Source-only`: present in source, not separately exercised beyond equivalent handlers.
+- `Missing`: not part of the current frontend scope.
 
 | Control | Selector or label | Intended action | Backend dependency | Auth required | Observed result | Status |
 | --- | --- | --- | --- | --- | --- | --- |
-| Primary nav `Command deck` | `button[data-view="dashboard"]` | Show dashboard | None | No | Dashboard is the default active view | Pass |
-| Primary nav `Talk to Optimus` | `button[data-view="chat"]` | Show chat view | None | No | Chat view opens in browser audit | Pass |
-| Primary nav `Job estimator` | `button[data-view="estimate"]` | Show estimate view | None | No | Estimate view opens in browser audit | Pass |
-| Primary nav `System bay` | `button[data-view="system"]` | Show system view | None | No | System view opens in browser audit | Pass |
-| Hero `Talk to Optimus` | button label `Talk to Optimus` | Navigate to chat | None | No | Chat view became active | Pass |
-| Hero `Build an estimate` | button label `Build an estimate` | Navigate to estimate | None | No | Estimate view became active | Pass |
-| Topbar location chip | `button.location-chip` | Navigate to system settings | None | No | System view became active | Pass |
-| Mobile menu | `#mobile-menu` | Toggle sidebar on mobile | None | No | `aria-expanded` changed to `true`, sidebar opened | Pass |
-| Dashboard prompt `Decode VIN` | button label `Decode VIN` | Navigate to chat and prefill prompt | None until submit | No | Chat opened and prompt text was filled | Pass |
-| Dashboard prompt `Diagnose a fault` | button label `Diagnose a fault` | Navigate to chat and prefill prompt | None until submit | No | Source wiring present; not separately exercised | Source-only |
-| Dashboard prompt `Find parts` | button label `Find parts` | Navigate to chat and prefill prompt | None until submit | No | Source wiring present; not separately exercised | Source-only |
-| Dashboard prompt `Price a job` | button label `Price a job` | Navigate to estimate | None | No | Source wiring present; same handler pattern as other view buttons | Source-only |
-| Dashboard `Run command` | `#dashboard-send` | Submit chat request | `POST /api/chat` | Yes | Browser showed visible `Command failed` state after `401` | Fail |
-| Chat `Send` | `#chat-submit` | Submit chat request | `POST /api/chat` | Yes | Browser showed visible `Command failed` state after `401` | Fail |
-| Chat quick command `Parts search` | `.context-action.quick-prompt` | Prefill chat prompt | None until submit | No | Source wiring present; not separately exercised | Source-only |
-| Chat quick command `Labor research` | `.context-action.quick-prompt` | Prefill chat prompt | None until submit | No | Source wiring present; not separately exercised | Source-only |
-| Chat quick command `Diagnostic plan` | `.context-action.quick-prompt` | Prefill chat prompt | None until submit | No | Source wiring present; not separately exercised | Source-only |
-| Chat quick command `Structured estimate` | `.context-action[data-view="estimate"]` | Navigate to estimate | None | No | Source wiring present; same handler pattern as other view buttons | Source-only |
-| Estimate submit `Research and estimate` | `#submit` | Submit estimate request | `POST /api/estimate` | Yes | With ZIP set, browser showed visible estimate error after `401` | Fail |
-| Estimate result `Copy estimate` | `#copy-estimate` | Copy rendered estimate text | Successful estimate render first | No | Result actions never rendered because estimate flow failed before success | Not reachable |
-| Estimate result `Print estimate` | `#print-estimate` | Print rendered estimate | Successful estimate render first | No | Result actions never rendered because estimate flow failed before success | Not reachable |
-| Estimate result `Start another` | `#new-estimate` | Reset form and hide result | Successful estimate render first | No | Result actions never rendered because estimate flow failed before success | Not reachable |
-| System `Show/Hide` token | `#toggle-token` | Toggle token field visibility | None | No | Source wiring present; not separately exercised | Source-only |
-| System `Use current location` | `#use-location` | Request geolocation and persist coordinates | Browser geolocation only | Browser permission | Not exercised in this audit run | Not reachable |
-| System `Refresh` | `#refresh-health` | Refresh health status from dashboard panel | `GET /health` | No | Health endpoint healthy; same `loadHealth()` handler as system check | Source-only |
-| System `Run check` | `#system-refresh-health` | Refresh health status from system view | `GET /health` | No | Browser showed `Online` backend state | Pass |
-| Location resolution API path | frontend helper only | Resolve ZIP/city to structured location | `POST /api/location/resolve` | Yes | Direct API probe returned `401` without token | Fail |
-| Login control | none found | Acquire or establish access token | Expected auth route/UI | Yes | No login control found in current UI | Missing |
-| Customer module | none found | Customer CRUD workflow | Expected `/api/customers` | Likely | No frontend screen or backend route found | Missing |
-| Vehicle module | none found | Vehicle CRUD workflow | Expected `/api/vehicles` | Likely | No frontend screen or backend route found | Missing |
-| Work-order module | none found | Work-order workflow | Expected `/api/work-orders` | Likely | No frontend screen or backend route found | Missing |
-| Approval queue module | none found | Approval workflow | Expected `/api/approvals` | Likely | No frontend screen or backend route found | Missing |
+| Login screen | `/login` | Render unauthenticated sign-in screen | `GET /api/auth/me` | No | Login view rendered correctly | Pass |
+| Login submit | `#login-form` | Authenticate owner session | `POST /api/auth/login` | No | Invalid fixture login showed visible failure; valid login established session | Pass |
+| Session restore | page reload | Restore server-side session from cookie | `GET /api/auth/me` | Yes | Reload kept the owner signed in | Pass |
+| Logout | `#topbar-logout`, `#system-logout` | Revoke session and return to login | `POST /api/auth/logout` | Yes | Logout returned to login and revoked server-side session | Pass |
+| Expired-session return | page reload after forced expiry | Reject expired session and return to login | `GET /api/auth/me` | Yes | Expired session returned browser to `/login` | Pass |
+| Primary nav `Command deck` | `.nav-item[data-view="dashboard"]` | Show dashboard | None | No | Dashboard view active after login | Pass |
+| Primary nav `Talk to Optimus` | `.nav-item[data-view="chat"]` | Show chat | None | No | Chat view opened and worked live | Pass |
+| Primary nav `Job estimator` | `.nav-item[data-view="estimate"]` | Show estimate | None | No | Estimate view opened and rendered live results | Pass |
+| Primary nav `System bay` | `.nav-item[data-view="system"]` | Show system | None | No | System view opened and location/auth state updated | Pass |
+| Dashboard prompt `Decode VIN` | prompt chip | Navigate to chat and prefill prompt | None until submit | No | Handler pattern unchanged; not re-run separately | Source-only |
+| Dashboard `Run command` | `#dashboard-send` | Submit owner chat request | `POST /api/chat` | Yes | Authenticated chat request succeeded with `200` | Pass |
+| Chat submit | `#chat-submit` | Submit owner chat request | `POST /api/chat` | Yes | Authenticated chat request succeeded with `200` | Pass |
+| System ZIP field | `#view-system #postal-code` | Persist location context for research | none until API call | Yes for protected flows | ZIP saved and used by estimate flow | Pass |
+| Location resolution API path | frontend fetch helper | Resolve location for protected workflow | `POST /api/location/resolve` | Yes | Authenticated request returned `200` | Pass |
+| Estimate submit | `#submit` | Run full estimate workflow | `POST /api/estimate` | Yes | Authenticated estimate request returned `200` and rendered result | Pass |
+| Estimate `Copy estimate` | `#copy-estimate` | Copy rendered estimate text | successful estimate render | No | Available after live estimate render; not separately asserted | Source-only |
+| Estimate `Print estimate` | `#print-estimate` | Print rendered estimate | successful estimate render | No | Available after live estimate render; not separately asserted | Source-only |
+| Estimate `Start another` | `#new-estimate` | Reset estimate result | successful estimate render | No | Available after live estimate render; not separately asserted | Source-only |
+| Runtime check | `#system-refresh-health` | Verify backend state | `GET /health` | No | Health check remained online during audit | Pass |
+| HttpOnly session cookie | browser cookie store | Deliver browser session token securely | `Set-Cookie` from login | Yes | `optimus_session` received with `HttpOnly` and `SameSite=Lax` | Pass |
+| Raw token storage prevention | database session storage | Store only token hash | `auth_sessions` | Yes | Raw session token not stored in DB | Pass |
+| Browser token storage prevention | `localStorage`, `sessionStorage` | Avoid bearer-token storage | None | Yes | No bearer token or raw session token stored | Pass |
+| Unauthenticated `GET /api/auth/me` | initial load | Reject anonymous session lookup | `GET /api/auth/me` | No | Returned `401` as expected | Expected auth guard |
+| Invalid login | fixture credentials | Reject bad credentials | `POST /api/auth/login` | No | Returned `401` with visible failure feedback | Expected auth guard |
+| Post-logout session check | after sign-out | Reject revoked session | `GET /api/auth/me` | No | Returned `401` as expected | Expected auth guard |
+| Post-expiry session check | after forced expiry | Reject expired session | `GET /api/auth/me` | No | Returned `401` as expected | Expected auth guard |
+| Customer module | none found | Customer CRUD workflow | expected future API | Likely | Not present in current frontend scope | Missing |
+| Vehicle module | none found | Vehicle CRUD workflow | expected future API | Likely | Not present in current frontend scope | Missing |
+| Work-order module | none found | Work-order workflow | expected future API | Likely | Not present in current frontend scope | Missing |
+| Approval queue module | none found | Approval workflow | expected future API | Likely | Not present in current frontend scope | Missing |
 
 ## Notes
 
-- The current frontend stores a bearer token in `sessionStorage` and attaches it to protected requests when the system token field is populated.
-- The backend currently exposes protected chat, estimate, and location endpoints, but no login endpoint was found for obtaining a token from the UI.
-- Protected flows fail visibly. They are not silent, but they are still failed user workflows in the current baseline.
+- The current live frontend uses server-side cookie auth and no browser-stored bearer token.
+- Existing end-to-end scope now passes for login, chat, estimate, location, logout, and expired-session handling.
+- Missing business modules remain out of scope for this branch and were not started here.

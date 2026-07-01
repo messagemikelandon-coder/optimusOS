@@ -3,20 +3,36 @@ from __future__ import annotations
 import asyncio
 import logging
 import socket
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Any
 from urllib.parse import urlparse
 
-from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
+from sqlalchemy.orm import Session
 
 from app import __version__
-from app.auth import require_access_token
+from app.auth import (
+    AuthContext,
+    authenticate_user,
+    clear_session_cookie,
+    create_auth_session,
+    get_current_auth_context,
+    require_authenticated_user,
+    set_session_cookie,
+)
 from app.config import Settings, get_settings
+from app.db import get_db_session
+from app.db_models import UserAccount
 from app.errors import EstimatorResearchError
 from app.models import (
+    AuthLoginRequest,
+    AuthMeResponse,
+    AuthSessionResponse,
+    AuthUser,
     ChatRequest,
     ChatResponse,
     EstimateRequest,
@@ -34,6 +50,9 @@ logging.basicConfig(level=get_settings().log_level)
 logger = logging.getLogger("optimus")
 STATIC_DIR = Path(__file__).parent / "static"
 SettingsDep = Annotated[Settings, Depends(get_settings)]
+DbSessionDep = Annotated[Session, Depends(get_db_session)]
+AuthContextDep = Annotated[AuthContext, Depends(get_current_auth_context)]
+CurrentUserDep = Annotated[UserAccount, Depends(require_authenticated_user)]
 
 app = FastAPI(
     title="Optimus Command Center | Landon Motor Works",
@@ -44,9 +63,9 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=("http://127.0.0.1:5173", "http://localhost:5173"),
-    allow_credentials=False,
+    allow_credentials=True,
     allow_methods=("GET", "POST", "OPTIONS"),
-    allow_headers=("Authorization", "Content-Type"),
+    allow_headers=("Content-Type",),
 )
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 _rate_limiter: SlidingWindowRateLimiter | None = None
@@ -85,7 +104,7 @@ async def security_headers(request: Request, call_next):  # type: ignore[no-unty
     response.headers["Permissions-Policy"] = "geolocation=(self)"
     response.headers["Content-Security-Policy"] = (
         "default-src 'self'; script-src 'self'; style-src 'self'; "
-        "img-src 'self' data:; connect-src 'self' http://127.0.0.1:8000 http://localhost:8000; frame-ancestors 'none'; base-uri 'self'; "
+        "img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; "
         "form-action 'self'"
     )
     return response
@@ -93,6 +112,11 @@ async def security_headers(request: Request, call_next):  # type: ignore[no-unty
 
 @app.get("/", include_in_schema=False)
 async def index() -> FileResponse:
+    return FileResponse(STATIC_DIR / "index.html")
+
+
+@app.get("/login", include_in_schema=False)
+async def login_index() -> FileResponse:
     return FileResponse(STATIC_DIR / "index.html")
 
 
@@ -109,6 +133,9 @@ async def health(settings: SettingsDep) -> dict[str, str | bool]:
         "agent_delegation_enabled": settings.agent_delegation_enabled,
         "estimator_model": settings.estimator_model,
         "estimator_fallback_model": settings.openai_fallback_model,
+        "auth_configured": bool(
+            settings.optimus_owner_username and settings.optimus_owner_password
+        ),
     }
 
 
@@ -139,28 +166,81 @@ async def ready(settings: SettingsDep) -> dict[str, object]:
     }
 
 
+def auth_user_response(user: Any) -> AuthUser:
+    return AuthUser.model_validate(user)
+
+
+@app.post("/api/auth/login", response_model=AuthSessionResponse)
+async def login(
+    payload: AuthLoginRequest,
+    request: Request,
+    response: Response,
+    db: DbSessionDep,
+    settings: SettingsDep,
+) -> AuthSessionResponse:
+    user = authenticate_user(db=db, username=payload.username, password=payload.password)
+    if user is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid username or password."
+        )
+
+    session_token, auth_session = create_auth_session(
+        db=db, settings=settings, user=user, request=request
+    )
+    set_session_cookie(response, settings, session_token, auth_session.expires_at)
+    return AuthSessionResponse(
+        user=auth_user_response(user),
+        expires_at=auth_session.expires_at,
+        session_expires_in_seconds=settings.session_ttl_hours * 3600,
+    )
+
+
+@app.post("/api/auth/logout")
+async def logout(
+    response: Response,
+    db: DbSessionDep,
+    settings: SettingsDep,
+    auth: AuthContextDep,
+) -> dict[str, bool]:
+    auth.session.revoked_at = auth.session.revoked_at or datetime.now(UTC)
+    db.add(auth.session)
+    db.commit()
+    clear_session_cookie(response, settings)
+    return {"ok": True}
+
+
+@app.get("/api/auth/me", response_model=AuthMeResponse)
+async def auth_me(auth: AuthContextDep) -> AuthMeResponse:
+    return AuthMeResponse(
+        user=auth_user_response(auth.user),
+        expires_at=auth.session.expires_at,
+    )
+
+
 @app.post(
     "/api/location/resolve",
     response_model=ResolvedLocation,
-    dependencies=[Depends(require_access_token)],
 )
 async def resolve_location(
     location: LocationInput,
     settings: SettingsDep,
+    current_user: CurrentUserDep,
 ) -> ResolvedLocation:
+    del current_user
     return await location_service(settings).resolve(location)
 
 
 @app.post(
     "/api/chat",
     response_model=ChatResponse,
-    dependencies=[Depends(require_access_token)],
 )
 async def chat(
     payload: ChatRequest,
     request_context: Request,
     settings: SettingsDep,
+    current_user: CurrentUserDep,
 ) -> ChatResponse:
+    del current_user
     await enforce_rate_limit(request_context, settings)
     if len(payload.message) > settings.max_chat_text_length:
         raise HTTPException(status_code=422, detail="Message is too long.")
@@ -190,13 +270,14 @@ async def chat(
 @app.post(
     "/api/estimate",
     response_model=EstimateResponse,
-    dependencies=[Depends(require_access_token)],
 )
 async def estimate(
     request: EstimateRequest,
     request_context: Request,
     settings: SettingsDep,
+    current_user: CurrentUserDep,
 ) -> EstimateResponse:
+    del current_user
     await enforce_rate_limit(request_context, settings)
 
     if len(request.job) > settings.max_job_text_length:

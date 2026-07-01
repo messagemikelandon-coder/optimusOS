@@ -71,18 +71,61 @@
           <h1 id="view-title">Command deck</h1>
         </div>
         <div class="topbar-actions">
+          <a class="text-button" id="topbar-login-link" href="/login">Sign in</a>
+          <button class="text-button" id="topbar-logout" type="button" hidden>Sign out</button>
           <button class="location-chip" type="button" data-view="system" aria-label="Open location settings">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2a7 7 0 0 0-7 7c0 5.2 7 13 7 13s7-7.8 7-13a7 7 0 0 0-7-7Zm0 10a3 3 0 1 1 0-6 3 3 0 0 1 0 6Z"/></svg>
             <span id="top-location-label">Location not set</span>
           </button>
           <div class="operator-badge" title="Owner access">
             <span>DL</span>
-            <div><strong>Dejake</strong><small>Owner</small></div>
+            <div><strong id="operator-name">Signed out</strong><small id="operator-role">Authentication required</small></div>
           </div>
         </div>
       </header>
 
       <div class="view-stack">
+        <section class="app-view" id="view-login" data-view-panel="login" hidden>
+          <div class="chat-layout">
+            <section class="panel chat-workbench">
+              <div class="panel-heading chat-heading">
+                <div class="heading-with-avatar">
+                  <div class="optimus-avatar"><span class="avatar-core"></span></div>
+                  <div><span class="section-kicker"><i></i> Owner authentication</span><h2>Sign in to Optimus</h2><p>Use the bootstrap owner account configured in the local environment. Sessions stay on the server in an HttpOnly cookie.</p></div>
+                </div>
+              </div>
+
+              <form id="login-form" class="estimate-form-panel">
+                <fieldset>
+                  <legend><span>01</span> Owner credentials</legend>
+                  <div class="form-grid two">
+                    <label class="field">Username <input id="login-username" autocomplete="username" required></label>
+                    <label class="field">Password <input id="login-password" type="password" autocomplete="current-password" required></label>
+                  </div>
+                </fieldset>
+                <div class="estimate-submit-row">
+                  <div><strong id="auth-status-title">Authentication required</strong><span id="auth-status-detail">Sign in before using chat, estimates, or location research.</span></div>
+                  <button class="primary-button large" type="submit" id="login-submit">
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m10 17 5-5-5-5v10Zm-6 4V3h2v18H4Zm14 0h2V3h-2v18Z"/></svg>
+                    Sign in
+                  </button>
+                </div>
+              </form>
+            </section>
+
+            <aside class="chat-context">
+              <section class="panel">
+                <span class="section-kicker"><i></i> Session policy</span>
+                <div class="stacked-actions">
+                  <div class="context-action"><b>01</b><span><strong>Server sessions</strong><small>Only a session-token hash is stored.</small></span></div>
+                  <div class="context-action"><b>02</b><span><strong>Cookie transport</strong><small>Browser JavaScript cannot read the auth cookie.</small></span></div>
+                  <div class="context-action"><b>03</b><span><strong>Owner bootstrap</strong><small>Only the first owner is created from environment values.</small></span></div>
+                </div>
+              </section>
+            </aside>
+          </div>
+        </section>
+
         <section class="app-view is-active" id="view-dashboard" data-view-panel="dashboard">
           <div class="hero-panel tilt-surface" data-tilt-strength="5">
             <div class="hero-copy">
@@ -319,11 +362,18 @@
             </section>
 
             <section class="panel access-panel">
-              <div class="panel-heading"><div><span class="section-kicker"><i></i> Local security</span><h3>Optimus access</h3></div><span class="security-badge">Loopback only</span></div>
-              <label class="field full">Optimus access token
-                <div class="token-control"><input id="access-token" type="password" autocomplete="current-password" placeholder="Automatically loaded by local.bat"><button id="toggle-token" type="button" aria-label="Show or hide access token">Show</button></div>
-                <small>This is the local app token, not the OpenAI API key. It stays in this browser tab.</small>
-              </label>
+              <div class="panel-heading"><div><span class="section-kicker"><i></i> Local security</span><h3>Owner session</h3></div><span class="security-badge">HttpOnly cookie</span></div>
+              <div class="location-display">
+                <div class="location-radar"><span></span></div>
+                <div>
+                  <strong id="system-auth-state">Checking authentication…</strong>
+                  <p id="system-auth-detail">Loading current session state.</p>
+                </div>
+              </div>
+              <div class="estimate-submit-row">
+                <a class="secondary-button compact" id="system-login-link" href="/login">Open sign-in</a>
+                <button class="secondary-button compact" id="system-logout" type="button" hidden>Sign out</button>
+              </div>
             </section>
 
             <section class="panel location-panel">

@@ -66,7 +66,9 @@ class OptimusChatService:
             try:
                 from openai import OpenAI
             except ImportError as exc:
-                raise RuntimeError("The openai package is not installed. Run: pip install -e .") from exc
+                raise RuntimeError(
+                    "The openai package is not installed. Run: pip install -e ."
+                ) from exc
             self._client = OpenAI(
                 api_key=settings.openai_api_key,
                 timeout=settings.openai_timeout_seconds,
@@ -143,7 +145,6 @@ Rules:
 """.strip()
         return self._client.responses.create(
             model=self._settings.openai_model,
-            reasoning={"effort": "medium"},
             tools=cast(Any, self._web_tools(location)),
             include=["web_search_call.action.sources"],
             input=prompt,
@@ -158,9 +159,10 @@ Rules:
         advice: list[tuple[AgentName, str]],
     ) -> Any:
         history = [message.model_dump(mode="json") for message in request.history]
-        advisory_text = "\n\n".join(
-            f"Silent {agent.value} advisory:\n{text}" for agent, text in advice
-        ) or "No specialist consultation was used."
+        advisory_text = (
+            "\n\n".join(f"Silent {agent.value} advisory:\n{text}" for agent, text in advice)
+            or "No specialist consultation was used."
+        )
 
         instructions = f"""
 You are Optimus, the owner-facing manager for Landon Motor Works. Dejake is speaking directly to
@@ -198,7 +200,6 @@ Silent internal advisories:
         ]
         return self._client.responses.create(
             model=self._settings.openai_model,
-            reasoning={"effort": "medium"},
             tools=cast(Any, self._web_tools(location)),
             include=["web_search_call.action.sources"],
             input=cast(Any, input_messages),

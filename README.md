@@ -43,7 +43,7 @@ Preview files are included as `PREVIEW_DESKTOP.png` and `PREVIEW_MOBILE.png`.
 5. Run `CHECK_OPTIMUS.bat` to verify the key, configuration, and tests.
 6. Run `DIAGNOSE_ESTIMATOR.bat` to perform one live labor-and-parts test when troubleshooting estimates.
 
-`local.bat` binds only to `127.0.0.1`. It passes the local Optimus token through a URL fragment that is never sent to the server, stores it in browser session memory, and removes it from the address bar.
+`local.bat` binds only to `127.0.0.1` and opens the sign-in page at `http://127.0.0.1:8000/login`.
 
 ## Upgrades
 
@@ -67,7 +67,7 @@ ALLOW_PUBLIC_HTTPS_PARTS_LINKS=true
 LABOR_RATE=100.00
 ```
 
-The OpenAI API key is separate from the local Optimus access token.
+The OpenAI API key is separate from the bootstrap owner credentials. The owner password is hashed into the database, and browser sessions use an HttpOnly cookie-backed server session.
 
 ## Manual run
 
@@ -83,8 +83,17 @@ uvicorn app.main:app --host 127.0.0.1 --port 8000
 
 Open `http://127.0.0.1:8000`.
 
+Create the first owner account once after migrations:
+
+```bash
+python -m app.bootstrap_owner
+```
+
 ## API endpoints
 
+- `POST /api/auth/login`
+- `POST /api/auth/logout`
+- `GET /api/auth/me`
 - `POST /api/chat`
 - `POST /api/estimate`
 - `POST /api/location/resolve`

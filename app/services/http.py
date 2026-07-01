@@ -15,7 +15,9 @@ class SafeHttpClient:
         self._timeout = httpx.Timeout(timeout_seconds)
         self._allowed_hosts = allowed_hosts
 
-    async def get_json(self, url: str, params: Mapping[str, str | int | float] | None = None) -> Any:
+    async def get_json(
+        self, url: str, params: Mapping[str, str | int | float] | None = None
+    ) -> Any:
         validate_https_url(url, self._allowed_hosts)
         async with httpx.AsyncClient(
             timeout=self._timeout,
@@ -27,5 +29,7 @@ class SafeHttpClient:
             response.raise_for_status()
             content_type = response.headers.get("content-type", "").lower()
             if "json" not in content_type:
-                raise ValueError(f"Expected JSON response, received {content_type or 'unknown type'}")
+                raise ValueError(
+                    f"Expected JSON response, received {content_type or 'unknown type'}"
+                )
             return response.json()

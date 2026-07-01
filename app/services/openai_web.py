@@ -5,11 +5,11 @@ import math
 import re
 import uuid
 from collections.abc import Iterable
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 if TYPE_CHECKING:
     from openai import OpenAI
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, HttpUrl, ValidationError
 
 from app.config import Settings
 from app.errors import EstimatorResearchError
@@ -28,6 +28,7 @@ from app.models import (
 from app.security import UnsafeUrlError, validate_https_url
 
 _JSON_BLOCK_RE = re.compile(r"```(?:json)?\s*(\{.*\})\s*```", re.DOTALL | re.IGNORECASE)
+_SECTION_RE = re.compile(r"^\*\*(.+?):\*\*\s*$", re.MULTILINE)
 
 
 def parse_json_object(text: str) -> dict[str, Any]:
@@ -44,6 +45,275 @@ def parse_json_object(text: str) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise ValueError("Model response must be a JSON object.")
     return value
+
+
+def _coerce_float(value: object, default: float = 0.0) -> float:
+    try:
+        return float(str(value))
+    except (TypeError, ValueError):
+        return default
+
+
+def _coerce_int(value: object, default: int = 0) -> int:
+    try:
+        return int(str(value))
+    except (TypeError, ValueError):
+        return default
+
+
+def _coerce_str_list(value: object) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [str(item).strip() for item in value if str(item).strip()]
+
+
+def _extract_sections(text: str) -> dict[str, str]:
+    matches = list(_SECTION_RE.finditer(text))
+    sections: dict[str, str] = {}
+    for index, match in enumerate(matches):
+        start = match.end()
+        end = matches[index + 1].start() if index + 1 < len(matches) else len(text)
+        sections[match.group(1).strip().lower()] = text[start:end].strip()
+    return sections
+
+
+def _parse_hours_range(text: str) -> tuple[float, float]:
+    matches = re.findall(r"(\d+(?:\.\d+)?)", text)
+    if not matches:
+        return 0.0, 0.0
+    if len(matches) == 1:
+        value = _coerce_float(matches[0])
+        return value, value
+    low = _coerce_float(matches[0])
+    high = _coerce_float(matches[1], low)
+    return low, high
+
+
+def _extract_bullet_lines(text: str) -> list[str]:
+    lines: list[str] = []
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if line.startswith("- "):
+            lines.append(line[2:].strip())
+    return lines
+
+
+def _parse_markdown_research_fallback(text: str) -> dict[str, Any]:
+    sections = _extract_sections(text)
+    if not sections or not any(key in sections for key in ("labor", "parts", "summary")):
+        raise ValueError(
+            "Compatibility response was neither valid JSON nor recognizable markdown."
+        )
+    labor_section = sections.get("labor", "")
+    parts_section = sections.get("parts", "")
+    summary_section = sections.get("summary", "")
+    warnings_section = sections.get("warnings", "")
+    notes_section = sections.get("notes", "")
+
+    book_match = re.search(r"Book Time:\**\s*(.+)", labor_section, re.IGNORECASE)
+    practical_match = re.search(r"Practical Time:\**\s*(.+)", labor_section, re.IGNORECASE)
+    confidence_match = re.search(r"Confidence:\**\s*(.+)", labor_section, re.IGNORECASE)
+    basis_match = re.search(r"Basis:\**\s*(.+)", labor_section, re.IGNORECASE)
+    special_tools_match = re.search(r"Special Tools:\**\s*(.+)", labor_section, re.IGNORECASE)
+    risk_flags_match = re.search(r"Risk Flags:\**\s*(.+)", labor_section, re.IGNORECASE)
+
+    book_low, book_high = _parse_hours_range(book_match.group(1) if book_match else "")
+    practical_low, practical_high = _parse_hours_range(
+        practical_match.group(1) if practical_match else ""
+    )
+
+    requirement_lines = _extract_bullet_lines(parts_section)
+    requirements: list[dict[str, Any]] = []
+    current_requirement: dict[str, Any] | None = None
+    for line in requirement_lines:
+        quantity_match = re.search(r"\(quantity:\s*([^)]+)\)", line, re.IGNORECASE)
+        if quantity_match or (
+            "requirement" not in line.lower()
+            and "parts:" not in line.lower()
+            and not line.startswith("**")
+            and current_requirement is None
+        ):
+            part_name = re.sub(r"\(quantity:[^)]+\)", "", line, flags=re.IGNORECASE).strip(" -.:\t")
+            if part_name:
+                current_requirement = {
+                    "part_name": part_name,
+                    "quantity": max(1, _coerce_int(quantity_match.group(1), 1))
+                    if quantity_match
+                    else 1,
+                    "required": True,
+                    "options": [],
+                }
+                requirements.append(current_requirement)
+                continue
+
+    if not requirements:
+        requirements.append(
+            {
+                "part_name": "Required part",
+                "quantity": 1,
+                "required": True,
+                "options": [],
+            }
+        )
+        current_requirement = requirements[0]
+    else:
+        current_requirement = requirements[0]
+
+    link_pattern = re.compile(r"\[([^\]]+)\]\((https://[^)]+)\)")
+    price_pattern = re.compile(r"\$([0-9]+(?:\.[0-9]+)?)")
+    part_number_pattern = re.compile(r"Part Number:\s*([A-Za-z0-9\-]+)", re.IGNORECASE)
+    for raw_line in parts_section.splitlines():
+        line = raw_line.strip()
+        if not line.startswith("- "):
+            continue
+        link_match = link_pattern.search(line)
+        if not link_match:
+            continue
+        price_match = price_pattern.search(line)
+        part_number_match = part_number_pattern.search(line)
+        title = link_pattern.sub("", re.sub(r"^\-\s*", "", line)).strip(" :.")
+        retailer = link_match.group(1).split(".")[0].replace("www", "").strip() or "Retailer"
+        current_requirement["options"].append(
+            {
+                "retailer": retailer,
+                "brand": title or None,
+                "part_number": part_number_match.group(1) if part_number_match else None,
+                "unit_price": _coerce_float(price_match.group(1)) if price_match else None,
+                "availability": "unknown",
+                "store_name": None,
+                "store_distance_miles": None,
+                "url": link_match.group(2),
+                "fitment_notes": None,
+                "confidence": confidence_match.group(1).strip().lower()
+                if confidence_match
+                else "low",
+            }
+        )
+
+    warnings = _extract_bullet_lines(warnings_section)
+    notes = _extract_bullet_lines(notes_section)
+
+    return {
+        "labor": {
+            "book_hours": book_high or book_low,
+            "practical_hours_low": practical_low,
+            "practical_hours_high": practical_high or practical_low,
+            "confidence": confidence_match.group(1).strip().lower() if confidence_match else "low",
+            "basis": basis_match.group(1).strip()
+            if basis_match
+            else "Recovered from markdown compatibility output.",
+            "special_tools": (
+                []
+                if not special_tools_match
+                or special_tools_match.group(1).strip().lower() in {"none", "none identified"}
+                else [special_tools_match.group(1).strip()]
+            ),
+            "risk_flags": (
+                []
+                if not risk_flags_match
+                or risk_flags_match.group(1).strip().lower() in {"none", "none identified"}
+                else [risk_flags_match.group(1).strip()]
+            ),
+        },
+        "parts": {
+            "requirements": requirements,
+            "notes": notes,
+        },
+        "summary": summary_section.strip() or "Labor and parts research completed.",
+        "warnings": warnings,
+    }
+
+
+def _coerce_combined_research_envelope(value: dict[str, Any]) -> CombinedResearchEnvelope:
+    labor_raw = value.get("labor")
+    if not isinstance(labor_raw, dict):
+        labor_raw = {}
+    parts_raw = value.get("parts")
+    if not isinstance(parts_raw, dict):
+        parts_raw = {}
+
+    requirements_raw = parts_raw.get("requirements")
+    requirements: list[dict[str, Any]] = []
+    if isinstance(requirements_raw, list):
+        for raw_requirement in requirements_raw:
+            if not isinstance(raw_requirement, dict):
+                continue
+            options_raw = raw_requirement.get("options")
+            options: list[dict[str, Any]] = []
+            if isinstance(options_raw, list):
+                for raw_option in options_raw:
+                    if not isinstance(raw_option, dict):
+                        continue
+                    options.append(
+                        {
+                            "retailer": str(raw_option.get("retailer") or "Retailer"),
+                            "brand": (
+                                str(raw_option.get("brand")).strip()
+                                if raw_option.get("brand") not in {None, ""}
+                                else None
+                            ),
+                            "part_number": (
+                                str(raw_option.get("part_number")).strip()
+                                if raw_option.get("part_number") not in {None, ""}
+                                else None
+                            ),
+                            "unit_price": (
+                                _coerce_float(raw_option.get("unit_price"))
+                                if raw_option.get("unit_price") not in {None, ""}
+                                else None
+                            ),
+                            "availability": str(raw_option.get("availability") or "unknown"),
+                            "store_name": (
+                                str(raw_option.get("store_name")).strip()
+                                if raw_option.get("store_name") not in {None, ""}
+                                else None
+                            ),
+                            "store_distance_miles": (
+                                _coerce_float(raw_option.get("store_distance_miles"))
+                                if raw_option.get("store_distance_miles") not in {None, ""}
+                                else None
+                            ),
+                            "url": (
+                                str(raw_option.get("url")).strip()
+                                if raw_option.get("url") not in {None, ""}
+                                else None
+                            ),
+                            "fitment_notes": (
+                                str(raw_option.get("fitment_notes")).strip()
+                                if raw_option.get("fitment_notes") not in {None, ""}
+                                else None
+                            ),
+                            "confidence": str(raw_option.get("confidence") or "low"),
+                        }
+                    )
+            requirements.append(
+                {
+                    "part_name": str(raw_requirement.get("part_name") or "Required part"),
+                    "quantity": max(1, _coerce_int(raw_requirement.get("quantity"), 1)),
+                    "required": bool(raw_requirement.get("required", True)),
+                    "options": options,
+                }
+            )
+
+    return CombinedResearchEnvelope.model_validate(
+        {
+            "labor": {
+                "book_hours": _coerce_float(labor_raw.get("book_hours")),
+                "practical_hours_low": _coerce_float(labor_raw.get("practical_hours_low")),
+                "practical_hours_high": _coerce_float(labor_raw.get("practical_hours_high")),
+                "confidence": str(labor_raw.get("confidence") or "low"),
+                "basis": str(labor_raw.get("basis") or "Insufficient public labor evidence."),
+                "special_tools": _coerce_str_list(labor_raw.get("special_tools")),
+                "risk_flags": _coerce_str_list(labor_raw.get("risk_flags")),
+            },
+            "parts": {
+                "requirements": requirements,
+                "notes": _coerce_str_list(parts_raw.get("notes")),
+            },
+            "summary": str(value.get("summary") or "Labor and parts research completed."),
+            "warnings": _coerce_str_list(value.get("warnings")),
+        }
+    )
 
 
 def _model_dump(response: Any) -> dict[str, Any]:
@@ -78,8 +348,11 @@ def extract_citations(response: Any) -> list[Citation]:
                     title = annotation.get("title") or nested.get("title")
                     if raw_url and title:
                         try:
-                            validate_https_url(str(raw_url))
-                            found[str(raw_url)] = Citation(title=str(title)[:300], url=str(raw_url))
+                            validated_url = validate_https_url(str(raw_url))
+                            found[str(raw_url)] = Citation(
+                                title=str(title)[:300],
+                                url=HttpUrl(validated_url),
+                            )
                         except (ValueError, ValidationError):
                             pass
 
@@ -94,8 +367,11 @@ def extract_citations(response: Any) -> list[Citation]:
                 title = source.get("title") or source.get("name") or raw_url
                 if raw_url and title:
                     try:
-                        validate_https_url(str(raw_url))
-                        found[str(raw_url)] = Citation(title=str(title)[:300], url=str(raw_url))
+                        validated_url = validate_https_url(str(raw_url))
+                        found[str(raw_url)] = Citation(
+                            title=str(title)[:300],
+                            url=HttpUrl(validated_url),
+                        )
                     except (ValueError, ValidationError):
                         pass
 
@@ -358,8 +634,7 @@ Security rules:
         }
         return (
             "Compatibility mode: output only one valid JSON object with this exact key shape. "
-            "Use null exactly where data is unavailable. Template: "
-            + json.dumps(template)
+            "Use null exactly where data is unavailable. Template: " + json.dumps(template)
         )
 
     def _json_fallback_request(
@@ -379,12 +654,43 @@ Security rules:
             tool_choice="required",
             include=["web_search_call.action.sources"],
             input=cast(Any, request_input),
-            text={"format": {"type": "json_object"}},
         )
-        parsed = CombinedResearchEnvelope.model_validate(
-            parse_json_object(_response_output_text(response))
-        )
+        raw_text = _response_output_text(response)
+        try:
+            payload = parse_json_object(raw_text)
+        except json.JSONDecodeError:
+            payload = _parse_markdown_research_fallback(raw_text)
+        parsed = _coerce_combined_research_envelope(payload)
         return parsed, response
+
+    def _json_fallback_with_retry(
+        self,
+        *,
+        model: str,
+        vehicle: DecodedVehicle,
+        job: str,
+        location: ResolvedLocation,
+    ) -> tuple[CombinedResearchEnvelope, Any]:
+        attempts = 2
+        last_exc: Exception | None = None
+        for attempt in range(attempts):
+            try:
+                return self._json_fallback_request(
+                    model=model,
+                    vehicle=vehicle,
+                    job=job,
+                    location=location,
+                )
+            except Exception as exc:
+                last_exc = exc
+                is_last = attempt == attempts - 1
+                if is_last or not isinstance(
+                    exc, (ValidationError, ValueError, TypeError, json.JSONDecodeError)
+                ):
+                    raise
+        if last_exc is None:
+            raise RuntimeError("JSON fallback retry ended without an exception or result.")
+        raise last_exc
 
     @staticmethod
     def _error_code(exc: Exception) -> str:
@@ -413,7 +719,9 @@ Security rules:
             from openai import BadRequestError
         except ImportError:
             return False
-        return isinstance(exc, BadRequestError) and not OpenAIWebResearchService._is_model_unavailable(exc)
+        return isinstance(
+            exc, BadRequestError
+        ) and not OpenAIWebResearchService._is_model_unavailable(exc)
 
     @staticmethod
     def _classified_error(
@@ -541,7 +849,7 @@ Security rules:
                 ) from structured_exc
 
         try:
-            parsed, response = self._json_fallback_request(
+            parsed, response = self._json_fallback_with_retry(
                 model=model,
                 vehicle=vehicle,
                 job=job,
@@ -567,7 +875,9 @@ Security rules:
         high = _bounded_number(raw.practical_hours_high, low=0, high=300)
         if low > high:
             low, high = high, low
-            warnings.append("The practical labor-time range was normalized because its bounds were reversed.")
+            warnings.append(
+                "The practical labor-time range was normalized because its bounds were reversed."
+            )
         return LaborResearch(
             book_hours=book,
             practical_hours_low=low,
@@ -647,7 +957,7 @@ Security rules:
                                 else None
                             ),
                             store_distance_miles=distance,
-                            url=safe_url,
+                            url=HttpUrl(safe_url),
                             fitment_notes=(
                                 _safe_text(raw_option.fitment_notes, limit=1000)
                                 if raw_option.fitment_notes
@@ -677,9 +987,7 @@ Security rules:
                 f"Optimus removed {rejected_links} unsafe or malformed part link(s) before display."
             )
         notes = [
-            _safe_text(note, limit=500)
-            for note in raw.notes[:30]
-            if _safe_text(note, limit=500)
+            _safe_text(note, limit=500) for note in raw.notes[:30] if _safe_text(note, limit=500)
         ]
         return PartsResearch(requirements=requirements, notes=notes)
 
@@ -738,9 +1046,13 @@ Security rules:
         parts = self._sanitize_parts(parsed.parts, warnings)
         citations = self._dedupe_citations(extract_citations(response))
         if not citations:
-            warnings.append("No machine-readable source links were returned; verify all findings manually.")
+            warnings.append(
+                "No machine-readable source links were returned; verify all findings manually."
+            )
         if mode == "json_fallback":
-            warnings.append("The estimator used its compatibility parser after structured output was rejected.")
+            warnings.append(
+                "The estimator used its compatibility parser after structured output was rejected."
+            )
         if model != self._settings.estimator_model:
             warnings.append(
                 f"The primary estimator model was unavailable; Optimus used fallback model {model}."
@@ -751,6 +1063,14 @@ Security rules:
             limit=3000,
             fallback="Labor and parts research completed.",
         )
+        research_mode: Literal["structured", "json_fallback"] | None
+        if mode == "structured":
+            research_mode = "structured"
+        elif mode == "json_fallback":
+            research_mode = "json_fallback"
+        else:
+            research_mode = None
+
         return ResearchBundle(
             labor=labor,
             parts=parts,
@@ -758,7 +1078,7 @@ Security rules:
             citations=citations[: self._settings.max_web_results],
             warnings=list(dict.fromkeys(warnings)),
             request_id=request_id,
-            research_mode=mode,
+            research_mode=research_mode,
         )
 
     @staticmethod

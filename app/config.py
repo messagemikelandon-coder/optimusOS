@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from functools import lru_cache
 from typing import Annotated, Literal
 
@@ -42,7 +43,6 @@ class Settings(BaseSettings):
     max_chat_text_length: int = Field(default=12_000, ge=100, le=50_000)
     max_web_results: int = Field(default=20, ge=3, le=100)
     app_env: str = "production"
-    optimus_access_token: str = Field(default="", repr=False)
     database_url: str = Field(
         default="postgresql+psycopg://optimus:optimus_local@postgres:5432/optimus_os",
         repr=False,
@@ -50,6 +50,11 @@ class Settings(BaseSettings):
     redis_url: str = Field(default="redis://redis:6379/0", repr=False)
     max_estimates_per_minute: int = Field(default=20, ge=1, le=240)
     log_level: str = "INFO"
+    session_ttl_hours: int = Field(default=12, ge=1, le=168)
+    frontend_origin: str = "http://127.0.0.1:5173"
+    session_cookie_name: str = "optimus_session"
+    optimus_owner_username: str = Field(default="", repr=False)
+    optimus_owner_password: str = Field(default="", repr=False)
 
     autonomy_mode: Literal["owner_full_control", "guarded"] = "owner_full_control"
     direct_owner_chat_default: bool = True
@@ -96,6 +101,28 @@ class Settings(BaseSettings):
     @classmethod
     def strip_key(cls, value: str) -> str:
         return value.strip()
+
+    @field_validator("openai_model", "openai_estimator_model", "openai_fallback_model")
+    @classmethod
+    def normalize_model_name(cls, value: str) -> str:
+        cleaned = value.strip()
+        if not cleaned:
+            return ""
+        # Model ids should not contain spaces. Normalize common .env mistakes such as
+        # "gpt-4.1 mini" to "gpt-4.1-mini" so live deployments continue to work.
+        return re.sub(r"\s+", "-", cleaned)
+
+    @field_validator(
+        "optimus_owner_username",
+        "optimus_owner_password",
+        "session_cookie_name",
+        mode="before",
+    )
+    @classmethod
+    def strip_sensitive_values(cls, value: object) -> object:
+        if isinstance(value, str):
+            return value.strip()
+        return value
 
     @property
     def estimator_model(self) -> str:

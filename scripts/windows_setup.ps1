@@ -165,14 +165,24 @@ else {
     Write-Step "Keeping the existing OpenAI API key"
 }
 
-$currentToken = Get-DotEnvValue "OPTIMUS_ACCESS_TOKEN"
-if ([string]::IsNullOrWhiteSpace($currentToken) -or $currentToken -eq "replace_with_a_long_random_token") {
-    Write-Step "Generating a local Optimus access token"
-    $generatedToken = (& $VenvPython -c "import secrets; print(secrets.token_urlsafe(48))" | Out-String).Trim()
-    if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($generatedToken)) {
-        throw "Unable to generate the Optimus access token."
+$currentOwnerUsername = Get-DotEnvValue "OPTIMUS_OWNER_USERNAME"
+if ([string]::IsNullOrWhiteSpace($currentOwnerUsername)) {
+    Write-Step "Configuring the bootstrap owner username"
+    $ownerUsername = Read-Host "OPTIMUS_OWNER_USERNAME"
+    if ([string]::IsNullOrWhiteSpace($ownerUsername)) {
+        throw "OPTIMUS_OWNER_USERNAME is required."
     }
-    Set-DotEnvValue "OPTIMUS_ACCESS_TOKEN" $generatedToken
+    Set-DotEnvValue "OPTIMUS_OWNER_USERNAME" ($ownerUsername.Trim())
+}
+
+$currentOwnerPassword = Get-DotEnvValue "OPTIMUS_OWNER_PASSWORD"
+if ([string]::IsNullOrWhiteSpace($currentOwnerPassword) -or $currentOwnerPassword -eq "replace_with_a_long_owner_password") {
+    Write-Step "Configuring the bootstrap owner password"
+    $ownerPassword = Read-HiddenText "OPTIMUS_OWNER_PASSWORD"
+    if ([string]::IsNullOrWhiteSpace($ownerPassword)) {
+        throw "OPTIMUS_OWNER_PASSWORD is required."
+    }
+    Set-DotEnvValue "OPTIMUS_OWNER_PASSWORD" ($ownerPassword.Trim())
 }
 
 Write-Step "Applying estimator reliability defaults"
