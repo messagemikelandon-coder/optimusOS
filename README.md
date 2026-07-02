@@ -127,3 +127,4 @@ python scripts/diagnose_estimator.py  # live, billable diagnostic
 - A missing or rejected part result no longer suppresses otherwise usable labor research.
 
 See `ESTIMATOR_SECURITY_REPORT.md` and `VALIDATION.md`.
+# optimusOS
