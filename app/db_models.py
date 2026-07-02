@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 
 from sqlalchemy import (
+    JSON,
     Boolean,
     CheckConstraint,
     DateTime,
@@ -55,6 +56,10 @@ class UserAccount(Base):
         cascade="all, delete-orphan",
     )
     vehicles: Mapped[list[Vehicle]] = relationship(
+        back_populates="owner",
+        cascade="all, delete-orphan",
+    )
+    estimates: Mapped[list[Estimate]] = relationship(
         back_populates="owner",
         cascade="all, delete-orphan",
     )
@@ -191,6 +196,7 @@ class Customer(Base):
 
     owner: Mapped[UserAccount] = relationship(back_populates="customers")
     vehicles: Mapped[list[Vehicle]] = relationship(back_populates="customer")
+    estimates: Mapped[list[Estimate]] = relationship(back_populates="customer")
 
 
 class Vehicle(Base):
@@ -261,3 +267,246 @@ class Vehicle(Base):
 
     owner: Mapped[UserAccount] = relationship(back_populates="vehicles")
     customer: Mapped[Customer] = relationship(back_populates="vehicles")
+    estimates: Mapped[list[Estimate]] = relationship(back_populates="vehicle")
+
+
+class Estimate(Base):
+    __tablename__ = "estimates"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ("
+            "'draft', 'ready', 'awaiting_approval', 'approved', 'declined', "
+            "'expired', 'superseded', 'archived'"
+            ")",
+            name="ck_estimates_status",
+        ),
+        Index("ix_estimates_owner_status_updated", "owner_user_id", "status", "updated_at"),
+        Index(
+            "ix_estimates_owner_customer_updated",
+            "owner_user_id",
+            "customer_id",
+            "updated_at",
+        ),
+        Index(
+            "ix_estimates_owner_vehicle_updated",
+            "owner_user_id",
+            "vehicle_id",
+            "updated_at",
+        ),
+        UniqueConstraint("estimate_number", name="uq_estimates_estimate_number"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    owner_user_id: Mapped[int] = mapped_column(
+        ForeignKey("user_accounts.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    customer_id: Mapped[int] = mapped_column(
+        ForeignKey("customers.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    vehicle_id: Mapped[int] = mapped_column(
+        ForeignKey("vehicles.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    estimate_number: Mapped[str] = mapped_column(String(40), nullable=False)
+    status: Mapped[str] = mapped_column(String(40), nullable=False, default="draft")
+    current_revision_number: Mapped[int] = mapped_column(
+        nullable=False,
+        default=1,
+        server_default="1",
+    )
+    approved_revision_number: Mapped[int | None] = mapped_column(nullable=True)
+    estimate_total: Mapped[float | None] = mapped_column(nullable=True)
+    payment_option_selected: Mapped[str | None] = mapped_column(String(40))
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    is_archived: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=False,
+        server_default="false",
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    owner: Mapped[UserAccount] = relationship(back_populates="estimates")
+    customer: Mapped[Customer] = relationship(back_populates="estimates")
+    vehicle: Mapped[Vehicle] = relationship(back_populates="estimates")
+    revisions: Mapped[list[EstimateRevision]] = relationship(
+        back_populates="estimate",
+        cascade="all, delete-orphan",
+        order_by="EstimateRevision.revision_number",
+    )
+    approval_requests: Mapped[list[EstimateApprovalRequest]] = relationship(
+        back_populates="estimate",
+        cascade="all, delete-orphan",
+    )
+    approval_events: Mapped[list[EstimateApprovalEvent]] = relationship(
+        back_populates="estimate",
+        cascade="all, delete-orphan",
+    )
+
+
+class EstimateRevision(Base):
+    __tablename__ = "estimate_revisions"
+    __table_args__ = (
+        UniqueConstraint(
+            "estimate_id",
+            "revision_number",
+            name="uq_estimate_revisions_estimate_revision",
+        ),
+        Index(
+            "ix_estimate_revisions_owner_estimate_revision",
+            "owner_user_id",
+            "estimate_id",
+            "revision_number",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    estimate_id: Mapped[int] = mapped_column(
+        ForeignKey("estimates.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    owner_user_id: Mapped[int] = mapped_column(
+        ForeignKey("user_accounts.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    revision_number: Mapped[int] = mapped_column(nullable=False)
+    status: Mapped[str] = mapped_column(String(40), nullable=False)
+    customer_snapshot: Mapped[dict[str, object]] = mapped_column(JSON, nullable=False)
+    vehicle_snapshot: Mapped[dict[str, object]] = mapped_column(JSON, nullable=False)
+    estimate_request_payload: Mapped[dict[str, object]] = mapped_column(JSON, nullable=False)
+    estimate_response_payload: Mapped[dict[str, object]] = mapped_column(JSON, nullable=False)
+    terms_text: Mapped[str] = mapped_column(Text, nullable=False)
+    payment_options_payload: Mapped[list[dict[str, object]]] = mapped_column(JSON, nullable=False)
+    approval_due_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+
+    estimate: Mapped[Estimate] = relationship(back_populates="revisions")
+
+
+class EstimateApprovalRequest(Base):
+    __tablename__ = "estimate_approval_requests"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('active', 'used', 'expired', 'revoked')",
+            name="ck_estimate_approval_requests_status",
+        ),
+        UniqueConstraint("token_hash", name="uq_estimate_approval_requests_token_hash"),
+        Index(
+            "ix_estimate_approval_requests_estimate_status",
+            "estimate_id",
+            "status",
+            "expires_at",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    estimate_id: Mapped[int] = mapped_column(
+        ForeignKey("estimates.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    estimate_revision_id: Mapped[int] = mapped_column(
+        ForeignKey("estimate_revisions.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    owner_user_id: Mapped[int] = mapped_column(
+        ForeignKey("user_accounts.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    token_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="active")
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_by_user_id: Mapped[int] = mapped_column(
+        ForeignKey("user_accounts.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    estimate: Mapped[Estimate] = relationship(back_populates="approval_requests")
+    revision: Mapped[EstimateRevision] = relationship()
+
+
+class EstimateApprovalEvent(Base):
+    __tablename__ = "estimate_approval_events"
+    __table_args__ = (
+        CheckConstraint(
+            "event_type IN ("
+            "'sent', 'approved', 'declined', 'expired', 'superseded', 'archived', 'internal_recorded'"
+            ")",
+            name="ck_estimate_approval_events_type",
+        ),
+        Index(
+            "ix_estimate_approval_events_estimate_created",
+            "estimate_id",
+            "created_at",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    estimate_id: Mapped[int] = mapped_column(
+        ForeignKey("estimates.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    estimate_revision_id: Mapped[int] = mapped_column(
+        ForeignKey("estimate_revisions.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    owner_user_id: Mapped[int] = mapped_column(
+        ForeignKey("user_accounts.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    approval_request_id: Mapped[int | None] = mapped_column(
+        ForeignKey("estimate_approval_requests.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    event_type: Mapped[str] = mapped_column(String(40), nullable=False)
+    actor_type: Mapped[str] = mapped_column(String(20), nullable=False)
+    actor_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("user_accounts.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    actor_name: Mapped[str | None] = mapped_column(String(160))
+    approval_method: Mapped[str | None] = mapped_column(String(80))
+    approval_evidence: Mapped[str | None] = mapped_column(Text)
+    accepted_terms: Mapped[bool | None] = mapped_column(Boolean)
+    payment_option: Mapped[str | None] = mapped_column(String(40))
+    payment_plan_acknowledged: Mapped[bool | None] = mapped_column(Boolean)
+    decline_reason: Mapped[str | None] = mapped_column(Text)
+    content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    ip_address: Mapped[str | None] = mapped_column(String(64))
+    user_agent: Mapped[str | None] = mapped_column(String(512))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+
+    estimate: Mapped[Estimate] = relationship(back_populates="approval_events")
+    revision: Mapped[EstimateRevision] = relationship()

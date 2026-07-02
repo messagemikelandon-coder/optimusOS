@@ -129,6 +129,10 @@ def _get_vehicle(db: Session, auth: AuthContext, vehicle_id: int) -> Vehicle:
     return vehicle
 
 
+def get_vehicle_model(*, db: Session, auth: AuthContext, vehicle_id: int) -> Vehicle:
+    return _get_vehicle(db, auth, vehicle_id)
+
+
 def _ensure_unique_active_vin(
     db: Session,
     auth: AuthContext,

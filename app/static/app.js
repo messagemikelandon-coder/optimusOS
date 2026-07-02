@@ -41,6 +41,10 @@ const state = {
     archivedOnly: false,
     customerFilterId: null,
   },
+  estimates: {
+    selectedEstimateId: null,
+    selectedEstimate: null,
+  },
   currentView: "dashboard",
   health: null,
   lastEstimate: null,
@@ -53,6 +57,7 @@ const viewMeta = {
   vehicles: { eyebrow: "Fleet", title: "Vehicles" },
   chat: { eyebrow: "Owner channel", title: "Talk to Optimus" },
   estimate: { eyebrow: "Pricing workflow", title: "Job estimator" },
+  approval: { eyebrow: "Customer authorization", title: "Estimate approval" },
   system: { eyebrow: "Configuration", title: "System bay" },
 };
 
@@ -602,33 +607,38 @@ function initializeChat() {
 }
 
 function estimateText(data) {
-  const vehicle = [data.vehicle.year, data.vehicle.make, data.vehicle.model, data.vehicle.engine].filter(Boolean).join(" ");
-  const parts = data.selected_parts.map((part) => (
+  const estimate = data.current_revision ? data.current_revision.estimate : data;
+  const vehicle = [estimate.vehicle.year, estimate.vehicle.make, estimate.vehicle.model, estimate.vehicle.engine].filter(Boolean).join(" ");
+  const parts = estimate.selected_parts.map((part) => (
     `${part.part_name} x${part.quantity}: ${money(part.extended_price)} — ${part.retailer}`
   )).join("\n");
   return [
     "LANDON MOTOR WORKS — JOB ESTIMATE",
     vehicle,
-    data.job,
+    estimate.job,
     "",
-    `Labor: ${data.totals.labor_hours} hr × ${money(data.totals.labor_rate)} = ${money(data.totals.labor_total)}`,
-    `Parts: ${money(data.totals.parts_subtotal)}`,
-    `Shop supplies: ${money(data.totals.shop_supplies)}`,
-    `Mobile fee: ${money(data.totals.mobile_service_fee)}`,
-    `Parts tax: ${money(data.totals.parts_tax)}`,
-    `Estimated total: ${money(data.totals.estimated_total)}`,
+    `Labor: ${estimate.totals.labor_hours} hr × ${money(estimate.totals.labor_rate)} = ${money(estimate.totals.labor_total)}`,
+    `Parts: ${money(estimate.totals.parts_subtotal)}`,
+    `Shop supplies: ${money(estimate.totals.shop_supplies)}`,
+    `Mobile fee: ${money(estimate.totals.mobile_service_fee)}`,
+    `Parts tax: ${money(estimate.totals.parts_tax)}`,
+    `Estimated total: ${money(estimate.totals.estimated_total)}`,
     "",
     parts,
     "",
-    `Practical working time: ${data.totals.practical_time_low}–${data.totals.practical_time_high} hr`,
+    `Practical working time: ${estimate.totals.practical_time_low}–${estimate.totals.practical_time_high} hr`,
   ].filter((line, index, all) => line !== "" || all[index - 1] !== "").join("\n");
 }
 
 function renderEstimate(data) {
   state.lastEstimate = data;
+  state.estimates.selectedEstimateId = data.id;
+  state.estimates.selectedEstimate = data;
+  const current = data.current_revision;
+  const estimate = current.estimate;
   const result = $("result");
-  const vehicle = [data.vehicle.year, data.vehicle.make, data.vehicle.model, data.vehicle.trim, data.vehicle.engine].filter(Boolean).join(" ") || data.vehicle.vin || "Vehicle";
-  const parts = data.selected_parts.map((part) => `
+  const vehicle = [estimate.vehicle.year, estimate.vehicle.make, estimate.vehicle.model, estimate.vehicle.trim, estimate.vehicle.engine].filter(Boolean).join(" ") || estimate.vehicle.vin || "Vehicle";
+  const parts = estimate.selected_parts.map((part) => `
     <article class="part-card">
       <div>
         <strong>${escapeHtml(part.part_name)} × ${part.quantity}</strong>
@@ -637,27 +647,30 @@ function renderEstimate(data) {
       </div>
       <div class="part-price"><strong>${money(part.extended_price)}</strong><a href="${escapeHtml(part.url)}" target="_blank" rel="noopener noreferrer">Open source</a></div>
     </article>`).join("");
-  const tools = data.research.labor.special_tools.map((tool) => `<li>${escapeHtml(tool)}</li>`).join("") || "<li>None identified.</li>";
-  const risks = data.research.labor.risk_flags.map((risk) => `<li>${escapeHtml(risk)}</li>`).join("") || "<li>None identified.</li>";
-  const warnings = data.research.warnings.map((warning) => `<li>${escapeHtml(warning)}</li>`).join("") || "<li>None.</li>";
-  const sources = data.research.citations.map((citation) => `<a href="${escapeHtml(citation.url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(citation.title)}</a>`).join("") || "<p>No source links were returned.</p>";
+  const tools = estimate.research.labor.special_tools.map((tool) => `<li>${escapeHtml(tool)}</li>`).join("") || "<li>None identified.</li>";
+  const risks = estimate.research.labor.risk_flags.map((risk) => `<li>${escapeHtml(risk)}</li>`).join("") || "<li>None identified.</li>";
+  const warnings = estimate.research.warnings.map((warning) => `<li>${escapeHtml(warning)}</li>`).join("") || "<li>None.</li>";
+  const sources = estimate.research.citations.map((citation) => `<a href="${escapeHtml(citation.url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(citation.title)}</a>`).join("") || "<p>No source links were returned.</p>";
+  const paymentOptions = current.payment_options.map((option) => `<li>${escapeHtml(option.label)}${option.requires_payment_plan_acknowledgement ? " · payment-plan acknowledgement required" : ""}</li>`).join("");
+  const audit = data.approval_audit?.events?.map((event) => `<li><strong>${escapeHtml(event.event_type)}</strong> · revision ${event.revision_number} · ${escapeHtml(event.actor_name || event.actor_type)} · ${new Date(event.created_at).toLocaleString()}</li>`).join("") || "<li>No approval events recorded yet.</li>";
 
   result.innerHTML = `
     <div class="result-hero">
-      <div><span class="section-kicker"><i></i> Research complete</span><h2>${escapeHtml(vehicle)}</h2><p>${escapeHtml(data.job)}</p></div>
-      <div class="result-total"><span>Estimated total</span><strong>${money(data.totals.estimated_total)}</strong></div>
+      <div><span class="section-kicker"><i></i> Saved estimate ${escapeHtml(data.estimate_number)}</span><h2>${escapeHtml(vehicle)}</h2><p>${escapeHtml(estimate.job)}</p></div>
+      <div class="result-total"><span>${escapeHtml(data.status.replaceAll("_", " "))}</span><strong>${money(estimate.totals.estimated_total)}</strong></div>
     </div>
     <div class="result-actions">
       <button class="secondary-button compact" type="button" id="copy-estimate">Copy estimate</button>
       <button class="secondary-button compact" type="button" id="print-estimate">Print estimate</button>
+      <button class="secondary-button compact" type="button" id="send-estimate-approval"${data.status === "approved" ? " disabled" : ""}>Send for approval</button>
       <button class="text-button" type="button" id="new-estimate">Start another</button>
     </div>
     <div class="money-grid">
-      <div class="money-card"><span>Labor (${data.totals.labor_hours} hr)</span><strong>${money(data.totals.labor_total)}</strong></div>
-      <div class="money-card"><span>Selected parts</span><strong>${money(data.totals.parts_subtotal)}</strong></div>
-      <div class="money-card"><span>Shop supplies</span><strong>${money(data.totals.shop_supplies)}</strong></div>
-      <div class="money-card"><span>Mobile fee</span><strong>${money(data.totals.mobile_service_fee)}</strong></div>
-      <div class="money-card"><span>Parts tax</span><strong>${money(data.totals.parts_tax)}</strong></div>
+      <div class="money-card"><span>Labor (${estimate.totals.labor_hours} hr)</span><strong>${money(estimate.totals.labor_total)}</strong></div>
+      <div class="money-card"><span>Selected parts</span><strong>${money(estimate.totals.parts_subtotal)}</strong></div>
+      <div class="money-card"><span>Shop supplies</span><strong>${money(estimate.totals.shop_supplies)}</strong></div>
+      <div class="money-card"><span>Mobile fee</span><strong>${money(estimate.totals.mobile_service_fee)}</strong></div>
+      <div class="money-card"><span>Parts tax</span><strong>${money(estimate.totals.parts_tax)}</strong></div>
     </div>
     <div class="result-grid">
       <section class="result-section">
@@ -666,16 +679,19 @@ function renderEstimate(data) {
       </section>
       <section class="result-section">
         <h3>Labor and practical time</h3>
-        <p><strong>Published/book:</strong> ${data.research.labor.book_hours} hr</p>
-        <p><strong>Practical mobile range:</strong> ${data.totals.practical_time_low}–${data.totals.practical_time_high} hr</p>
-        <p><strong>Confidence:</strong> ${escapeHtml(data.research.labor.confidence)}</p>
-        <p>${escapeHtml(data.research.labor.basis)}</p>
+        <p><strong>Published/book:</strong> ${estimate.research.labor.book_hours} hr</p>
+        <p><strong>Practical mobile range:</strong> ${estimate.totals.practical_time_low}–${estimate.totals.practical_time_high} hr</p>
+        <p><strong>Confidence:</strong> ${escapeHtml(estimate.research.labor.confidence)}</p>
+        <p>${escapeHtml(estimate.research.labor.basis)}</p>
       </section>
       <section class="result-section"><h3>Special tools</h3><ul>${tools}</ul></section>
       <section class="result-section"><h3>Risk flags</h3><ul>${risks}</ul></section>
       <section class="result-section"><h3>Warnings</h3><ul>${warnings}</ul></section>
+      <section class="result-section"><h3>Terms</h3><p>${escapeHtml(current.terms_text)}</p></section>
+      <section class="result-section"><h3>Payment options</h3><ul>${paymentOptions}</ul></section>
+      <section class="result-section"><h3>Approval audit</h3><ul>${audit}</ul></section>
       <section class="result-section"><h3>Research sources</h3><div class="source-list">${sources}</div></section>
-      ${data.research.request_id ? `<section class="result-section"><h3>Research trace</h3><p>${escapeHtml(data.research.request_id)} · ${escapeHtml(data.research.research_mode || "standard")}</p></section>` : ""}
+      ${estimate.research.request_id ? `<section class="result-section"><h3>Research trace</h3><p>${escapeHtml(estimate.research.request_id)} · ${escapeHtml(estimate.research.research_mode || "standard")}</p></section>` : ""}
     </div>`;
   result.hidden = false;
   result.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -688,6 +704,9 @@ function renderEstimate(data) {
     }
   });
   $("print-estimate").addEventListener("click", () => window.print());
+  $("send-estimate-approval").addEventListener("click", () => {
+    void sendSelectedEstimateForApproval();
+  });
   $("new-estimate").addEventListener("click", () => {
     result.hidden = true;
     $("vin").focus();
@@ -695,11 +714,99 @@ function renderEstimate(data) {
   });
 }
 
+function selectedPaymentOptions() {
+  return [
+    $("payment-option-pay-in-full").checked ? {
+      code: "pay_in_full",
+      label: "Pay in full",
+      description: "Pay the full approved amount when service is complete.",
+      requires_payment_plan_acknowledgement: false,
+    } : null,
+    $("payment-option-split-payment").checked ? {
+      code: "split_payment",
+      label: "Split payment",
+      description: "Pay a deposit now and the balance when service is complete.",
+      requires_payment_plan_acknowledgement: false,
+    } : null,
+    $("payment-option-two-month-plan").checked ? {
+      code: "two_month_plan",
+      label: "Two-month plan",
+      description: "Parts-price deposit is due before parts are ordered. No repair begins until deposit and authorization are complete. Remaining payments are due 30 and 60 days after service.",
+      requires_payment_plan_acknowledgement: true,
+    } : null,
+  ].filter(Boolean);
+}
+
+function syncEstimateRecordSummary() {
+  $("estimate-selected-customer").textContent = state.customers.selectedCustomer?.display_name || "Select a customer record first.";
+  $("estimate-selected-vehicle").textContent = state.vehicles.selectedVehicle?.display_name || "Select a vehicle record first.";
+}
+
+async function rememberSelectedEstimate(estimate) {
+  try {
+    await apiFetch("/api/context/estimates/selected-estimate?scope=session", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        value: JSON.stringify({
+          id: estimate.id,
+          estimate_number: estimate.estimate_number,
+          revision_number: estimate.current_revision_number,
+        }),
+      }),
+    });
+  } catch {
+    // Estimate persistence remains authoritative even if assistive context storage fails.
+  }
+}
+
+async function loadEstimateApprovalAudit(estimateId) {
+  const response = await apiFetch(`/api/estimates/${estimateId}/approval-history`);
+  const data = await readApiPayload(response);
+  if (!response.ok || !data) throw apiError(response, data, "Estimate approval history failed");
+  return data;
+}
+
+async function sendSelectedEstimateForApproval() {
+  const estimate = state.estimates.selectedEstimate;
+  if (!estimate) return;
+  try {
+    const response = await apiFetch(`/api/estimates/${estimate.id}/send-for-approval`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        approval_method: "link",
+        expires_in_hours: Number($("estimate-link-hours").value || 72),
+      }),
+    });
+    const data = await readApiPayload(response);
+    if (!response.ok || !data) throw apiError(response, data, "Estimate approval link failed");
+    await navigator.clipboard.writeText(new URL(data.approval_link, window.location.origin).toString());
+    const refreshed = await apiFetch(`/api/estimates/${estimate.id}`);
+    const refreshedPayload = await readApiPayload(refreshed);
+    if (!refreshed.ok || !refreshedPayload) throw apiError(refreshed, refreshedPayload, "Estimate refresh failed");
+    refreshedPayload.approval_audit = await loadEstimateApprovalAudit(estimate.id);
+    renderEstimate(refreshedPayload);
+    void rememberSelectedEstimate(refreshedPayload);
+    showToast("Approval link copied to the clipboard.", "success");
+  } catch (error) {
+    showToast(`Estimate approval link failed: ${error.message}`, "error");
+  }
+}
+
 function initializeEstimate() {
   ["labor-rate", "mobile-fee", "supplies", "tax-rate"].forEach((id) => $(id).addEventListener("input", savePricingPreferences));
+  syncEstimateRecordSummary();
+  $("estimate-open-customer").addEventListener("click", () => navigate("customers"));
+  $("estimate-open-vehicle").addEventListener("click", () => navigate("vehicles"));
   $("estimate-form").addEventListener("submit", async (event) => {
     event.preventDefault();
     if (!await requireAuthenticated("login")) return;
+    if (!state.customers.selectedCustomerId || !state.vehicles.selectedVehicleId) {
+      showToast("Select the customer and vehicle records before saving an estimate.", "error");
+      navigate(!state.customers.selectedCustomerId ? "customers" : "vehicles");
+      return;
+    }
     const submit = $("submit");
     const result = $("result");
     const location = locationPayload();
@@ -715,17 +822,21 @@ function initializeEstimate() {
     result.innerHTML = '<div class="loading-panel"><span class="loading-spinner"></span><div><strong>Optimus is researching the job</strong><br><small>Checking labor guidance, parts, availability, fitment, tools, and risks.</small></div></div>';
 
     const payload = {
-      vehicle: vehiclePayload(),
+      customer_id: state.customers.selectedCustomerId,
+      vehicle_id: state.vehicles.selectedVehicleId,
       job: $("job").value.trim(),
       location,
       labor_rate: numericValue("labor-rate"),
       mobile_service_fee: numericValue("mobile-fee"),
       shop_supplies_percent: numericValue("supplies"),
       parts_tax_rate: numericValue("tax-rate"),
+      terms_text: $("estimate-terms").value.trim(),
+      payment_options: selectedPaymentOptions(),
+      expires_in_days: Number($("estimate-expires-days").value || 7),
     };
 
     try {
-      const response = await apiFetch("/api/estimate", {
+      const response = await apiFetch("/api/estimates", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
@@ -733,14 +844,16 @@ function initializeEstimate() {
       const data = await readApiPayload(response);
       if (!response.ok) throw apiError(response, data, "Estimate research failed");
       if (!data) throw new Error("The estimator returned an empty response.");
+      data.approval_audit = await loadEstimateApprovalAudit(data.id);
       renderEstimate(data);
-      showToast("Estimate research completed.", "success");
+      void rememberSelectedEstimate(data);
+      showToast("Saved estimate created.", "success");
     } catch (error) {
       result.innerHTML = `<div class="error-card"><strong>Estimate failed</strong><p>${escapeHtml(error.message)}</p></div>`;
       showToast(`Estimate failed: ${error.message}`, "error");
     } finally {
       submit.disabled = false;
-      submit.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 13h8V3h2v8h8v2h-8v8h-2v-8H3v-2Z"/></svg> Research and estimate';
+      submit.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 13h8V3h2v8h8v2h-8v8h-2v-8H3v-2Z"/></svg> Create saved estimate';
     }
   });
 }
@@ -932,6 +1045,7 @@ async function selectCustomer(customerId, options = {}) {
     renderCustomerDetail(data);
     populateCustomerForm(data);
     renderCustomersList();
+    syncEstimateRecordSummary();
     if (refreshVehicles) void loadCustomerVehiclePreview(data.id);
     if (remember) void rememberSelectedCustomer(data);
     return data;
@@ -965,6 +1079,7 @@ async function loadCustomers() {
         state.customers.selectedCustomer = selected;
         renderCustomerDetail(selected);
         populateCustomerForm(selected);
+        syncEstimateRecordSummary();
         void loadCustomerVehiclePreview(selected.id);
       } else {
         state.customers.selectedCustomerId = null;
@@ -972,6 +1087,7 @@ async function loadCustomers() {
         state.customers.vehiclePreviewItems = [];
         renderCustomerDetail(null);
         populateCustomerForm(null);
+        syncEstimateRecordSummary();
       }
     }
   } catch (error) {
@@ -1283,6 +1399,7 @@ async function selectVehicle(vehicleId, options = {}) {
     renderVehicleDetail(data);
     populateVehicleForm(data);
     renderVehiclesList();
+    syncEstimateRecordSummary();
     if (remember) void rememberSelectedVehicle(data);
     return data;
   } catch (error) {
@@ -1321,9 +1438,11 @@ async function loadVehicles() {
         state.vehicles.selectedVehicle = null;
         renderVehicleDetail(null);
         populateVehicleForm(null, { preferredCustomerId: state.vehicles.customerFilterId });
+        syncEstimateRecordSummary();
       }
     } else if (!state.vehicles.selectedVehicle) {
       populateVehicleForm(null, { preferredCustomerId: state.vehicles.customerFilterId });
+      syncEstimateRecordSummary();
     }
   } catch (error) {
     list.innerHTML = `<div class="error-card"><strong>Vehicle list failed</strong><p>${escapeHtml(error.message)}</p></div>`;
@@ -1386,6 +1505,7 @@ async function archiveSelectedVehicle() {
       state.vehicles.selectedVehicle = null;
       renderVehicleDetail(null);
       populateVehicleForm(null, { preferredCustomerId: archivedVehicle.customer_id });
+      syncEstimateRecordSummary();
       void clearSelectedVehicleReference();
     } else {
       state.vehicles.selectedVehicleId = archivedVehicle.id;
@@ -1419,12 +1539,14 @@ async function openCustomerForSelectedVehicle() {
 async function restoreSelectionsFromContext() {
   if (!state.auth.authenticated) return;
   try {
-    const [customerResponse, vehicleResponse] = await Promise.all([
+    const [customerResponse, vehicleResponse, estimateResponse] = await Promise.all([
       apiFetch("/api/context/customers?scope=session"),
       apiFetch("/api/context/vehicles?scope=session"),
+      apiFetch("/api/context/estimates?scope=session"),
     ]);
     const customerPayload = await readApiPayload(customerResponse);
     const vehiclePayload = await readApiPayload(vehicleResponse);
+    const estimatePayload = await readApiPayload(estimateResponse);
 
     const customerEntry = customerPayload?.entries?.find((entry) => entry.context_key === "selected-customer");
     if (customerResponse.ok && customerEntry?.value) {
@@ -1469,8 +1591,126 @@ async function restoreSelectionsFromContext() {
         // Ignore malformed assistive context values.
       }
     }
+
+    const estimateEntry = estimatePayload?.entries?.find((entry) => entry.context_key === "selected-estimate");
+    if (estimateResponse.ok && estimateEntry?.value) {
+      try {
+        const parsed = JSON.parse(estimateEntry.value);
+        if (parsed?.id) {
+          const response = await apiFetch(`/api/estimates/${Number(parsed.id)}`);
+          const data = await readApiPayload(response);
+          if (response.ok && data) {
+            data.approval_audit = await loadEstimateApprovalAudit(Number(parsed.id));
+            renderEstimate(data);
+          }
+        }
+      } catch {
+        // Ignore malformed assistive context values.
+      }
+    }
   } catch {
     // Context restoration is best-effort only.
+  }
+}
+
+async function loadPublicApprovalPage() {
+  const fragment = new URLSearchParams(window.location.hash.replace(/^#/, ""));
+  const token = fragment.get("token");
+  const root = $("approval-public-root");
+  if (!token) {
+    root.innerHTML = '<div class="empty-card"><strong>Approval link required</strong><p>Open this page from a generated approval link so the estimate token stays in the browser fragment and out of request URLs.</p></div>';
+    return;
+  }
+  root.innerHTML = '<div class="loading-panel"><span class="loading-spinner"></span><div><strong>Loading estimate</strong><br><small>Fetching the approval-safe estimate view.</small></div></div>';
+  try {
+    const response = await apiFetch("/api/estimate-approval/view", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token }),
+    });
+    const data = await readApiPayload(response);
+    if (!response.ok || !data) throw apiError(response, data, "Estimate approval view failed");
+    $("approval-estimate-number").textContent = data.estimate_number;
+    const paymentOptions = data.revision.payment_options.map((option) => `
+      <label class="field full"><input type="radio" name="approval-payment-option" value="${escapeHtml(option.code)}"${option.code === "pay_in_full" ? " checked" : ""}> ${escapeHtml(option.label)} <small>${escapeHtml(option.description)}</small></label>
+    `).join("");
+    const parts = data.revision.estimate.selected_parts.map((part) => `<li>${escapeHtml(part.part_name)} × ${part.quantity} · ${money(part.extended_price)}</li>`).join("") || "<li>No currently priced part options were captured.</li>";
+    root.innerHTML = `
+      <div class="result-hero">
+        <div><span class="section-kicker"><i></i> Revision ${data.revision.revision_number}</span><h2>${escapeHtml(data.revision.vehicle.display_name)}</h2><p>${escapeHtml(data.revision.estimate.job)}</p></div>
+        <div class="result-total"><span>Total</span><strong>${money(data.revision.estimate.totals.estimated_total)}</strong></div>
+      </div>
+      <div class="money-grid">
+        <div class="money-card"><span>Customer</span><strong>${escapeHtml(data.revision.customer.display_name)}</strong></div>
+        <div class="money-card"><span>Vehicle</span><strong>${escapeHtml(data.revision.vehicle.display_name)}</strong></div>
+        <div class="money-card"><span>Status</span><strong>${escapeHtml(data.status.replaceAll("_", " "))}</strong></div>
+        <div class="money-card"><span>Expires</span><strong>${new Date(data.token_expires_at).toLocaleString()}</strong></div>
+      </div>
+      <section class="result-section"><h3>Selected parts</h3><ul>${parts}</ul></section>
+      <section class="result-section"><h3>Terms and conditions</h3><p>${escapeHtml(data.revision.terms_text)}</p></section>
+      <form id="approval-action-form">
+        <label class="field full">Approving name <input id="approval-name" maxlength="160" placeholder="Customer name" required></label>
+        <label class="field full">Typed authorization evidence <textarea id="approval-typed-authorization" maxlength="1000" placeholder="Example: Jane Customer approves revision 1 of this estimate." required></textarea></label>
+        <div class="form-grid one">${paymentOptions}</div>
+        <label class="field full"><input id="approval-accept-terms" type="checkbox"> I accept the estimate terms and conditions.</label>
+        <label class="field full"><input id="approval-ack-payment-plan" type="checkbox"> For the payment plan: the parts-price deposit is due before parts are ordered, no repair begins until deposit and authorization are complete, and remaining payments are due 30 and 60 days after service.</label>
+        <div class="estimate-submit-row">
+          <button class="primary-button compact" type="submit">Approve estimate</button>
+          <button class="secondary-button compact" type="button" id="approval-decline">Decline estimate</button>
+        </div>
+      </form>`;
+    $("approval-action-form").addEventListener("submit", async (event) => {
+      event.preventDefault();
+      try {
+        const approvalResponse = await apiFetch("/api/estimate-approval/approve", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            token,
+            revision_number: data.revision.revision_number,
+            approving_name: $("approval-name").value.trim(),
+            accepted_terms: $("approval-accept-terms").checked,
+            payment_option: document.querySelector('input[name="approval-payment-option"]:checked')?.value || "pay_in_full",
+            payment_plan_acknowledged: $("approval-ack-payment-plan").checked,
+            typed_authorization: $("approval-typed-authorization").value.trim(),
+          }),
+        });
+        const approvalPayload = await readApiPayload(approvalResponse);
+        if (!approvalResponse.ok || !approvalPayload) throw apiError(approvalResponse, approvalPayload, "Estimate approval failed");
+        showToast("Estimate approved.", "success");
+        root.innerHTML = `<div class="empty-card"><strong>Estimate approved</strong><p>${escapeHtml(approvalPayload.estimate_number)} revision ${approvalPayload.revision_number} was approved at ${new Date(approvalPayload.decided_at).toLocaleString()}.</p></div>`;
+      } catch (error) {
+        showToast(`Estimate approval failed: ${error.message}`, "error");
+      }
+    });
+    $("approval-decline").addEventListener("click", async () => {
+      const name = $("approval-name").value.trim();
+      if (!name) {
+        showToast("Enter the customer name before declining.", "error");
+        $("approval-name").focus();
+        return;
+      }
+      try {
+        const declineResponse = await apiFetch("/api/estimate-approval/decline", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            token,
+            revision_number: data.revision.revision_number,
+            declining_name: name,
+            reason: "Declined from customer approval view.",
+          }),
+        });
+        const declinePayload = await readApiPayload(declineResponse);
+        if (!declineResponse.ok || !declinePayload) throw apiError(declineResponse, declinePayload, "Estimate decline failed");
+        showToast("Estimate declined.", "success");
+        root.innerHTML = `<div class="empty-card"><strong>Estimate declined</strong><p>${escapeHtml(declinePayload.estimate_number)} revision ${declinePayload.revision_number} was declined at ${new Date(declinePayload.decided_at).toLocaleString()}.</p></div>`;
+      } catch (error) {
+        showToast(`Estimate decline failed: ${error.message}`, "error");
+      }
+    });
+  } catch (error) {
+    root.innerHTML = `<div class="error-card"><strong>Approval view failed</strong><p>${escapeHtml(error.message)}</p></div>`;
   }
 }
 
@@ -1483,6 +1723,7 @@ function initializeVehicles() {
     state.vehicles.selectedVehicle = null;
     populateVehicleForm(null, { preferredCustomerId: state.vehicles.customerFilterId });
     renderVehicleDetail(null);
+    syncEstimateRecordSummary();
     void clearSelectedVehicleReference();
   });
   $("vehicles-new").addEventListener("click", async () => {
@@ -1491,6 +1732,7 @@ function initializeVehicles() {
     state.vehicles.selectedVehicle = null;
     populateVehicleForm(null, { preferredCustomerId: state.vehicles.customerFilterId });
     renderVehicleDetail(null);
+    syncEstimateRecordSummary();
     $("vehicle-vin").focus();
   });
   $("vehicles-refresh").addEventListener("click", () => {
@@ -1606,10 +1848,15 @@ function initializeApp() {
   initializeEstimate();
   initializeSystem();
   initializeAuth();
-  if (window.location.pathname === "/login") navigate("login");
+  if (window.location.pathname === "/approval") {
+    navigate("approval");
+    void loadPublicApprovalPage();
+  } else if (window.location.pathname === "/login") {
+    navigate("login");
+  }
   void loadSession().then((authenticated) => {
     if (!authenticated) {
-      navigate("login");
+      if (window.location.pathname !== "/approval") navigate("login");
       return;
     }
     void loadCustomerOptions().catch(() => {

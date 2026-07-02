@@ -523,6 +523,21 @@
               </div>
 
               <fieldset>
+                <legend><span>00</span> Record selection</legend>
+                <div class="customer-detail-grid">
+                  <div><span>Customer</span><strong id="estimate-selected-customer">Select a customer record first.</strong></div>
+                  <div><span>Vehicle</span><strong id="estimate-selected-vehicle">Select a vehicle record first.</strong></div>
+                </div>
+                <div class="estimate-submit-row">
+                  <div><strong>Authoritative records</strong><span>Estimate ownership, approval, and history stay tied to PostgreSQL customer and vehicle records.</span></div>
+                  <div class="cluster-actions">
+                    <button class="secondary-button compact" type="button" id="estimate-open-customer">Open customer</button>
+                    <button class="secondary-button compact" type="button" id="estimate-open-vehicle">Open vehicle</button>
+                  </div>
+                </div>
+              </fieldset>
+
+              <fieldset>
                 <legend><span>01</span> Vehicle identification</legend>
                 <label class="field full">VIN
                   <input id="vin" maxlength="17" autocomplete="off" placeholder="17-character VIN">
@@ -556,11 +571,27 @@
                 </div>
               </fieldset>
 
+              <fieldset>
+                <legend><span>04</span> Approval setup</legend>
+                <label class="field full">Estimate terms
+                  <textarea id="estimate-terms" maxlength="4000" placeholder="Customer authorization terms and scope conditions.">Approval authorizes the quoted work only. Additional material changes require a new revision. Parts-price deposits are due before parts are ordered.</textarea>
+                </label>
+                <div class="form-grid three">
+                  <label class="field"><input id="payment-option-pay-in-full" type="checkbox" checked> Pay in full</label>
+                  <label class="field"><input id="payment-option-split-payment" type="checkbox" checked> Split payment</label>
+                  <label class="field"><input id="payment-option-two-month-plan" type="checkbox" checked> Two-month plan</label>
+                </div>
+                <div class="form-grid two">
+                  <label class="field">Approval expiration (days) <input id="estimate-expires-days" type="number" min="1" max="90" value="7"></label>
+                  <label class="field">Approval link TTL (hours) <input id="estimate-link-hours" type="number" min="1" max="720" value="72"></label>
+                </div>
+              </fieldset>
+
               <div class="estimate-submit-row">
                 <div><strong>Current-source research</strong><span>Optimus will cite the sources used.</span></div>
                 <button class="primary-button large" type="submit" id="submit">
                   <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 13h8V3h2v8h8v2h-8v8h-2v-8H3v-2Z"/></svg>
-                  Research and estimate
+                  Create saved estimate
                 </button>
               </div>
             </form>
@@ -583,6 +614,18 @@
             </aside>
           </div>
           <section id="result" class="estimate-result panel" hidden aria-live="polite"></section>
+        </section>
+
+        <section class="app-view" id="view-approval" data-view-panel="approval" hidden>
+          <section class="panel estimate-form-panel">
+            <div class="panel-heading">
+              <div><span class="section-kicker"><i></i> Customer approval</span><h2>Review estimate</h2><p>Approve or decline the exact estimate revision that was sent for authorization.</p></div>
+              <span class="estimate-number" id="approval-estimate-number">Awaiting token</span>
+            </div>
+            <div id="approval-public-root">
+              <div class="empty-card"><strong>Approval link required</strong><p>Open this page from a generated approval link so the estimate token stays in the browser fragment and out of request URLs.</p></div>
+            </div>
+          </section>
         </section>
 
         <section class="app-view" id="view-system" data-view-panel="system" hidden>

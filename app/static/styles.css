@@ -611,6 +611,7 @@ input:focus, textarea:focus, select:focus { border-color: rgba(21,156,255,.55); 
 .input-prefix:focus-within, .input-suffix:focus-within { border-color: rgba(21,156,255,.55); box-shadow: 0 0 0 3px rgba(21,156,255,.08); }
 .estimate-submit-row { display: flex; align-items: center; justify-content: space-between; gap: 18px; padding: 22px 24px; background: rgba(255,255,255,.012); }
 .estimate-submit-row strong, .estimate-submit-row span { display: block; }.estimate-submit-row strong { font-size: .78rem; }.estimate-submit-row span { color: var(--muted); font-size: .66rem; }
+.cluster-actions { display: flex; gap: 10px; flex-wrap: wrap; }
 .estimate-side-rail { display: grid; gap: 16px; }
 .readiness-card { text-align: center; }
 .readiness-gauge { width: 150px; height: 150px; margin: 22px auto; padding: 12px; border-radius: 50%; background: conic-gradient(var(--green) 0 32%, var(--blue) 32% 76%, var(--amber) 76% 100%); box-shadow: 0 0 30px rgba(21,156,255,.15); }
