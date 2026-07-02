@@ -42,6 +42,13 @@ class Settings(BaseSettings):
     max_job_text_length: int = Field(default=500, ge=20, le=5000)
     max_chat_text_length: int = Field(default=12_000, ge=100, le=50_000)
     max_web_results: int = Field(default=20, ge=3, le=100)
+    context_max_entries_per_scope: int = Field(default=24, ge=1, le=200)
+    context_max_value_chars: int = Field(default=4000, ge=100, le=20_000)
+    context_stale_after_hours: int = Field(default=168, ge=1, le=8760)
+    customers_default_page_size: int = Field(default=20, ge=1, le=100)
+    customers_max_page_size: int = Field(default=100, ge=1, le=200)
+    vehicles_default_page_size: int = Field(default=20, ge=1, le=100)
+    vehicles_max_page_size: int = Field(default=100, ge=1, le=200)
     app_env: str = "production"
     database_url: str = Field(
         default="postgresql+psycopg://optimus:optimus_local@postgres:5432/optimus_os",

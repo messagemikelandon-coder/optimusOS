@@ -6,7 +6,12 @@
   ],
   "exclude": [
     "dist",
+    "build",
+    "node_modules",
     ".venv",
+    ".mypy_cache",
+    ".ruff_cache",
+    "optimus_internet_local_parts.egg-info",
     "**/__pycache__",
     ".pytest_cache"
   ],

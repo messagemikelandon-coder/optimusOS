@@ -6,8 +6,16 @@ node_modules/
 .pytest_cache/
 .ruff_cache/
 .mypy_cache/
+dist/
+build/
+coverage/
+playwright-report/
+.playwright/
+.coverage
 *.pyc
 *.log
+*.tar.gz
+*.whl
 backups/
 
 # Python packaging output

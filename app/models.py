@@ -325,11 +325,87 @@ class AuthMeResponse(BaseModel):
     expires_at: datetime
 
 
+class ContextScope(StrEnum):
+    PROJECT = "project"
+    SESSION = "session"
+
+
+class ContextEntryUpsertRequest(BaseModel):
+    value: NonBlank = Field(max_length=4000)
+    expected_revision: int | None = Field(default=None, ge=1)
+
+
+class ContextEntryRead(BaseModel):
+    id: int
+    project_key: str
+    scope: ContextScope
+    context_key: str
+    value: str
+    revision: int
+    updated_at: datetime
+    stale: bool
+
+
+class ContextListResponse(BaseModel):
+    project_key: str
+    scope: ContextScope
+    entries: list[ContextEntryRead]
+    max_entries: int
+    stale_after_hours: int
+
+
+class ContextDeleteResponse(BaseModel):
+    ok: bool = True
+    project_key: str
+    scope: ContextScope
+    context_key: str
+    deleted_revision: int
+
+
 class CustomerBase(BaseModel):
-    full_name: NonBlank = Field(max_length=180)
+    first_name: str | None = Field(default=None, max_length=120)
+    last_name: str | None = Field(default=None, max_length=120)
+    company_name: str | None = Field(default=None, max_length=180)
     email: str | None = Field(default=None, max_length=180)
     phone: str | None = Field(default=None, max_length=40)
-    notes: str | None = Field(default=None, max_length=4000)
+    secondary_phone: str | None = Field(default=None, max_length=40)
+    address_line_1: str | None = Field(default=None, max_length=180)
+    address_line_2: str | None = Field(default=None, max_length=180)
+    city: str | None = Field(default=None, max_length=120)
+    state: str | None = Field(default=None, max_length=80)
+    postal_code: str | None = Field(default=None, max_length=20)
+    preferred_contact_method: str | None = Field(default=None, max_length=40)
+    internal_notes: str | None = Field(default=None, max_length=4000)
+
+    @field_validator(
+        "first_name",
+        "last_name",
+        "company_name",
+        "email",
+        "phone",
+        "secondary_phone",
+        "address_line_1",
+        "address_line_2",
+        "city",
+        "state",
+        "postal_code",
+        "preferred_contact_method",
+        "internal_notes",
+        mode="before",
+    )
+    @classmethod
+    def strip_customer_strings(cls, value: object) -> object:
+        if isinstance(value, str):
+            stripped = value.strip()
+            return stripped or None
+        return value
+
+    @model_validator(mode="after")
+    def require_name_or_company(self) -> CustomerBase:
+        has_person_name = bool(self.first_name or self.last_name)
+        if not has_person_name and not self.company_name:
+            raise ValueError("Provide a first or last name, or a company name.")
+        return self
 
 
 class CustomerCreate(CustomerBase):
@@ -337,31 +413,102 @@ class CustomerCreate(CustomerBase):
 
 
 class CustomerUpdate(BaseModel):
-    full_name: str | None = Field(default=None, max_length=180)
+    first_name: str | None = Field(default=None, max_length=120)
+    last_name: str | None = Field(default=None, max_length=120)
+    company_name: str | None = Field(default=None, max_length=180)
     email: str | None = Field(default=None, max_length=180)
     phone: str | None = Field(default=None, max_length=40)
-    notes: str | None = Field(default=None, max_length=4000)
+    secondary_phone: str | None = Field(default=None, max_length=40)
+    address_line_1: str | None = Field(default=None, max_length=180)
+    address_line_2: str | None = Field(default=None, max_length=180)
+    city: str | None = Field(default=None, max_length=120)
+    state: str | None = Field(default=None, max_length=80)
+    postal_code: str | None = Field(default=None, max_length=20)
+    preferred_contact_method: str | None = Field(default=None, max_length=40)
+    internal_notes: str | None = Field(default=None, max_length=4000)
+
+    @field_validator(
+        "first_name",
+        "last_name",
+        "company_name",
+        "email",
+        "phone",
+        "secondary_phone",
+        "address_line_1",
+        "address_line_2",
+        "city",
+        "state",
+        "postal_code",
+        "preferred_contact_method",
+        "internal_notes",
+        mode="before",
+    )
+    @classmethod
+    def strip_customer_strings(cls, value: object) -> object:
+        if isinstance(value, str):
+            stripped = value.strip()
+            return stripped or None
+        return value
 
 
 class CustomerRead(CustomerBase):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
+    display_name: str
+    is_archived: bool
     created_at: datetime
     updated_at: datetime
 
 
+class CustomerListResponse(BaseModel):
+    items: list[CustomerRead]
+    page: int
+    page_size: int
+    total: int
+    has_more: bool
+
+
+class CustomerArchiveResponse(BaseModel):
+    ok: bool = True
+    customer: CustomerRead
+
+
 class VehicleBase(BaseModel):
-    customer_id: int | None = None
-    vin: str | None = Field(default=None, min_length=11, max_length=17)
+    vin: str | None = Field(default=None, max_length=17)
     year: int | None = Field(default=None, ge=1900, le=2100)
     make: NonBlank = Field(max_length=100)
     model: NonBlank = Field(max_length=100)
     trim: str | None = Field(default=None, max_length=120)
     engine: str | None = Field(default=None, max_length=120)
     drivetrain: str | None = Field(default=None, max_length=80)
-    mileage: int | None = Field(default=None, ge=0, le=1_000_000)
-    notes: str | None = Field(default=None, max_length=4000)
+    transmission: str | None = Field(default=None, max_length=120)
+    license_plate: str | None = Field(default=None, max_length=32)
+    license_plate_state: str | None = Field(default=None, max_length=40)
+    color: str | None = Field(default=None, max_length=80)
+    current_mileage: int | None = Field(default=None, ge=0, le=1_000_000)
+    fleet_unit_number: str | None = Field(default=None, max_length=80)
+    internal_notes: str | None = Field(default=None, max_length=4000)
+
+    @field_validator(
+        "vin",
+        "trim",
+        "engine",
+        "drivetrain",
+        "transmission",
+        "license_plate",
+        "license_plate_state",
+        "color",
+        "fleet_unit_number",
+        "internal_notes",
+        mode="before",
+    )
+    @classmethod
+    def strip_vehicle_strings(cls, value: object) -> object:
+        if isinstance(value, str):
+            stripped = value.strip()
+            return stripped or None
+        return value
 
 
 class VehicleCreate(VehicleBase):
@@ -369,25 +516,67 @@ class VehicleCreate(VehicleBase):
 
 
 class VehicleUpdate(BaseModel):
-    customer_id: int | None = None
-    vin: str | None = Field(default=None, min_length=11, max_length=17)
+    vin: str | None = Field(default=None, max_length=17)
     year: int | None = Field(default=None, ge=1900, le=2100)
     make: str | None = Field(default=None, max_length=100)
     model: str | None = Field(default=None, max_length=100)
     trim: str | None = Field(default=None, max_length=120)
     engine: str | None = Field(default=None, max_length=120)
     drivetrain: str | None = Field(default=None, max_length=80)
-    mileage: int | None = Field(default=None, ge=0, le=1_000_000)
-    notes: str | None = Field(default=None, max_length=4000)
+    transmission: str | None = Field(default=None, max_length=120)
+    license_plate: str | None = Field(default=None, max_length=32)
+    license_plate_state: str | None = Field(default=None, max_length=40)
+    color: str | None = Field(default=None, max_length=80)
+    current_mileage: int | None = Field(default=None, ge=0, le=1_000_000)
+    fleet_unit_number: str | None = Field(default=None, max_length=80)
+    internal_notes: str | None = Field(default=None, max_length=4000)
+
+    @field_validator(
+        "vin",
+        "make",
+        "model",
+        "trim",
+        "engine",
+        "drivetrain",
+        "transmission",
+        "license_plate",
+        "license_plate_state",
+        "color",
+        "fleet_unit_number",
+        "internal_notes",
+        mode="before",
+    )
+    @classmethod
+    def strip_vehicle_strings(cls, value: object) -> object:
+        if isinstance(value, str):
+            stripped = value.strip()
+            return stripped or None
+        return value
 
 
 class VehicleRead(VehicleBase):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
+    customer_id: int
+    customer_display_name: str | None = None
+    display_name: str
+    is_archived: bool
     created_at: datetime
     updated_at: datetime
-    customer_name: str | None = None
+
+
+class VehicleListResponse(BaseModel):
+    items: list[VehicleRead]
+    page: int
+    page_size: int
+    total: int
+    has_more: bool
+
+
+class VehicleArchiveResponse(BaseModel):
+    ok: bool = True
+    vehicle: VehicleRead
 
 
 class WorkOrderBase(BaseModel):

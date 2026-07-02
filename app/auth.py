@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import secrets
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -10,6 +11,7 @@ from argon2 import PasswordHasher
 from argon2.exceptions import InvalidHashError, VerifyMismatchError
 from fastapi import Depends, HTTPException, Request, Response, status
 from sqlalchemy import Select, func, select
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.config import Settings, get_settings
@@ -20,6 +22,7 @@ SettingsDep = Annotated[Settings, Depends(get_settings)]
 DbSessionDep = Annotated[Session, Depends(get_db_session)]
 
 _password_hasher = PasswordHasher()
+logger = logging.getLogger("optimus")
 
 
 @dataclass(frozen=True, slots=True)
@@ -193,25 +196,33 @@ def get_current_auth_context(
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication required."
         )
+    try:
+        auth_session = db.scalar(_active_session_query(hash_session_token(token)))
+        if auth_session is None:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Authentication required.",
+            )
 
-    auth_session = db.scalar(_active_session_query(hash_session_token(token)))
-    if auth_session is None:
+        user = db.get(UserAccount, auth_session.user_id)
+        if user is None or not user.is_active:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Authentication required.",
+            )
+
+        auth_session.last_seen_at = datetime.now(UTC)
+        db.add(auth_session)
+        db.commit()
+        db.refresh(auth_session)
+        auth_session.expires_at = ensure_utc(auth_session.expires_at)
+        return AuthContext(user=user, session=auth_session)
+    except SQLAlchemyError as exc:
+        logger.warning("Authentication lookup failed due to storage error.")
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication required."
-        )
-
-    user = db.get(UserAccount, auth_session.user_id)
-    if user is None or not user.is_active:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication required."
-        )
-
-    auth_session.last_seen_at = datetime.now(UTC)
-    db.add(auth_session)
-    db.commit()
-    db.refresh(auth_session)
-    auth_session.expires_at = ensure_utc(auth_session.expires_at)
-    return AuthContext(user=user, session=auth_session)
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Authentication storage is unavailable.",
+        ) from exc
 
 
 def require_authenticated_user(

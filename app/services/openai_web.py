@@ -101,9 +101,7 @@ def _extract_bullet_lines(text: str) -> list[str]:
 def _parse_markdown_research_fallback(text: str) -> dict[str, Any]:
     sections = _extract_sections(text)
     if not sections or not any(key in sections for key in ("labor", "parts", "summary")):
-        raise ValueError(
-            "Compatibility response was neither valid JSON nor recognizable markdown."
-        )
+        raise ValueError("Compatibility response was neither valid JSON nor recognizable markdown.")
     labor_section = sections.get("labor", "")
     parts_section = sections.get("parts", "")
     summary_section = sections.get("summary", "")

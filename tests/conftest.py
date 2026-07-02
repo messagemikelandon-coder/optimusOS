@@ -13,6 +13,7 @@ from app.db import Base, build_engine, build_session_factory
 @pytest.fixture
 def settings() -> Settings:
     return Settings(
+        app_env="test",
         openai_api_key="test-key",
         database_url="sqlite+pysqlite:///:memory:",
         frontend_origin="http://127.0.0.1:5173",

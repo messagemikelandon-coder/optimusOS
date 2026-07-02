@@ -32,6 +32,10 @@ def test_ui_preserves_connected_workflows() -> None:
     for element_id in (
         "chat-form",
         "chat-message",
+        "customer-form",
+        "customers-search",
+        "customers-list",
+        "customer-detail",
         "estimate-form",
         "use-location",
         "login-form",
@@ -42,6 +46,7 @@ def test_ui_preserves_connected_workflows() -> None:
         assert f'id="{element_id}"' in html
     assert 'apiFetch("/api/auth/login"' in javascript
     assert 'apiFetch("/api/auth/me"' in javascript
+    assert "/api/customers" in javascript
     assert 'apiFetch("/api/chat"' in javascript
     assert 'apiFetch("/api/estimate"' in javascript
     assert 'apiFetch("/health"' in javascript
@@ -56,6 +61,16 @@ def test_local_launcher_opens_login_url_without_credentials_in_fragment() -> Non
     assert "access_token" not in opener
     assert "optimus_access_token" not in javascript
     assert 'credentials: "same-origin"' in javascript
+
+
+def test_playwright_audit_supports_safe_authenticated_smoke_mode() -> None:
+    audit_script = (ROOT / "scripts" / "ui_connection_audit_playwright.js").read_text(
+        encoding="utf-8"
+    )
+    assert "OPTIMUS_AUDIT_SKIP_DOCKER" in audit_script
+    assert "OPTIMUS_AUDIT_SKIP_BILLABLE" in audit_script
+    assert '"/api/auth/me"' in audit_script
+    assert '"/api/location/resolve"' in audit_script
 
 
 def test_health_identifies_official_build() -> None:

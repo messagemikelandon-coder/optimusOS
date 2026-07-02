@@ -8,10 +8,11 @@ from pathlib import Path
 from typing import Annotated, Any
 from urllib.parse import urlparse
 
-from fastapi import Depends, FastAPI, HTTPException, Request, Response, status
+from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app import __version__
@@ -25,6 +26,23 @@ from app.auth import (
     set_session_cookie,
 )
 from app.config import Settings, get_settings
+from app.context_store import (
+    ContextCapacityError,
+    ContextConflictError,
+    ContextStoreError,
+    delete_entry,
+    list_entries,
+    upsert_entry,
+)
+from app.customer_store import (
+    CustomerNotFoundError,
+    CustomerStoreError,
+    archive_customer,
+    create_customer,
+    get_customer,
+    list_customers,
+    update_customer,
+)
 from app.db import get_db_session
 from app.db_models import UserAccount
 from app.errors import EstimatorResearchError
@@ -35,16 +53,40 @@ from app.models import (
     AuthUser,
     ChatRequest,
     ChatResponse,
+    ContextDeleteResponse,
+    ContextEntryRead,
+    ContextEntryUpsertRequest,
+    ContextListResponse,
+    ContextScope,
+    CustomerArchiveResponse,
+    CustomerCreate,
+    CustomerListResponse,
+    CustomerRead,
+    CustomerUpdate,
     EstimateRequest,
     EstimateResponse,
     LocationInput,
     ResolvedLocation,
+    VehicleArchiveResponse,
+    VehicleCreate,
+    VehicleListResponse,
+    VehicleRead,
+    VehicleUpdate,
 )
 from app.orchestrator import OptimusResearchOrchestrator
 from app.rate_limit import RateLimitExceeded, SlidingWindowRateLimiter
 from app.services.http import SafeHttpClient
 from app.services.location import LocationService
 from app.services.optimus_chat import OptimusChatService
+from app.vehicle_store import (
+    VehicleNotFoundError,
+    VehicleStoreError,
+    archive_vehicle,
+    create_vehicle,
+    get_vehicle,
+    list_vehicles,
+    update_vehicle,
+)
 
 logging.basicConfig(level=get_settings().log_level)
 logger = logging.getLogger("optimus")
@@ -170,6 +212,25 @@ def auth_user_response(user: Any) -> AuthUser:
     return AuthUser.model_validate(user)
 
 
+def ensure_context_dependencies(settings: Settings) -> None:
+    if settings.app_env == "test":
+        return
+    unavailable: list[str] = []
+    if not _tcp_dependency_ready(settings.database_url, 5432):
+        unavailable.append("postgres")
+    if not _tcp_dependency_ready(settings.redis_url, 6379):
+        unavailable.append("redis")
+    if unavailable:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={
+                "code": "context_dependencies_unavailable",
+                "message": "Context management dependencies are unavailable.",
+                "unavailable_dependencies": unavailable,
+            },
+        )
+
+
 @app.post("/api/auth/login", response_model=AuthSessionResponse)
 async def login(
     payload: AuthLoginRequest,
@@ -215,6 +276,362 @@ async def auth_me(auth: AuthContextDep) -> AuthMeResponse:
         user=auth_user_response(auth.user),
         expires_at=auth.session.expires_at,
     )
+
+
+@app.post("/api/customers", response_model=CustomerRead)
+async def create_customer_record(
+    payload: CustomerCreate,
+    db: DbSessionDep,
+    auth: AuthContextDep,
+) -> CustomerRead:
+    try:
+        return create_customer(db=db, auth=auth, payload=payload)
+    except CustomerStoreError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Customer creation failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Customer storage is unavailable.",
+        ) from exc
+
+
+@app.get("/api/customers", response_model=CustomerListResponse)
+async def list_customer_records(
+    db: DbSessionDep,
+    settings: SettingsDep,
+    auth: AuthContextDep,
+    page: int = Query(default=1),
+    page_size: int = Query(default=20),
+    search: str | None = Query(default=None, max_length=120),
+    archived: bool = False,
+) -> CustomerListResponse:
+    try:
+        return list_customers(
+            db=db,
+            auth=auth,
+            settings=settings,
+            page=page,
+            page_size=page_size,
+            archived=archived,
+            search=search,
+        )
+    except CustomerStoreError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Customer listing failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Customer storage is unavailable.",
+        ) from exc
+
+
+@app.get("/api/customers/{customer_id}", response_model=CustomerRead)
+async def get_customer_record(
+    customer_id: int,
+    db: DbSessionDep,
+    auth: AuthContextDep,
+) -> CustomerRead:
+    try:
+        return get_customer(db=db, auth=auth, customer_id=customer_id)
+    except CustomerNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except CustomerStoreError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Customer retrieval failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Customer storage is unavailable.",
+        ) from exc
+
+
+@app.patch("/api/customers/{customer_id}", response_model=CustomerRead)
+async def update_customer_record(
+    customer_id: int,
+    payload: CustomerUpdate,
+    db: DbSessionDep,
+    auth: AuthContextDep,
+) -> CustomerRead:
+    try:
+        return update_customer(db=db, auth=auth, customer_id=customer_id, payload=payload)
+    except CustomerNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except CustomerStoreError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Customer update failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Customer storage is unavailable.",
+        ) from exc
+
+
+@app.delete("/api/customers/{customer_id}", response_model=CustomerArchiveResponse)
+async def archive_customer_record(
+    customer_id: int,
+    db: DbSessionDep,
+    auth: AuthContextDep,
+) -> CustomerArchiveResponse:
+    try:
+        return archive_customer(db=db, auth=auth, customer_id=customer_id)
+    except CustomerNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except CustomerStoreError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Customer archive failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Customer storage is unavailable.",
+        ) from exc
+
+
+@app.post("/api/customers/{customer_id}/vehicles", response_model=VehicleRead)
+async def create_vehicle_record(
+    customer_id: int,
+    payload: VehicleCreate,
+    db: DbSessionDep,
+    auth: AuthContextDep,
+) -> VehicleRead:
+    try:
+        return create_vehicle(db=db, auth=auth, customer_id=customer_id, payload=payload)
+    except CustomerNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except VehicleStoreError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Vehicle creation failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Vehicle storage is unavailable.",
+        ) from exc
+
+
+@app.get("/api/customers/{customer_id}/vehicles", response_model=VehicleListResponse)
+async def list_customer_vehicle_records(
+    customer_id: int,
+    db: DbSessionDep,
+    settings: SettingsDep,
+    auth: AuthContextDep,
+    page: int = Query(default=1),
+    page_size: int = Query(default=20),
+    search: str | None = Query(default=None, max_length=120),
+    archived: bool = False,
+) -> VehicleListResponse:
+    try:
+        return list_vehicles(
+            db=db,
+            auth=auth,
+            settings=settings,
+            page=page,
+            page_size=page_size,
+            archived=archived,
+            search=search,
+            customer_id=customer_id,
+        )
+    except CustomerNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except VehicleStoreError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Customer vehicle listing failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Vehicle storage is unavailable.",
+        ) from exc
+
+
+@app.get("/api/vehicles", response_model=VehicleListResponse)
+async def list_vehicle_records(
+    db: DbSessionDep,
+    settings: SettingsDep,
+    auth: AuthContextDep,
+    page: int = Query(default=1),
+    page_size: int = Query(default=20),
+    search: str | None = Query(default=None, max_length=120),
+    customer_id: int | None = Query(default=None, ge=1),
+    archived: bool = False,
+) -> VehicleListResponse:
+    try:
+        return list_vehicles(
+            db=db,
+            auth=auth,
+            settings=settings,
+            page=page,
+            page_size=page_size,
+            archived=archived,
+            search=search,
+            customer_id=customer_id,
+        )
+    except CustomerNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except VehicleStoreError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Vehicle listing failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Vehicle storage is unavailable.",
+        ) from exc
+
+
+@app.get("/api/vehicles/{vehicle_id}", response_model=VehicleRead)
+async def get_vehicle_record(
+    vehicle_id: int,
+    db: DbSessionDep,
+    auth: AuthContextDep,
+) -> VehicleRead:
+    try:
+        return get_vehicle(db=db, auth=auth, vehicle_id=vehicle_id)
+    except VehicleNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except VehicleStoreError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Vehicle retrieval failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Vehicle storage is unavailable.",
+        ) from exc
+
+
+@app.patch("/api/vehicles/{vehicle_id}", response_model=VehicleRead)
+async def update_vehicle_record(
+    vehicle_id: int,
+    payload: VehicleUpdate,
+    db: DbSessionDep,
+    auth: AuthContextDep,
+) -> VehicleRead:
+    try:
+        return update_vehicle(db=db, auth=auth, vehicle_id=vehicle_id, payload=payload)
+    except VehicleNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except VehicleStoreError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Vehicle update failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Vehicle storage is unavailable.",
+        ) from exc
+
+
+@app.delete("/api/vehicles/{vehicle_id}", response_model=VehicleArchiveResponse)
+async def archive_vehicle_record(
+    vehicle_id: int,
+    db: DbSessionDep,
+    auth: AuthContextDep,
+) -> VehicleArchiveResponse:
+    try:
+        return archive_vehicle(db=db, auth=auth, vehicle_id=vehicle_id)
+    except VehicleNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except VehicleStoreError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Vehicle archive failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Vehicle storage is unavailable.",
+        ) from exc
+
+
+@app.get("/api/context/{project_key}", response_model=ContextListResponse)
+async def get_context(
+    project_key: str,
+    db: DbSessionDep,
+    settings: SettingsDep,
+    auth: AuthContextDep,
+    scope: ContextScope = ContextScope.PROJECT,
+) -> ContextListResponse:
+    ensure_context_dependencies(settings)
+    try:
+        return list_entries(
+            db=db,
+            auth=auth,
+            settings=settings,
+            project_key=project_key,
+            scope=scope,
+        )
+    except ContextStoreError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Context listing failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Context storage is unavailable.",
+        ) from exc
+
+
+@app.put("/api/context/{project_key}/{context_key}", response_model=ContextEntryRead)
+async def put_context(
+    project_key: str,
+    context_key: str,
+    payload: ContextEntryUpsertRequest,
+    db: DbSessionDep,
+    settings: SettingsDep,
+    auth: AuthContextDep,
+    scope: ContextScope = ContextScope.PROJECT,
+) -> ContextEntryRead:
+    ensure_context_dependencies(settings)
+    try:
+        return upsert_entry(
+            db=db,
+            auth=auth,
+            settings=settings,
+            project_key=project_key,
+            scope=scope,
+            context_key=context_key,
+            value=payload.value,
+            expected_revision=payload.expected_revision,
+        )
+    except ContextConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ContextCapacityError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ContextStoreError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Context upsert failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Context storage is unavailable.",
+        ) from exc
+
+
+@app.delete("/api/context/{project_key}/{context_key}", response_model=ContextDeleteResponse)
+async def remove_context(
+    project_key: str,
+    context_key: str,
+    db: DbSessionDep,
+    settings: SettingsDep,
+    auth: AuthContextDep,
+    scope: ContextScope = ContextScope.PROJECT,
+    expected_revision: int | None = None,
+) -> ContextDeleteResponse:
+    ensure_context_dependencies(settings)
+    try:
+        return delete_entry(
+            db=db,
+            auth=auth,
+            settings=settings,
+            project_key=project_key,
+            scope=scope,
+            context_key=context_key,
+            expected_revision=expected_revision,
+        )
+    except ContextConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ContextStoreError as exc:
+        status_code_value = 404 if "not found" in str(exc).lower() else 422
+        raise HTTPException(status_code=status_code_value, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Context deletion failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Context storage is unavailable.",
+        ) from exc
 
 
 @app.post(

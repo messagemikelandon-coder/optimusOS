@@ -4,23 +4,14 @@ Purpose: confirmed defects, environment blockers, and their repair status.
 Information owner: repository maintainers.
 Read when: assessing current risk or planning repairs.
 Update when: a defect is discovered, repaired, or reclassified.
-Last verified date: 2026-07-01.
-Relevant sources: `docs/frontend-audit.md`, `docs/UI_CONNECTION_AUDIT.md`, `docs/UBUNTU_DEPLOYMENT_REPORT.md`, `git status`, `git diff --stat`.
+Last verified date: 2026-07-02.
+Relevant sources: `git status`, `git diff --stat`, `app/auth.py`, `app/context_store.py`, `app/main.py`, `tests/test_context_api.py`, `docker compose ps`, `docker compose logs --tail=200 backend worker`, `curl http://127.0.0.1:8000/ready`.
 
 ## Confirmed Open Issues
 
-No confirmed open application defects were identified during the current repository audit.
+- None currently confirmed in the authenticated/context/customer baseline.
 
-## Environment Blocker
+## Deferred Verification Notes
 
-- ID: ENV-001
-- Priority: Medium
-- Status: Open
-- Description: The Codex sandbox blocked fresh socket-based live-stack checks during this documentation session.
-- Evidence: `scripts/optimusctl.sh status`, `scripts/optimusctl.sh health`, and `scripts/optimusctl.sh ready` could not complete in the sandbox because socket access was denied.
-- Root cause if known: sandbox networking restriction, not a repository defect.
-- Affected files: none.
-- Workaround: rely on the last verified live-stack reports in `docs/frontend-audit.md` and `docs/UBUNTU_DEPLOYMENT_REPORT.md` until a runnable environment is available.
-- Required repair: none in the repository; rerun live checks in an environment with socket access.
-- Required regression test: none.
-- Related Linear or GitHub issue: not available.
+- Billable live chat and estimate calls were intentionally skipped in this session because they may spend money through OpenAI-backed requests. This is a verification gap, not a confirmed defect.
+- The Customer slice is verified for backend and frontend authenticated flows, but Vehicles and downstream business records are intentionally not started yet.

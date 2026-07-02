@@ -17,6 +17,17 @@ const state = {
   auth: { authenticated: false, user: null, expiresAt: null },
   coordinates: null,
   chatHistory: [],
+  customers: {
+    items: [],
+    selectedCustomerId: null,
+    selectedCustomer: null,
+    page: 1,
+    pageSize: 20,
+    total: 0,
+    hasMore: false,
+    search: "",
+    archivedOnly: false,
+  },
   currentView: "dashboard",
   health: null,
   lastEstimate: null,
@@ -25,6 +36,7 @@ const state = {
 const viewMeta = {
   login: { eyebrow: "Authentication", title: "Sign in" },
   dashboard: { eyebrow: "Operations", title: "Command deck" },
+  customers: { eyebrow: "Records", title: "Customers" },
   chat: { eyebrow: "Owner channel", title: "Talk to Optimus" },
   estimate: { eyebrow: "Pricing workflow", title: "Job estimator" },
   system: { eyebrow: "Configuration", title: "System bay" },
@@ -201,6 +213,7 @@ function navigate(view) {
   if (view === "login") history.replaceState(null, "", "/login");
   else if (window.location.pathname === "/login") history.replaceState(null, "", "/");
   window.scrollTo({ top: 0, behavior: "smooth" });
+  if (view === "customers" && state.auth.authenticated) void loadCustomers();
   if (view === "chat") window.setTimeout(() => $("chat-message").focus(), 180);
   if (view === "login") window.setTimeout(() => $("login-username").focus(), 180);
 }
@@ -709,6 +722,278 @@ function initializeEstimate() {
   });
 }
 
+function customerPayloadFromForm() {
+  return {
+    first_name: $("customer-first-name").value.trim() || null,
+    last_name: $("customer-last-name").value.trim() || null,
+    company_name: $("customer-company-name").value.trim() || null,
+    email: $("customer-email").value.trim() || null,
+    phone: $("customer-phone").value.trim() || null,
+    secondary_phone: $("customer-secondary-phone").value.trim() || null,
+    address_line_1: $("customer-address-line-1").value.trim() || null,
+    address_line_2: $("customer-address-line-2").value.trim() || null,
+    city: $("customer-city").value.trim() || null,
+    state: $("customer-state").value.trim() || null,
+    postal_code: $("customer-postal-code").value.trim() || null,
+    preferred_contact_method: $("customer-preferred-contact-method").value.trim() || null,
+    internal_notes: $("customer-internal-notes").value.trim() || null,
+  };
+}
+
+function populateCustomerForm(customer = null) {
+  $("customer-id").value = customer?.id ?? "";
+  $("customer-first-name").value = customer?.first_name ?? "";
+  $("customer-last-name").value = customer?.last_name ?? "";
+  $("customer-company-name").value = customer?.company_name ?? "";
+  $("customer-email").value = customer?.email ?? "";
+  $("customer-phone").value = customer?.phone ?? "";
+  $("customer-secondary-phone").value = customer?.secondary_phone ?? "";
+  $("customer-address-line-1").value = customer?.address_line_1 ?? "";
+  $("customer-address-line-2").value = customer?.address_line_2 ?? "";
+  $("customer-city").value = customer?.city ?? "";
+  $("customer-state").value = customer?.state ?? "";
+  $("customer-postal-code").value = customer?.postal_code ?? "";
+  $("customer-preferred-contact-method").value = customer?.preferred_contact_method ?? "";
+  $("customer-internal-notes").value = customer?.internal_notes ?? "";
+  $("customer-form-title").textContent = customer ? "Edit customer" : "Create customer";
+  $("customer-form-mode").textContent = customer ? "EDIT" : "CREATE";
+  $("customer-archive").hidden = !customer;
+}
+
+function customerSummaryLine(customer) {
+  return [customer.email, customer.phone, customer.city && customer.state ? `${customer.city}, ${customer.state}` : customer.city || customer.state]
+    .filter(Boolean)
+    .join(" · ");
+}
+
+function renderCustomerDetail(customer = null) {
+  const detail = $("customer-detail");
+  if (!customer) {
+    detail.innerHTML = "<p>Select a customer from the list or create a new record.</p>";
+    $("customer-archive").hidden = true;
+    return;
+  }
+  const addressLines = [
+    customer.address_line_1,
+    customer.address_line_2,
+    [customer.city, customer.state, customer.postal_code].filter(Boolean).join(", "),
+  ].filter(Boolean);
+  const address = addressLines.map((line) => escapeHtml(line)).join("<br>");
+  detail.innerHTML = `
+    <div class="customer-detail-header">
+      <strong>${escapeHtml(customer.display_name)}</strong>
+      <span>${customer.is_archived ? "Archived" : "Active"}</span>
+    </div>
+    <p>${escapeHtml(customerSummaryLine(customer) || "No contact details provided.")}</p>
+    <div class="customer-detail-grid">
+      <div><span>Email</span><strong>${escapeHtml(customer.email || "Not set")}</strong></div>
+      <div><span>Primary phone</span><strong>${escapeHtml(customer.phone || "Not set")}</strong></div>
+      <div><span>Secondary phone</span><strong>${escapeHtml(customer.secondary_phone || "Not set")}</strong></div>
+      <div><span>Preferred contact</span><strong>${escapeHtml(customer.preferred_contact_method || "Not set")}</strong></div>
+    </div>
+    <div class="customer-detail-notes">
+      <span>Address</span>
+      <p>${address || "No address recorded."}</p>
+    </div>
+    <div class="customer-detail-notes">
+      <span>Internal notes</span>
+      <p>${escapeHtml(customer.internal_notes || "No internal notes recorded.")}</p>
+    </div>`;
+  $("customer-archive").hidden = false;
+}
+
+function renderCustomersList() {
+  const container = $("customers-list");
+  if (!state.customers.items.length) {
+    const emptyMessage = state.customers.search || state.customers.archivedOnly
+      ? "No customers matched this filter."
+      : "No customers yet. Create the first customer record.";
+    container.innerHTML = `<div class="empty-card"><strong>No results</strong><p>${escapeHtml(emptyMessage)}</p></div>`;
+  } else {
+    container.innerHTML = state.customers.items.map((customer) => `
+      <button type="button" class="customer-list-item${state.customers.selectedCustomerId === customer.id ? " is-active" : ""}" data-customer-id="${customer.id}">
+        <strong>${escapeHtml(customer.display_name)}</strong>
+        <span>${escapeHtml(customerSummaryLine(customer) || "No contact details")}</span>
+      </button>`).join("");
+    $$("[data-customer-id]", container).forEach((button) => {
+      button.addEventListener("click", () => {
+        void selectCustomer(Number(button.dataset.customerId));
+      });
+    });
+  }
+  $("customers-page-status").textContent = `Page ${state.customers.page} · ${state.customers.total} total`;
+  $("customers-prev").disabled = state.customers.page <= 1;
+  $("customers-next").disabled = !state.customers.hasMore;
+}
+
+async function rememberSelectedCustomer(customer) {
+  try {
+    await apiFetch("/api/context/customers/selected-customer?scope=session", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        value: JSON.stringify({ id: customer.id, display_name: customer.display_name }),
+      }),
+    });
+  } catch {
+    // Customer persistence remains authoritative even if assistive context storage fails.
+  }
+}
+
+async function selectCustomer(customerId) {
+  try {
+    const response = await apiFetch(`/api/customers/${customerId}`);
+    const data = await readApiPayload(response);
+    if (!response.ok || !data) throw apiError(response, data, "Customer lookup failed");
+    state.customers.selectedCustomerId = data.id;
+    state.customers.selectedCustomer = data;
+    renderCustomerDetail(data);
+    populateCustomerForm(data);
+    renderCustomersList();
+    void rememberSelectedCustomer(data);
+  } catch (error) {
+    showToast(`Customer lookup failed: ${error.message}`, "error");
+  }
+}
+
+async function loadCustomers() {
+  if (!await requireAuthenticated("login")) return;
+  const list = $("customers-list");
+  list.innerHTML = '<div class="loading-panel"><span class="loading-spinner"></span><div><strong>Loading customers</strong><br><small>Reading PostgreSQL customer records.</small></div></div>';
+  const searchParams = new URLSearchParams({
+    page: String(state.customers.page),
+    page_size: String(state.customers.pageSize),
+    archived: String(state.customers.archivedOnly),
+  });
+  if (state.customers.search.trim()) searchParams.set("search", state.customers.search.trim());
+  try {
+    const response = await apiFetch(`/api/customers?${searchParams.toString()}`);
+    const data = await readApiPayload(response);
+    if (!response.ok || !data) throw apiError(response, data, "Customer list failed");
+    state.customers.items = data.items;
+    state.customers.total = data.total;
+    state.customers.hasMore = data.has_more;
+    renderCustomersList();
+    if (state.customers.selectedCustomerId) {
+      const selected = data.items.find((item) => item.id === state.customers.selectedCustomerId);
+      if (selected) {
+        state.customers.selectedCustomer = selected;
+        renderCustomerDetail(selected);
+        populateCustomerForm(selected);
+      } else {
+        state.customers.selectedCustomerId = null;
+        state.customers.selectedCustomer = null;
+        renderCustomerDetail(null);
+        populateCustomerForm(null);
+      }
+    }
+  } catch (error) {
+    list.innerHTML = `<div class="error-card"><strong>Customer list failed</strong><p>${escapeHtml(error.message)}</p></div>`;
+    showToast(`Customer list failed: ${error.message}`, "error");
+  }
+}
+
+async function submitCustomerForm(event) {
+  event.preventDefault();
+  if (!await requireAuthenticated("login")) return;
+  const customerId = $("customer-id").value.trim();
+  const submit = $("customer-save");
+  submit.disabled = true;
+  submit.textContent = customerId ? "Saving…" : "Creating…";
+  try {
+    const response = await apiFetch(customerId ? `/api/customers/${customerId}` : "/api/customers", {
+      method: customerId ? "PATCH" : "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(customerPayloadFromForm()),
+    });
+    const data = await readApiPayload(response);
+    if (!response.ok || !data) throw apiError(response, data, "Customer save failed");
+    state.customers.selectedCustomerId = data.id;
+    state.customers.selectedCustomer = data;
+    populateCustomerForm(data);
+    renderCustomerDetail(data);
+    state.customers.page = 1;
+    await loadCustomers();
+    showToast(customerId ? "Customer updated." : "Customer created.", "success");
+    void rememberSelectedCustomer(data);
+  } catch (error) {
+    showToast(`Customer save failed: ${error.message}`, "error");
+  } finally {
+    submit.disabled = false;
+    submit.textContent = "Save customer";
+  }
+}
+
+async function archiveSelectedCustomer() {
+  const customer = state.customers.selectedCustomer;
+  if (!customer) return;
+  if (!window.confirm(`Archive ${customer.display_name}?`)) return;
+  try {
+    const response = await apiFetch(`/api/customers/${customer.id}`, { method: "DELETE" });
+    const data = await readApiPayload(response);
+    if (!response.ok || !data) throw apiError(response, data, "Customer archive failed");
+    state.customers.selectedCustomerId = null;
+    state.customers.selectedCustomer = null;
+    populateCustomerForm(null);
+    renderCustomerDetail(null);
+    await loadCustomers();
+    showToast("Customer archived.", "success");
+  } catch (error) {
+    showToast(`Customer archive failed: ${error.message}`, "error");
+  }
+}
+
+function initializeCustomers() {
+  $("customer-form").addEventListener("submit", (event) => {
+    void submitCustomerForm(event);
+  });
+  $("customer-cancel").addEventListener("click", () => {
+    state.customers.selectedCustomerId = null;
+    state.customers.selectedCustomer = null;
+    populateCustomerForm(null);
+    renderCustomerDetail(null);
+  });
+  $("customers-new").addEventListener("click", () => {
+    navigate("customers");
+    state.customers.selectedCustomerId = null;
+    state.customers.selectedCustomer = null;
+    populateCustomerForm(null);
+    renderCustomerDetail(null);
+    $("customer-first-name").focus();
+  });
+  $("customers-refresh").addEventListener("click", () => {
+    void loadCustomers();
+  });
+  $("customers-search").addEventListener("input", () => {
+    state.customers.search = $("customers-search").value;
+    state.customers.page = 1;
+    void loadCustomers();
+  });
+  $("customers-archived-only").addEventListener("change", () => {
+    state.customers.archivedOnly = $("customers-archived-only").checked;
+    state.customers.page = 1;
+    state.customers.selectedCustomerId = null;
+    state.customers.selectedCustomer = null;
+    populateCustomerForm(null);
+    renderCustomerDetail(null);
+    void loadCustomers();
+  });
+  $("customers-prev").addEventListener("click", () => {
+    state.customers.page = Math.max(1, state.customers.page - 1);
+    void loadCustomers();
+  });
+  $("customers-next").addEventListener("click", () => {
+    if (!state.customers.hasMore) return;
+    state.customers.page += 1;
+    void loadCustomers();
+  });
+  $("customer-archive").addEventListener("click", () => {
+    void archiveSelectedCustomer();
+  });
+  populateCustomerForm(null);
+  renderCustomerDetail(null);
+}
+
 function setStatus(id, text, online = null) {
   $(id).textContent = text;
   const dot = $(`${id}-dot`);
@@ -772,6 +1057,7 @@ function initializeApp() {
   loadSavedPreferences();
   initializeLocation();
   initializeChat();
+  initializeCustomers();
   initializeEstimate();
   initializeSystem();
   initializeAuth();

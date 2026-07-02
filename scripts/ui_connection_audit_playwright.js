@@ -8,6 +8,8 @@ const invalidUsername = "owner-invalid-fixture";
 const invalidPassword = "invalid-password-fixture";
 const outDir = path.resolve("docs/screenshots/auth-integration");
 const sessionCookieName = "optimus_session";
+const skipDockerVerification = process.env.OPTIMUS_AUDIT_SKIP_DOCKER === "1";
+const skipBillableFlows = process.env.OPTIMUS_AUDIT_SKIP_BILLABLE === "1";
 
 function readDotEnvValue(key) {
   const envPath = path.resolve(".env");
@@ -69,6 +71,14 @@ function psqlValue(sql) {
   ]);
 }
 
+function dockerVerificationEnabled() {
+  return !skipDockerVerification;
+}
+
+function billableFlowsEnabled() {
+  return !skipBillableFlows;
+}
+
 async function getToastText(page) {
   await page.waitForSelector("#toast-region .toast", { timeout: 15000 });
   return page.locator("#toast-region .toast").last().innerText();
@@ -110,6 +120,10 @@ async function main() {
     cookie: null,
     authMe: null,
     database: {},
+    verificationMode: {
+      docker: dockerVerificationEnabled() ? "full" : "skipped",
+      billableFlows: billableFlowsEnabled() ? "full" : "skipped",
+    },
   };
 
   page.on("console", (msg) => {
@@ -197,16 +211,21 @@ async function main() {
 
   const rawToken = sessionCookie.value;
   const tokenHash = sha256(rawToken);
-  const matchingHashCount = Number(psqlValue(`select count(*) from auth_sessions where token_hash = '${tokenHash}';`));
-  const rawTokenCount = Number(psqlValue(`select count(*) from auth_sessions where token_hash = '${rawToken}';`));
-  if (matchingHashCount !== 1) {
-    fail(`Expected one stored hashed session record, found ${matchingHashCount}.`);
+  if (dockerVerificationEnabled()) {
+    const matchingHashCount = Number(psqlValue(`select count(*) from auth_sessions where token_hash = '${tokenHash}';`));
+    const rawTokenCount = Number(psqlValue(`select count(*) from auth_sessions where token_hash = '${rawToken}';`));
+    if (matchingHashCount !== 1) {
+      fail(`Expected one stored hashed session record, found ${matchingHashCount}.`);
+    }
+    if (rawTokenCount !== 0) {
+      fail("The raw session token appears to be stored in the database.");
+    }
+    summary.database.sessionHashStored = matchingHashCount === 1;
+    summary.database.rawTokenStored = rawTokenCount > 0;
+  } else {
+    summary.database.sessionHashStored = "skipped";
+    summary.database.rawTokenStored = "skipped";
   }
-  if (rawTokenCount !== 0) {
-    fail("The raw session token appears to be stored in the database.");
-  }
-  summary.database.sessionHashStored = matchingHashCount === 1;
-  summary.database.rawTokenStored = rawTokenCount > 0;
 
   const storage = await page.evaluate((cookieValue) => {
     const snapshot = (storageArea) => {
@@ -257,65 +276,75 @@ async function main() {
   }
   summary.protectedResponses.location = location.status;
 
-  await page.getByRole("button", { name: "Talk to Optimus" }).first().click();
-  await page.waitForSelector("#view-chat:not([hidden])");
-  await page.fill("#chat-message", "Summarize what information you need before pricing a brake job.");
-  await page.getByRole("button", { name: "Send" }).click();
-  await page.waitForFunction(() => !document.querySelector("#chat-loading"), { timeout: 120000 });
-  const assistantMessages = page.locator(".assistant-message");
-  const chatText = await assistantMessages.last().innerText();
-  if (!chatText || chatText.includes("Command failed")) {
-    fail("Chat did not render a successful assistant response.");
-  }
-  await screenshot(page, "03-chat-authenticated.png");
-  summary.screenshots.push("docs/screenshots/auth-integration/03-chat-authenticated.png");
+  if (billableFlowsEnabled()) {
+    await page.getByRole("button", { name: "Talk to Optimus" }).first().click();
+    await page.waitForSelector("#view-chat:not([hidden])");
+    await page.fill("#chat-message", "Summarize what information you need before pricing a brake job.");
+    await page.getByRole("button", { name: "Send" }).click();
+    await page.waitForFunction(() => !document.querySelector("#chat-loading"), { timeout: 120000 });
+    const assistantMessages = page.locator(".assistant-message");
+    const chatText = await assistantMessages.last().innerText();
+    if (!chatText || chatText.includes("Command failed")) {
+      fail("Chat did not render a successful assistant response.");
+    }
+    await screenshot(page, "03-chat-authenticated.png");
+    summary.screenshots.push("docs/screenshots/auth-integration/03-chat-authenticated.png");
 
-  await page.locator('.nav-item[data-view="estimate"]').click();
-  await page.waitForSelector("#view-estimate:not([hidden])");
-  const estimatePanel = page.locator("#view-estimate:not([hidden])");
-  await estimatePanel.locator("#year").fill("2020");
-  await estimatePanel.locator("#make").fill("Toyota");
-  await estimatePanel.locator("#model").fill("Camry");
-  await estimatePanel.locator("#job").fill("Front brake pad replacement");
-  await page.getByRole("button", { name: "Research and estimate" }).click();
-  await page.waitForFunction(
-    () => Boolean(document.querySelector("#result .result-hero, #result .error-card")),
-    { timeout: 180000 },
-  );
-  const estimateError = await page.locator("#result .error-card").count();
-  if (estimateError > 0) {
-    const errorText = await page.locator("#result .error-card").innerText();
-    fail(`Estimate did not render successfully: ${errorText}`);
-  }
-  const estimateTitle = await page.locator("#result .result-hero h2").innerText();
-  if (!estimateTitle.includes("Toyota") && !estimateTitle.includes("Camry")) {
-    fail("Estimate did not render the researched vehicle.");
-  }
-  await screenshot(page, "04-estimate-authenticated.png");
-  summary.screenshots.push("docs/screenshots/auth-integration/04-estimate-authenticated.png");
+    await page.locator('.nav-item[data-view="estimate"]').click();
+    await page.waitForSelector("#view-estimate:not([hidden])");
+    const estimatePanel = page.locator("#view-estimate:not([hidden])");
+    await estimatePanel.locator("#year").fill("2020");
+    await estimatePanel.locator("#make").fill("Toyota");
+    await estimatePanel.locator("#model").fill("Camry");
+    await estimatePanel.locator("#job").fill("Front brake pad replacement");
+    await page.getByRole("button", { name: "Research and estimate" }).click();
+    await page.waitForFunction(
+      () => Boolean(document.querySelector("#result .result-hero, #result .error-card")),
+      { timeout: 180000 },
+    );
+    const estimateError = await page.locator("#result .error-card").count();
+    if (estimateError > 0) {
+      const errorText = await page.locator("#result .error-card").innerText();
+      fail(`Estimate did not render successfully: ${errorText}`);
+    }
+    const estimateTitle = await page.locator("#result .result-hero h2").innerText();
+    if (!estimateTitle.includes("Toyota") && !estimateTitle.includes("Camry")) {
+      fail("Estimate did not render the researched vehicle.");
+    }
+    await screenshot(page, "04-estimate-authenticated.png");
+    summary.screenshots.push("docs/screenshots/auth-integration/04-estimate-authenticated.png");
 
-  summary.protectedResponses.chat = apiResponses
-    .filter((entry) => entry.url.includes("/api/chat"))
-    .map((entry) => entry.status)
-    .at(-1);
-  summary.protectedResponses.estimate = apiResponses
-    .filter((entry) => entry.url.includes("/api/estimate"))
-    .map((entry) => entry.status)
-    .at(-1);
-  if (summary.protectedResponses.chat !== 200) {
-    fail(`Authenticated chat ended with HTTP ${summary.protectedResponses.chat}.`);
-  }
-  if (summary.protectedResponses.estimate !== 200) {
-    fail(`Authenticated estimate ended with HTTP ${summary.protectedResponses.estimate}.`);
+    summary.protectedResponses.chat = apiResponses
+      .filter((entry) => entry.url.includes("/api/chat"))
+      .map((entry) => entry.status)
+      .at(-1);
+    summary.protectedResponses.estimate = apiResponses
+      .filter((entry) => entry.url.includes("/api/estimate"))
+      .map((entry) => entry.status)
+      .at(-1);
+    if (summary.protectedResponses.chat !== 200) {
+      fail(`Authenticated chat ended with HTTP ${summary.protectedResponses.chat}.`);
+    }
+    if (summary.protectedResponses.estimate !== 200) {
+      fail(`Authenticated estimate ended with HTTP ${summary.protectedResponses.estimate}.`);
+    }
+  } else {
+    summary.protectedResponses.chat = "skipped";
+    summary.protectedResponses.estimate = "skipped";
   }
 
   await logout(page);
   await screenshot(page, "05-logged-out.png");
   summary.screenshots.push("docs/screenshots/auth-integration/05-logged-out.png");
 
-  const revokedAt = psqlValue(`select coalesce(to_char(revoked_at, 'YYYY-MM-DD\"T\"HH24:MI:SSOF'), '') from auth_sessions where token_hash = '${tokenHash}' order by id desc limit 1;`);
-  if (!revokedAt) {
-    fail("Logout did not revoke the server-side session.");
+  if (dockerVerificationEnabled()) {
+    const revokedAt = psqlValue(`select coalesce(to_char(revoked_at, 'YYYY-MM-DD\"T\"HH24:MI:SSOF'), '') from auth_sessions where token_hash = '${tokenHash}' order by id desc limit 1;`);
+    if (!revokedAt) {
+      fail("Logout did not revoke the server-side session.");
+    }
+    summary.logoutRevokedSession = true;
+  } else {
+    summary.logoutRevokedSession = "verified via /api/auth/me 401 only";
   }
   const meAfterLogout = await page.evaluate(async () => {
     const response = await fetch("/api/auth/me", {
@@ -336,15 +365,22 @@ async function main() {
   if (!activeCookie?.value) {
     fail("Expected a new session cookie after re-login.");
   }
-  const expiringTokenHash = sha256(activeCookie.value);
-  psqlValue(
-    `update auth_sessions set expires_at = now() - interval '1 minute' where token_hash = '${expiringTokenHash}'; select 1;`,
-  );
-  await page.reload({ waitUntil: "networkidle" });
-  await page.waitForSelector("#view-login:not([hidden])", { timeout: 20000 });
-  const expiredPath = await page.evaluate(() => window.location.pathname);
-  if (expiredPath !== "/login") {
-    fail(`Expired session did not return the browser to /login. Path was ${expiredPath}.`);
+  if (dockerVerificationEnabled()) {
+    const expiringTokenHash = sha256(activeCookie.value);
+    psqlValue(
+      `update auth_sessions set expires_at = now() - interval '1 minute' where token_hash = '${expiringTokenHash}'; select 1;`,
+    );
+    await page.reload({ waitUntil: "networkidle" });
+    await page.waitForSelector("#view-login:not([hidden])", { timeout: 20000 });
+    const expiredPath = await page.evaluate(() => window.location.pathname);
+    if (expiredPath !== "/login") {
+      fail(`Expired session did not return the browser to /login. Path was ${expiredPath}.`);
+    }
+    summary.expiredSessionReturnedToLogin = true;
+  } else {
+    await logout(page);
+    await page.waitForSelector("#view-login:not([hidden])", { timeout: 15000 });
+    summary.expiredSessionReturnedToLogin = "skipped";
   }
   await screenshot(page, "06-expired-session-login.png");
   summary.screenshots.push("docs/screenshots/auth-integration/06-expired-session-login.png");
@@ -372,9 +408,6 @@ async function main() {
   summary.apiResponses = apiResponses;
   summary.invalidLoginHandled = true;
   summary.reloadRestoredSession = true;
-  summary.logoutRevokedSession = true;
-  summary.expiredSessionReturnedToLogin = true;
-
   await browser.close();
   console.log(JSON.stringify(summary, null, 2));
 }

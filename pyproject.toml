@@ -33,10 +33,30 @@ dev = [
 testpaths = ["tests"]
 addopts = "-q"
 asyncio_mode = "auto"
+norecursedirs = [
+  "dist",
+  "build",
+  "node_modules",
+  ".venv",
+  ".pytest_cache",
+  ".ruff_cache",
+  ".mypy_cache",
+  "*.egg-info",
+]
 
 [tool.ruff]
 target-version = "py312"
 line-length = 100
+extend-exclude = [
+  "dist",
+  "build",
+  "node_modules",
+  ".venv",
+  ".pytest_cache",
+  ".ruff_cache",
+  ".mypy_cache",
+  "optimus_internet_local_parts.egg-info",
+]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP", "SIM", "RUF"]
