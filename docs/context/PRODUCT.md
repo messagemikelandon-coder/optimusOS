@@ -4,7 +4,7 @@ Purpose: verified product scope, users, and current versus not-yet-built modules
 Information owner: Landon Motor Works owners and repository maintainers.
 Read when: evaluating workflows, UI scope, or what should be shown to an owner or customer.
 Update when: the product scope, supported workflows, or owner approval boundaries change.
-Last verified date: 2026-07-01.
+Last verified date: 2026-07-02.
 Relevant sources: `README.md`, `app/static/index.html`, `app/static/app.js`, `app/control.py`, `docs/frontend-audit.md`, `docs/ui-control-matrix.md`, `app/models.py`.
 
 ## Verified Product Facts
@@ -16,10 +16,10 @@ Relevant sources: `README.md`, `app/static/index.html`, `app/static/app.js`, `ap
 
 ## Status Labels
 
-- Implemented: owner login/logout/me, server-side sessions, chat, estimate workflow, location resolution, health, readiness, and static frontend delivery.
 - Partially implemented: owner-facing business output and estimate presentation, because the repo documents the flow but not all downstream business records.
-- Planned: customer management, vehicle management, work orders, invoice handling, approval queue, observability expansion, staging, and production hardening.
-- Not approved: any claim that the repository already contains separate customer, vehicle, work-order, or approval modules.
+- Implemented: owner login/logout/me, server-side sessions, chat, estimate workflow, location resolution, health, readiness, static frontend delivery, customer management, and vehicle management.
+- Planned: work orders, invoice handling, approval queue, observability expansion, staging, and production hardening.
+- Not approved: any claim that the repository already contains separate work-order or approval modules.
 
 ## Current Versus Future
 

@@ -36,6 +36,12 @@ def test_ui_preserves_connected_workflows() -> None:
         "customers-search",
         "customers-list",
         "customer-detail",
+        "customer-vehicles-list",
+        "vehicle-form",
+        "vehicles-search",
+        "vehicles-customer-filter",
+        "vehicles-list",
+        "vehicle-detail",
         "estimate-form",
         "use-location",
         "login-form",
@@ -47,6 +53,8 @@ def test_ui_preserves_connected_workflows() -> None:
     assert 'apiFetch("/api/auth/login"' in javascript
     assert 'apiFetch("/api/auth/me"' in javascript
     assert "/api/customers" in javascript
+    assert "/api/vehicles" in javascript
+    assert "/api/context/vehicles/selected-vehicle?scope=session" in javascript
     assert 'apiFetch("/api/chat"' in javascript
     assert 'apiFetch("/api/estimate"' in javascript
     assert 'apiFetch("/health"' in javascript
@@ -71,6 +79,7 @@ def test_playwright_audit_supports_safe_authenticated_smoke_mode() -> None:
     assert "OPTIMUS_AUDIT_SKIP_BILLABLE" in audit_script
     assert '"/api/auth/me"' in audit_script
     assert '"/api/location/resolve"' in audit_script
+    assert '"/api/vehicles"' in audit_script
 
 
 def test_health_identifies_official_build() -> None:

@@ -99,6 +99,31 @@ async function logout(page) {
   await page.waitForSelector("#view-login:not([hidden])", { timeout: 15000 });
 }
 
+async function expectToast(page, expectedText) {
+  await page.waitForFunction(
+    (needle) => {
+      const toasts = Array.from(document.querySelectorAll("#toast-region .toast"));
+      const last = toasts.at(-1);
+      return Boolean(last && last.textContent && last.textContent.includes(needle));
+    },
+    expectedText,
+    { timeout: 15000 },
+  );
+  const text = await getToastText(page);
+  if (!text.includes(expectedText)) {
+    fail(`Expected toast containing "${expectedText}" but received "${text}".`);
+  }
+}
+
+async function clearToasts(page) {
+  await page.evaluate(() => {
+    const region = document.querySelector("#toast-region");
+    if (region) {
+      region.innerHTML = "";
+    }
+  });
+}
+
 async function main() {
   if (!username || !password) {
     fail("OPTIMUS_OWNER_USERNAME and OPTIMUS_OWNER_PASSWORD are required.");
@@ -137,6 +162,9 @@ async function main() {
   });
   page.on("requestfailed", (request) => {
     failedRequests.push(`${request.method()} ${request.url()} ${request.failure()?.errorText || ""}`);
+  });
+  page.on("dialog", async (dialog) => {
+    await dialog.accept();
   });
   page.on("response", async (response) => {
     const url = response.url();
@@ -276,6 +304,185 @@ async function main() {
   }
   summary.protectedResponses.location = location.status;
 
+  const uniqueSuffix = Date.now().toString().slice(-6);
+  const customerName = `Vehicle Audit ${uniqueSuffix}`;
+  const firstVehicleVin = `1HGCM82633A${uniqueSuffix}`;
+  const secondVehiclePlate = `CA${uniqueSuffix}`;
+  await page.locator('.nav-item[data-view="customers"]').click();
+  await page.waitForSelector("#view-customers:not([hidden])");
+  await page.fill("#customer-company-name", customerName);
+  await page.fill("#customer-email", `vehicle-audit-${uniqueSuffix}@example.com`);
+  await page.fill("#customer-phone", "9165550101");
+  await page.getByRole("button", { name: "Save customer" }).click();
+  await expectToast(page, "Customer created.");
+  await clearToasts(page);
+  const selectedCustomerName = await page.locator("#customer-detail .customer-detail-header strong").innerText();
+  if (!selectedCustomerName.includes(customerName)) {
+    fail("Customer detail did not update after customer creation.");
+  }
+
+  await page.getByRole("button", { name: "Open Vehicles" }).click();
+  await page.waitForSelector("#view-vehicles:not([hidden])");
+  await page.waitForFunction(() => document.querySelectorAll("#vehicle-customer-id option").length > 1);
+  await page.selectOption("#vehicle-customer-id", { label: customerName });
+  const firstVehicleCustomerId = await page.locator("#vehicle-customer-id").inputValue();
+  if (!firstVehicleCustomerId) {
+    fail("Vehicle create form did not retain the selected customer.");
+  }
+
+  await page.fill("#vehicle-vin", firstVehicleVin);
+  await page.fill("#vehicle-year", "2018");
+  await page.fill("#vehicle-make", "Honda");
+  await page.fill("#vehicle-model", "Civic");
+  await page.fill("#vehicle-trim", "EX");
+  await page.fill("#vehicle-engine", "2.0L I4");
+  await page.fill("#vehicle-drivetrain", "FWD");
+  await page.fill("#vehicle-transmission", "CVT");
+  await page.fill("#vehicle-license-plate", "8abc123");
+  await page.fill("#vehicle-license-plate-state", "ca");
+  await page.fill("#vehicle-color", "Blue");
+  await page.fill("#vehicle-current-mileage", "125000");
+  const vehicleCreateRequestStart = apiResponses.length;
+  await page.getByRole("button", { name: "Save vehicle" }).click();
+  try {
+    await expectToast(page, "Vehicle created.");
+  } catch (error) {
+    const recentVehicleResponses = apiResponses
+      .slice(vehicleCreateRequestStart)
+      .filter((entry) => entry.url.includes("/api/vehicles") || entry.url.includes("/api/customers/"));
+    const lastToast = await page.locator("#toast-region .toast").last().innerText().catch(() => "");
+    fail(`${error.message} Recent vehicle responses: ${JSON.stringify(recentVehicleResponses)} Last toast: ${lastToast}`);
+  }
+  await clearToasts(page);
+
+  await page.getByRole("button", { name: "New vehicle" }).click();
+  await page.selectOption("#vehicle-customer-id", { label: customerName });
+  await page.fill("#vehicle-year", "2020");
+  await page.fill("#vehicle-make", "Ford");
+  await page.fill("#vehicle-model", "Transit");
+  await page.fill("#vehicle-license-plate", secondVehiclePlate);
+  await page.fill("#vehicle-license-plate-state", "CA");
+  await page.fill("#vehicle-current-mileage", "88000");
+  await page.fill("#vehicle-fleet-unit-number", "Unit 9");
+  await page.getByRole("button", { name: "Save vehicle" }).click();
+  await expectToast(page, "Vehicle created.");
+  await clearToasts(page);
+
+  await page.fill("#vehicles-search", firstVehicleVin);
+  await page.waitForFunction(
+    (vin) => {
+      const items = Array.from(document.querySelectorAll("#vehicles-list .customer-list-item"));
+      return items.length === 1 && items[0].innerText.includes(vin);
+    },
+    firstVehicleVin,
+  );
+
+  await page.fill("#vehicles-search", secondVehiclePlate);
+  await page.waitForFunction(
+    (plate) => {
+      const items = Array.from(document.querySelectorAll("#vehicles-list .customer-list-item"));
+      return items.length === 1 && items[0].innerText.toUpperCase().includes(plate.toUpperCase());
+    },
+    secondVehiclePlate,
+  );
+
+  await page.fill("#vehicles-search", "");
+  await page.waitForFunction(() => document.querySelectorAll("#vehicles-list .customer-list-item").length >= 2);
+
+  await page.fill("#vehicles-search", firstVehicleVin);
+  await page.waitForFunction(
+    (vin) => {
+      const item = document.querySelector("#vehicles-list .customer-list-item");
+      return Boolean(item) && item.innerText.includes(vin);
+    },
+    firstVehicleVin,
+  );
+  await page.locator("#vehicles-list .customer-list-item").first().click();
+  await page.waitForFunction(
+    (vin) => {
+      const vehicleId = document.querySelector("#vehicle-id")?.value;
+      const vinValue = document.querySelector("#vehicle-vin")?.value;
+      return Boolean(vehicleId) && vinValue === vin;
+    },
+    firstVehicleVin,
+  );
+  await page.fill("#vehicle-current-mileage", "126500");
+  const vehicleUpdateRequestStart = apiResponses.length;
+  await page.getByRole("button", { name: "Save vehicle" }).click();
+  await expectToast(page, "Vehicle updated.");
+  await clearToasts(page);
+  const updatedVehicleLookup = await page.evaluate(async (vin) => {
+    const response = await fetch(`/api/vehicles?search=${encodeURIComponent(vin)}&archived=false`, {
+      method: "GET",
+      credentials: "same-origin",
+      cache: "no-store",
+    });
+    const data = await response.json().catch(() => null);
+    return { status: response.status, data };
+  }, firstVehicleVin);
+  if (updatedVehicleLookup.status !== 200 || updatedVehicleLookup.data?.items?.[0]?.current_mileage !== 126500) {
+    const recentVehicleResponses = apiResponses
+      .slice(vehicleUpdateRequestStart)
+      .filter((entry) => entry.url.includes("/api/vehicles"));
+    fail(`Vehicle mileage update was not persisted. Recent update responses: ${JSON.stringify(recentVehicleResponses)} Lookup: ${JSON.stringify(updatedVehicleLookup)}`);
+  }
+  await page.fill("#vehicles-search", "");
+
+  const selectedVehicleContext = await page.evaluate(async () => {
+    const response = await fetch("/api/context/vehicles?scope=session", {
+      method: "GET",
+      credentials: "same-origin",
+      cache: "no-store",
+    });
+    const data = await response.json().catch(() => null);
+    return { status: response.status, data };
+  });
+  const selectedVehicleEntry = selectedVehicleContext.data?.entries?.find(
+    (entry) => entry.context_key === "selected-vehicle",
+  );
+  if (selectedVehicleContext.status !== 200 || !selectedVehicleEntry?.value) {
+    fail("Selected vehicle context entry was not stored.");
+  }
+  let selectedVehicleValue = null;
+  try {
+    selectedVehicleValue = JSON.parse(selectedVehicleEntry.value);
+  } catch {
+    fail("Selected vehicle context entry was not valid JSON.");
+  }
+  if (!selectedVehicleValue?.id || selectedVehicleValue?.vin) {
+    fail("Selected vehicle context stored more than the lightweight vehicle reference.");
+  }
+
+  await page.fill("#vehicles-search", secondVehiclePlate);
+  await page.waitForFunction(
+    (plate) => {
+      const item = document.querySelector("#vehicles-list .customer-list-item");
+      return Boolean(item) && item.innerText.toUpperCase().includes(plate.toUpperCase());
+    },
+    secondVehiclePlate,
+  );
+  await page.locator("#vehicles-list .customer-list-item").first().click();
+  await page.getByRole("button", { name: "Archive" }).click();
+  await expectToast(page, "Vehicle archived.");
+  await clearToasts(page);
+  await page.fill("#vehicles-search", "");
+  await page.locator("#vehicles-archived-only").check();
+  await page.waitForFunction(
+    (plate) => Array.from(document.querySelectorAll("#vehicles-list .customer-list-item")).some(
+      (item) => item.innerText.toUpperCase().includes(plate.toUpperCase()),
+    ),
+    secondVehiclePlate,
+  );
+  await screenshot(page, "03-vehicles-authenticated.png");
+  summary.screenshots.push("docs/screenshots/auth-integration/03-vehicles-authenticated.png");
+  summary.protectedResponses.vehicles = apiResponses
+    .filter((entry) => entry.url.includes("/api/vehicles") || entry.url.includes("/api/customers/") && entry.url.includes("/vehicles"))
+    .map((entry) => entry.status)
+    .at(-1);
+  if (summary.protectedResponses.vehicles !== 200) {
+    fail(`Authenticated vehicle workflow ended with HTTP ${summary.protectedResponses.vehicles}.`);
+  }
+
   if (billableFlowsEnabled()) {
     await page.getByRole("button", { name: "Talk to Optimus" }).first().click();
     await page.waitForSelector("#view-chat:not([hidden])");
@@ -334,6 +541,8 @@ async function main() {
   }
 
   await logout(page);
+  await clearToasts(page);
+  await page.waitForTimeout(400);
   await screenshot(page, "05-logged-out.png");
   summary.screenshots.push("docs/screenshots/auth-integration/05-logged-out.png");
 

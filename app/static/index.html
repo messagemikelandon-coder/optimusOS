@@ -35,6 +35,10 @@
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16 11a4 4 0 1 0-3.999-4A4 4 0 0 0 16 11Zm-8 1a3 3 0 1 0-3-3 3 3 0 0 0 3 3Zm8 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4ZM8 14c-.29 0-.62.02-.97.05C5.2 14.22 2 15.14 2 18v2h4v-2c0-1.52.81-2.83 2.16-3.76A6.86 6.86 0 0 0 8 14Z"/></svg>
           <span>Customers</span>
         </button>
+        <button class="nav-item" type="button" data-view="vehicles">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 6h14l2 6v6h-2a2 2 0 0 1-4 0H9a2 2 0 0 1-4 0H3v-6l2-6Zm2.44 2L6.1 12h11.8L16.56 8H7.44ZM7 13a2 2 0 1 0 0 4 2 2 0 0 0 0-4Zm10 0a2 2 0 1 0-.001 4.001A2 2 0 0 0 17 13Z"/></svg>
+          <span>Vehicles</span>
+        </button>
         <button class="nav-item" type="button" data-view="chat">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5h14v10H8.5L5 18.5V5Zm3 4v2h8V9H8Z"/></svg>
           <span>Talk to Optimus</span>
@@ -273,6 +277,19 @@
                 </div>
               </section>
 
+              <section class="panel">
+                <div class="panel-heading">
+                  <div><span class="section-kicker"><i></i> Vehicle records</span><h3>Customer vehicles</h3><p>Attach one or more vehicles directly to the selected customer.</p></div>
+                  <div class="customers-form-actions">
+                    <button class="text-button" type="button" id="customer-vehicles-manage">Open Vehicles</button>
+                    <button class="secondary-button compact" type="button" id="customer-vehicle-new">Add vehicle</button>
+                  </div>
+                </div>
+                <div id="customer-vehicles-list" class="vehicles-preview-list" aria-live="polite">
+                  <p>Select a customer to load active vehicles.</p>
+                </div>
+              </section>
+
               <form class="panel estimate-form-panel" id="customer-form">
                 <div class="panel-heading">
                   <div><span class="section-kicker"><i></i> Record editor</span><h3 id="customer-form-title">Create customer</h3></div>
@@ -322,6 +339,120 @@
                   <div class="customers-form-actions">
                     <button class="text-button" type="button" id="customer-cancel">Clear</button>
                     <button class="primary-button compact" type="submit" id="customer-save">Save customer</button>
+                  </div>
+                </div>
+              </form>
+            </section>
+          </div>
+        </section>
+
+        <section class="app-view" id="view-vehicles" data-view-panel="vehicles" hidden>
+          <div class="customers-layout">
+            <section class="panel customers-list-panel">
+              <div class="panel-heading">
+                <div><span class="section-kicker"><i></i> Vehicle records</span><h2>Vehicles</h2><p>Owner-scoped vehicle records linked to customers. VIN, plate, mileage, and archive state stay searchable.</p></div>
+                <button class="secondary-button compact" type="button" id="vehicles-new">New vehicle</button>
+              </div>
+
+              <div class="vehicles-toolbar">
+                <label class="field full">
+                  Search
+                  <input id="vehicles-search" placeholder="Search VIN, plate, year, make, model, or trim">
+                </label>
+                <label class="field">
+                  Customer filter
+                  <select id="vehicles-customer-filter">
+                    <option value="">All active customers</option>
+                  </select>
+                </label>
+                <label class="toggle-field">
+                  <input id="vehicles-archived-only" type="checkbox">
+                  <span>Show archived</span>
+                </label>
+                <button class="secondary-button compact" type="button" id="vehicles-refresh">Refresh</button>
+              </div>
+
+              <div id="vehicles-list" class="customers-list" aria-live="polite"></div>
+
+              <div class="customers-pagination">
+                <button class="secondary-button compact" type="button" id="vehicles-prev">Previous</button>
+                <span id="vehicles-page-status">Page 1</span>
+                <button class="secondary-button compact" type="button" id="vehicles-next">Next</button>
+              </div>
+            </section>
+
+            <section class="customers-detail-stack">
+              <section class="panel" id="vehicle-detail-panel">
+                <div class="panel-heading">
+                  <div><span class="section-kicker"><i></i> Detail view</span><h3>Selected vehicle</h3></div>
+                  <div class="customers-form-actions">
+                    <button class="text-button" type="button" id="vehicle-open-customer">Open customer</button>
+                    <button class="text-button" type="button" id="vehicle-archive">Archive</button>
+                  </div>
+                </div>
+                <div id="vehicle-detail" class="customer-detail-card">
+                  <p>Select a vehicle from the list or create a new record.</p>
+                </div>
+              </section>
+
+              <form class="panel estimate-form-panel" id="vehicle-form">
+                <div class="panel-heading">
+                  <div><span class="section-kicker"><i></i> Record editor</span><h3 id="vehicle-form-title">Create vehicle</h3></div>
+                  <span class="estimate-number" id="vehicle-form-mode">CREATE</span>
+                </div>
+                <input id="vehicle-id" type="hidden">
+
+                <fieldset>
+                  <legend><span>01</span> Ownership</legend>
+                  <div class="form-grid two">
+                    <label class="field">Customer
+                      <select id="vehicle-customer-id">
+                        <option value="">Select a customer</option>
+                      </select>
+                    </label>
+                    <label class="field">Fleet unit number <input id="vehicle-fleet-unit-number" maxlength="80" placeholder="Truck 14 / Unit 7"></label>
+                  </div>
+                </fieldset>
+
+                <fieldset>
+                  <legend><span>02</span> Identity</legend>
+                  <label class="field full">VIN
+                    <input id="vehicle-vin" maxlength="17" autocomplete="off" placeholder="17-character VIN or leave blank">
+                    <small>VIN is optional for older, custom, off-road, or temporarily unidentified vehicles.</small>
+                  </label>
+                  <div class="form-grid four">
+                    <label class="field">Year <input id="vehicle-year" type="number" min="1900" max="2100" placeholder="2018"></label>
+                    <label class="field">Make <input id="vehicle-make" maxlength="100" placeholder="Honda"></label>
+                    <label class="field">Model <input id="vehicle-model" maxlength="100" placeholder="Civic"></label>
+                    <label class="field">Trim <input id="vehicle-trim" maxlength="120" placeholder="EX"></label>
+                  </div>
+                </fieldset>
+
+                <fieldset>
+                  <legend><span>03</span> Configuration</legend>
+                  <div class="form-grid three">
+                    <label class="field">Engine <input id="vehicle-engine" maxlength="120" placeholder="2.0L I4"></label>
+                    <label class="field">Drivetrain <input id="vehicle-drivetrain" maxlength="80" placeholder="FWD / AWD / 4x4"></label>
+                    <label class="field">Transmission <input id="vehicle-transmission" maxlength="120" placeholder="CVT / 6AT / 6MT"></label>
+                  </div>
+                  <div class="form-grid four">
+                    <label class="field">Plate <input id="vehicle-license-plate" maxlength="32" placeholder="8ABC123"></label>
+                    <label class="field">Plate state <input id="vehicle-license-plate-state" maxlength="40" placeholder="CA"></label>
+                    <label class="field">Color <input id="vehicle-color" maxlength="80" placeholder="Blue"></label>
+                    <label class="field">Current mileage <input id="vehicle-current-mileage" type="number" min="0" max="1000000" placeholder="125000"></label>
+                  </div>
+                </fieldset>
+
+                <fieldset>
+                  <legend><span>04</span> Internal notes</legend>
+                  <label class="field full">Notes <textarea id="vehicle-internal-notes" maxlength="4000" placeholder="Owner-only notes, service history, asset condition, or intake details."></textarea></label>
+                </fieldset>
+
+                <div class="estimate-submit-row">
+                  <div><strong id="vehicle-form-status-title">Vehicle record</strong><span id="vehicle-form-status-detail">Create or edit a vehicle without duplicating the authoritative customer record.</span></div>
+                  <div class="customers-form-actions">
+                    <button class="text-button" type="button" id="vehicle-cancel">Clear</button>
+                    <button class="primary-button compact" type="submit" id="vehicle-save">Save vehicle</button>
                   </div>
                 </div>
               </form>
@@ -511,8 +642,8 @@
   <nav class="mobile-bottom-nav" aria-label="Mobile navigation">
     <button class="is-active" type="button" data-view="dashboard"><span>⌂</span>Deck</button>
     <button type="button" data-view="customers"><span>▣</span>Customers</button>
+    <button type="button" data-view="vehicles"><span>◈</span>Vehicles</button>
     <button type="button" data-view="chat"><span>◉</span>Optimus</button>
-    <button type="button" data-view="estimate"><span>＋</span>Estimate</button>
     <button type="button" data-view="system"><span>⚙</span>System</button>
   </nav>
 

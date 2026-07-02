@@ -9,12 +9,12 @@ Relevant sources: `docs/context/CURRENT_STATE.md`, `docs/context/DECISIONS.md`, 
 
 ## Current objective
 
-The Customer slice is complete and verified. The next substantial task can begin `Vehicle -> Estimate -> Approval -> Work Order` without reworking auth, session, context, database, or customer foundations.
+The Customer and Vehicle slices are complete and verified. The next substantial task can begin `Estimate -> Approval -> Work Order` without reworking auth, session, context, database, customer, or vehicle foundations.
 
 ## Completed
 
 - Confirmed the repository root is `/home/dejake/optimus-server`.
-- Confirmed the active branch is `chore/context-management`.
+- Confirmed the active branch is `feat/vehicle-management`.
 - Confirmed `060ab6869a9c129136ea406d53ac2c72b96e9cdc` is already an ancestor of `HEAD`.
 - Preserved and completed the existing context-manager WIP in `alembic/versions/003_context_entries.py`, `app/context_store.py`, `app/db_models.py`, `app/models.py`, `app/config.py`, and `app/main.py`.
 - Added database-level scope consistency checks for `context_entries`.
@@ -33,6 +33,11 @@ The Customer slice is complete and verified. The next substantial task can begin
 - Added backend customer coverage in `tests/test_customers_api.py` and expanded UI coverage in `tests/test_official_ui.py`.
 - Verified live customer CRUD/search/archive/isolation against the running backend and verified customer persistence across backend/worker restart.
 - Verified an authenticated Playwright Customers UI smoke for login, create, search, update, archive, and archived filtering.
+- Confirmed the existing vehicle backend slice already reused the customer ownership helper path instead of creating parallel authorization logic.
+- Extended the static frontend in `app/static/index.html`, `app/static/app.js`, and `app/static/styles.css` with vehicle management inside Customer detail plus a standalone Vehicles page.
+- Added selected-vehicle session-context writes and best-effort restore logic that re-fetches the authoritative database record before trusting a stored reference.
+- Extended `scripts/ui_connection_audit_playwright.js` to cover the non-billable live vehicle workflow, including customer creation, vehicle create/search/update/archive, and lightweight selected-vehicle context storage.
+- Verified live vehicle CRUD/search/archive/isolation against the running backend and verified vehicle persistence across a Compose service restart.
 
 ## Verified
 
@@ -40,9 +45,11 @@ The Customer slice is complete and verified. The next substantial task can begin
 - No separate React or repo-local frontend package/toolchain exists.
 - The canonical FastAPI app now exposes `/api/context/{project_key}` and `/api/context/{project_key}/{context_key}` backed by PostgreSQL persistence.
 - The canonical FastAPI app now also exposes `/api/customers` and `/api/customers/{customer_id}` backed by PostgreSQL `customers` records.
+- The canonical FastAPI app now also exposes `/api/customers/{customer_id}/vehicles`, `/api/vehicles`, and `/api/vehicles/{vehicle_id}` backed by PostgreSQL `vehicles` records.
 - Redis-down context requests return a structured `503` dependency error.
 - PostgreSQL-down protected context requests return a sanitized `503` auth storage error without leaking raw DB details.
 - Customer storage remains authoritative in PostgreSQL; the context manager stores at most a lightweight selected-customer reference.
+- Vehicle storage remains authoritative in PostgreSQL; the context manager stores at most a lightweight selected-vehicle reference.
 
 ## Files changed
 
@@ -59,6 +66,7 @@ The Customer slice is complete and verified. The next substantial task can begin
 - `app/static/app.js`
 - `app/static/styles.css`
 - `alembic/versions/004_customers.py`
+- `alembic/versions/005_vehicles.py`
 - `pyproject.toml`
 - `pyrightconfig.json`
 - `tests/conftest.py`
@@ -66,8 +74,10 @@ The Customer slice is complete and verified. The next substantial task can begin
 - `tests/test_customers_api.py`
 - `tests/test_official_ui.py`
 - `scripts/ui_connection_audit_playwright.js`
+- `docs/context/ARCHITECTURE.md`
 - `docs/context/CURRENT_STATE.md`
 - `docs/context/KNOWN_ISSUES.md`
+- `docs/context/PRODUCT.md`
 - `docs/context/SESSION_HANDOFF.md`
 - `PLANS.md`
 
@@ -76,20 +86,19 @@ The Customer slice is complete and verified. The next substantial task can begin
 - `env UV_CACHE_DIR=/tmp/uv-cache uv run ruff format .` passed.
 - `env UV_CACHE_DIR=/tmp/uv-cache uv run ruff check .` passed.
 - `env UV_CACHE_DIR=/tmp/uv-cache uv run pyright` passed with `0 errors, 0 warnings, 0 informations`.
-- `env UV_CACHE_DIR=/tmp/uv-cache uv run pytest -vv --durations=20` passed with `88` tests in `6.68s`.
-- `docker compose config -q` passed.
-- `docker compose build backend worker` passed.
-- `docker compose up -d` passed.
-- `docker compose exec -T backend alembic upgrade head` applied `004_customers`.
-- `docker compose exec -T backend alembic current` reported `004_customers (head)`.
+- `env UV_CACHE_DIR=/tmp/uv-cache uv run pytest -q` passed with `96` tests.
+- `docker compose up -d --build backend worker frontend` passed.
+- `docker compose exec -T backend alembic upgrade head` applied `005_vehicles`.
+- `docker compose exec -T backend alembic current` reported `005_vehicles (head)`.
 - `node --check app/static/app.js` passed.
-- Live runtime verification passed for customer CRUD, search, archive, cross-user isolation, and restart persistence.
-- Authenticated Playwright customer UI smoke passed for login, create, search, update, archive, and archived filtering.
+- `docker compose restart backend worker frontend` passed.
+- Live runtime verification passed for customer and vehicle CRUD, VIN and plate search, mileage update, archive, cross-user isolation, lightweight context isolation, and restart persistence.
+- `env OPTIMUS_AUDIT_SKIP_BILLABLE=1 node scripts/ui_connection_audit_playwright.js` passed for login, customer create, vehicle create/search/update/archive, selected-vehicle context storage, logout, and expired-session handling.
 
 ## Uncommitted changes
 
-- The context-manager implementation, tests, docs, and validation-scope updates are still in the working tree and are not yet committed.
-- Existing unrelated working-tree changes remain present; review before staging anything broad.
+- The vehicle frontend, live vehicle audit script, and updated context docs are currently in the working tree and are not yet committed.
+- Review regenerated screenshots under `docs/screenshots/auth-integration/` before staging them.
 
 ## Current blockers
 
@@ -98,7 +107,7 @@ The Customer slice is complete and verified. The next substantial task can begin
 
 ## Exact next action
 
-Start the `Vehicle -> Estimate -> Approval -> Work Order` slice on top of the verified authenticated/context/customer baseline. Reuse the existing auth/session stack, PostgreSQL ownership model, and lightweight context reference pattern rather than creating parallel systems.
+Start the `Estimate -> Approval -> Work Order` slice on top of the verified authenticated/context/customer/vehicle baseline. Reuse the existing auth/session stack, PostgreSQL ownership model, and lightweight context reference pattern rather than creating parallel systems.
 
 ## Commands to resume
 

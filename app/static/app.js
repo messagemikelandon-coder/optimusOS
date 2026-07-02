@@ -21,12 +21,25 @@ const state = {
     items: [],
     selectedCustomerId: null,
     selectedCustomer: null,
+    vehiclePreviewItems: [],
     page: 1,
     pageSize: 20,
     total: 0,
     hasMore: false,
     search: "",
     archivedOnly: false,
+  },
+  vehicles: {
+    items: [],
+    selectedVehicleId: null,
+    selectedVehicle: null,
+    page: 1,
+    pageSize: 20,
+    total: 0,
+    hasMore: false,
+    search: "",
+    archivedOnly: false,
+    customerFilterId: null,
   },
   currentView: "dashboard",
   health: null,
@@ -37,6 +50,7 @@ const viewMeta = {
   login: { eyebrow: "Authentication", title: "Sign in" },
   dashboard: { eyebrow: "Operations", title: "Command deck" },
   customers: { eyebrow: "Records", title: "Customers" },
+  vehicles: { eyebrow: "Fleet", title: "Vehicles" },
   chat: { eyebrow: "Owner channel", title: "Talk to Optimus" },
   estimate: { eyebrow: "Pricing workflow", title: "Job estimator" },
   system: { eyebrow: "Configuration", title: "System bay" },
@@ -161,6 +175,8 @@ async function handleLoginSubmit(event) {
     if (!response.ok || !data) throw apiError(response, data, "Sign-in failed");
     setAuthState(true, data.user, data.expires_at);
     $("login-password").value = "";
+    void loadCustomerOptions();
+    void restoreSelectionsFromContext();
     showToast("Signed in.", "success");
     navigate("dashboard");
   } catch (error) {
@@ -182,6 +198,12 @@ async function performLogout() {
   } finally {
     setAuthState(false);
     state.chatHistory = [];
+    state.customers.selectedCustomerId = null;
+    state.customers.selectedCustomer = null;
+    state.customers.vehiclePreviewItems = [];
+    state.vehicles.selectedVehicleId = null;
+    state.vehicles.selectedVehicle = null;
+    state.vehicles.customerFilterId = null;
     navigate("login");
   }
 }
@@ -214,6 +236,7 @@ function navigate(view) {
   else if (window.location.pathname === "/login") history.replaceState(null, "", "/");
   window.scrollTo({ top: 0, behavior: "smooth" });
   if (view === "customers" && state.auth.authenticated) void loadCustomers();
+  if (view === "vehicles" && state.auth.authenticated) void loadVehicles();
   if (view === "chat") window.setTimeout(() => $("chat-message").focus(), 180);
   if (view === "login") window.setTimeout(() => $("login-username").focus(), 180);
 }
@@ -771,6 +794,7 @@ function renderCustomerDetail(customer = null) {
   if (!customer) {
     detail.innerHTML = "<p>Select a customer from the list or create a new record.</p>";
     $("customer-archive").hidden = true;
+    renderCustomerVehiclePreview();
     return;
   }
   const addressLines = [
@@ -840,7 +864,65 @@ async function rememberSelectedCustomer(customer) {
   }
 }
 
-async function selectCustomer(customerId) {
+async function clearSelectedVehicleReference() {
+  try {
+    await apiFetch("/api/context/vehicles/selected-vehicle?scope=session", {
+      method: "DELETE",
+    });
+  } catch {
+    // Ignore missing or unavailable assistive context entries.
+  }
+}
+
+function vehicleSummaryLine(vehicle) {
+  return [
+    vehicle.vin,
+    vehicle.license_plate,
+    vehicle.current_mileage != null ? `${vehicle.current_mileage.toLocaleString()} mi` : null,
+    vehicle.customer_display_name,
+  ].filter(Boolean).join(" · ");
+}
+
+function renderCustomerVehiclePreview() {
+  const container = $("customer-vehicles-list");
+  const customer = state.customers.selectedCustomer;
+  const items = state.customers.vehiclePreviewItems;
+  if (!customer) {
+    container.innerHTML = "<p>Select a customer to load active vehicles.</p>";
+    return;
+  }
+  if (!items.length) {
+    container.innerHTML = `<div class="empty-card"><strong>No active vehicles</strong><p>${escapeHtml(customer.display_name)} does not have any active vehicles yet.</p></div>`;
+    return;
+  }
+  container.innerHTML = items.map((vehicle) => `
+    <button type="button" class="vehicle-preview-item${state.vehicles.selectedVehicleId === vehicle.id ? " is-active" : ""}" data-customer-vehicle-id="${vehicle.id}">
+      <strong>${escapeHtml(vehicle.display_name)}</strong>
+      <span>${escapeHtml(vehicleSummaryLine(vehicle) || "Vehicle record")}</span>
+    </button>`).join("");
+  $$("[data-customer-vehicle-id]", container).forEach((button) => {
+    button.addEventListener("click", () => {
+      void openVehicleFromCustomerDetail(Number(button.dataset.customerVehicleId));
+    });
+  });
+}
+
+async function loadCustomerVehiclePreview(customerId) {
+  const container = $("customer-vehicles-list");
+  container.innerHTML = '<div class="loading-panel"><span class="loading-spinner"></span><div><strong>Loading vehicles</strong><br><small>Reading active customer vehicles.</small></div></div>';
+  try {
+    const response = await apiFetch(`/api/customers/${customerId}/vehicles?page=1&page_size=20&archived=false`);
+    const data = await readApiPayload(response);
+    if (!response.ok || !data) throw apiError(response, data, "Customer vehicles failed");
+    state.customers.vehiclePreviewItems = data.items;
+    renderCustomerVehiclePreview();
+  } catch (error) {
+    container.innerHTML = `<div class="error-card"><strong>Vehicle list failed</strong><p>${escapeHtml(error.message)}</p></div>`;
+  }
+}
+
+async function selectCustomer(customerId, options = {}) {
+  const { remember = true, refreshVehicles = true, suppressErrors = false } = options;
   try {
     const response = await apiFetch(`/api/customers/${customerId}`);
     const data = await readApiPayload(response);
@@ -850,9 +932,12 @@ async function selectCustomer(customerId) {
     renderCustomerDetail(data);
     populateCustomerForm(data);
     renderCustomersList();
-    void rememberSelectedCustomer(data);
+    if (refreshVehicles) void loadCustomerVehiclePreview(data.id);
+    if (remember) void rememberSelectedCustomer(data);
+    return data;
   } catch (error) {
-    showToast(`Customer lookup failed: ${error.message}`, "error");
+    if (!suppressErrors) showToast(`Customer lookup failed: ${error.message}`, "error");
+    return null;
   }
 }
 
@@ -880,9 +965,11 @@ async function loadCustomers() {
         state.customers.selectedCustomer = selected;
         renderCustomerDetail(selected);
         populateCustomerForm(selected);
+        void loadCustomerVehiclePreview(selected.id);
       } else {
         state.customers.selectedCustomerId = null;
         state.customers.selectedCustomer = null;
+        state.customers.vehiclePreviewItems = [];
         renderCustomerDetail(null);
         populateCustomerForm(null);
       }
@@ -914,6 +1001,7 @@ async function submitCustomerForm(event) {
     renderCustomerDetail(data);
     state.customers.page = 1;
     await loadCustomers();
+    await loadCustomerOptions();
     showToast(customerId ? "Customer updated." : "Customer created.", "success");
     void rememberSelectedCustomer(data);
   } catch (error) {
@@ -934,13 +1022,44 @@ async function archiveSelectedCustomer() {
     if (!response.ok || !data) throw apiError(response, data, "Customer archive failed");
     state.customers.selectedCustomerId = null;
     state.customers.selectedCustomer = null;
+    state.customers.vehiclePreviewItems = [];
     populateCustomerForm(null);
     renderCustomerDetail(null);
     await loadCustomers();
+    await loadCustomerOptions();
     showToast("Customer archived.", "success");
   } catch (error) {
     showToast(`Customer archive failed: ${error.message}`, "error");
   }
+}
+
+function setVehicleCustomerFilter(customerId) {
+  state.vehicles.customerFilterId = customerId ? Number(customerId) : null;
+  $("vehicles-customer-filter").value = state.vehicles.customerFilterId ? String(state.vehicles.customerFilterId) : "";
+  if (!$("vehicle-id").value) {
+    $("vehicle-customer-id").value = state.vehicles.customerFilterId ? String(state.vehicles.customerFilterId) : "";
+  }
+}
+
+function openVehiclesForCustomer(customer) {
+  if (!customer) {
+    navigate("vehicles");
+    return;
+  }
+  setVehicleCustomerFilter(customer.id);
+  populateVehicleForm(null, { preferredCustomerId: customer.id });
+  renderVehicleDetail(null);
+  state.vehicles.page = 1;
+  navigate("vehicles");
+  void loadVehicles();
+}
+
+async function openVehicleFromCustomerDetail(vehicleId) {
+  const customer = state.customers.selectedCustomer;
+  if (customer) setVehicleCustomerFilter(customer.id);
+  navigate("vehicles");
+  await loadVehicles();
+  await selectVehicle(vehicleId, { remember: true, suppressErrors: false });
 }
 
 function initializeCustomers() {
@@ -950,6 +1069,7 @@ function initializeCustomers() {
   $("customer-cancel").addEventListener("click", () => {
     state.customers.selectedCustomerId = null;
     state.customers.selectedCustomer = null;
+    state.customers.vehiclePreviewItems = [];
     populateCustomerForm(null);
     renderCustomerDetail(null);
   });
@@ -957,6 +1077,7 @@ function initializeCustomers() {
     navigate("customers");
     state.customers.selectedCustomerId = null;
     state.customers.selectedCustomer = null;
+    state.customers.vehiclePreviewItems = [];
     populateCustomerForm(null);
     renderCustomerDetail(null);
     $("customer-first-name").focus();
@@ -974,6 +1095,7 @@ function initializeCustomers() {
     state.customers.page = 1;
     state.customers.selectedCustomerId = null;
     state.customers.selectedCustomer = null;
+    state.customers.vehiclePreviewItems = [];
     populateCustomerForm(null);
     renderCustomerDetail(null);
     void loadCustomers();
@@ -990,8 +1112,430 @@ function initializeCustomers() {
   $("customer-archive").addEventListener("click", () => {
     void archiveSelectedCustomer();
   });
+  $("customer-vehicles-manage").addEventListener("click", () => {
+    openVehiclesForCustomer(state.customers.selectedCustomer);
+  });
+  $("customer-vehicle-new").addEventListener("click", async () => {
+    const customer = state.customers.selectedCustomer;
+    if (!customer) {
+      showToast("Select a customer before creating a vehicle.", "error");
+      return;
+    }
+    await loadCustomerOptions();
+    populateVehicleForm(null, { preferredCustomerId: customer.id });
+    openVehiclesForCustomer(customer);
+    $("vehicle-vin").focus();
+  });
   populateCustomerForm(null);
   renderCustomerDetail(null);
+  renderCustomerVehiclePreview();
+}
+
+function vehiclePayloadFromForm() {
+  return {
+    vin: $("vehicle-vin").value.trim() || null,
+    year: $("vehicle-year").value ? Number($("vehicle-year").value) : null,
+    make: $("vehicle-make").value.trim() || null,
+    model: $("vehicle-model").value.trim() || null,
+    trim: $("vehicle-trim").value.trim() || null,
+    engine: $("vehicle-engine").value.trim() || null,
+    drivetrain: $("vehicle-drivetrain").value.trim() || null,
+    transmission: $("vehicle-transmission").value.trim() || null,
+    license_plate: $("vehicle-license-plate").value.trim() || null,
+    license_plate_state: $("vehicle-license-plate-state").value.trim() || null,
+    color: $("vehicle-color").value.trim() || null,
+    current_mileage: $("vehicle-current-mileage").value ? Number($("vehicle-current-mileage").value) : null,
+    fleet_unit_number: $("vehicle-fleet-unit-number").value.trim() || null,
+    internal_notes: $("vehicle-internal-notes").value.trim() || null,
+  };
+}
+
+async function loadCustomerOptions() {
+  const currentVehicleCustomerId = $("vehicle-customer-id").value || (state.vehicles.customerFilterId ? String(state.vehicles.customerFilterId) : "");
+  const response = await apiFetch("/api/customers?page=1&page_size=100&archived=false");
+  const data = await readApiPayload(response);
+  if (!response.ok || !data) throw apiError(response, data, "Customer options failed");
+  const options = ['<option value="">Select a customer</option>'];
+  for (const customer of data.items) {
+    options.push(`<option value="${customer.id}">${escapeHtml(customer.display_name)}</option>`);
+  }
+  $("vehicle-customer-id").innerHTML = options.join("");
+  $("vehicles-customer-filter").innerHTML = ['<option value="">All active customers</option>', ...data.items.map((customer) => (
+    `<option value="${customer.id}">${escapeHtml(customer.display_name)}</option>`
+  ))].join("");
+  if (currentVehicleCustomerId) {
+    $("vehicle-customer-id").value = currentVehicleCustomerId;
+  }
+  if (state.vehicles.customerFilterId) {
+    $("vehicles-customer-filter").value = String(state.vehicles.customerFilterId);
+  }
+}
+
+function populateVehicleForm(vehicle = null, options = {}) {
+  const { preferredCustomerId = null } = options;
+  const customerId = vehicle?.customer_id ?? preferredCustomerId;
+  $("vehicle-id").value = vehicle?.id ?? "";
+  $("vehicle-customer-id").value = customerId ? String(customerId) : "";
+  $("vehicle-vin").value = vehicle?.vin ?? "";
+  $("vehicle-year").value = vehicle?.year ?? "";
+  $("vehicle-make").value = vehicle?.make ?? "";
+  $("vehicle-model").value = vehicle?.model ?? "";
+  $("vehicle-trim").value = vehicle?.trim ?? "";
+  $("vehicle-engine").value = vehicle?.engine ?? "";
+  $("vehicle-drivetrain").value = vehicle?.drivetrain ?? "";
+  $("vehicle-transmission").value = vehicle?.transmission ?? "";
+  $("vehicle-license-plate").value = vehicle?.license_plate ?? "";
+  $("vehicle-license-plate-state").value = vehicle?.license_plate_state ?? "";
+  $("vehicle-color").value = vehicle?.color ?? "";
+  $("vehicle-current-mileage").value = vehicle?.current_mileage ?? "";
+  $("vehicle-fleet-unit-number").value = vehicle?.fleet_unit_number ?? "";
+  $("vehicle-internal-notes").value = vehicle?.internal_notes ?? "";
+  $("vehicle-form-title").textContent = vehicle ? "Edit vehicle" : "Create vehicle";
+  $("vehicle-form-mode").textContent = vehicle ? "EDIT" : "CREATE";
+  $("vehicle-open-customer").hidden = !vehicle;
+  $("vehicle-archive").hidden = !vehicle;
+  $("vehicle-customer-id").disabled = Boolean(vehicle);
+}
+
+function renderVehicleDetail(vehicle = null) {
+  const detail = $("vehicle-detail");
+  if (!vehicle) {
+    detail.innerHTML = "<p>Select a vehicle from the list or create a new record.</p>";
+    $("vehicle-open-customer").hidden = true;
+    $("vehicle-archive").hidden = true;
+    return;
+  }
+  detail.innerHTML = `
+    <div class="customer-detail-header">
+      <strong>${escapeHtml(vehicle.display_name)}</strong>
+      <span>${vehicle.is_archived ? "Archived" : "Active"}</span>
+    </div>
+    <p>${escapeHtml(vehicleSummaryLine(vehicle) || "No VIN or plate recorded.")}</p>
+    <div class="customer-detail-grid">
+      <div><span>Customer</span><strong>${escapeHtml(vehicle.customer_display_name || "Unknown customer")}</strong></div>
+      <div><span>VIN</span><strong>${escapeHtml(vehicle.vin || "Not set")}</strong></div>
+      <div><span>Plate</span><strong>${escapeHtml(vehicle.license_plate || "Not set")}</strong></div>
+      <div><span>Mileage</span><strong>${escapeHtml(vehicle.current_mileage != null ? `${vehicle.current_mileage.toLocaleString()} mi` : "Not set")}</strong></div>
+      <div><span>Powertrain</span><strong>${escapeHtml([vehicle.engine, vehicle.drivetrain, vehicle.transmission].filter(Boolean).join(" · ") || "Not set")}</strong></div>
+      <div><span>Fleet unit</span><strong>${escapeHtml(vehicle.fleet_unit_number || "Not set")}</strong></div>
+    </div>
+    <div class="customer-detail-notes">
+      <span>Internal notes</span>
+      <p>${escapeHtml(vehicle.internal_notes || "No internal notes recorded.")}</p>
+    </div>`;
+  $("vehicle-open-customer").hidden = false;
+  $("vehicle-archive").hidden = false;
+}
+
+function renderVehiclesList() {
+  const container = $("vehicles-list");
+  if (!state.vehicles.items.length) {
+    const emptyMessage = state.vehicles.search || state.vehicles.archivedOnly || state.vehicles.customerFilterId
+      ? "No vehicles matched this filter."
+      : "No vehicles yet. Create the first vehicle record.";
+    container.innerHTML = `<div class="empty-card"><strong>No results</strong><p>${escapeHtml(emptyMessage)}</p></div>`;
+  } else {
+    container.innerHTML = state.vehicles.items.map((vehicle) => `
+      <button type="button" class="customer-list-item${state.vehicles.selectedVehicleId === vehicle.id ? " is-active" : ""}" data-vehicle-id="${vehicle.id}">
+        <strong>${escapeHtml(vehicle.display_name)}</strong>
+        <span>${escapeHtml(vehicleSummaryLine(vehicle) || "Vehicle record")}</span>
+      </button>`).join("");
+    $$("[data-vehicle-id]", container).forEach((button) => {
+      button.addEventListener("click", () => {
+        void selectVehicle(Number(button.dataset.vehicleId));
+      });
+    });
+  }
+  $("vehicles-page-status").textContent = `Page ${state.vehicles.page} · ${state.vehicles.total} total`;
+  $("vehicles-prev").disabled = state.vehicles.page <= 1;
+  $("vehicles-next").disabled = !state.vehicles.hasMore;
+}
+
+async function rememberSelectedVehicle(vehicle) {
+  try {
+    await apiFetch("/api/context/vehicles/selected-vehicle?scope=session", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        value: JSON.stringify({
+          id: vehicle.id,
+          customer_id: vehicle.customer_id,
+          display_name: vehicle.display_name,
+        }),
+      }),
+    });
+  } catch {
+    // Vehicle persistence remains authoritative even if assistive context storage fails.
+  }
+}
+
+async function selectVehicle(vehicleId, options = {}) {
+  const { remember = true, suppressErrors = false } = options;
+  try {
+    const response = await apiFetch(`/api/vehicles/${vehicleId}`);
+    const data = await readApiPayload(response);
+    if (!response.ok || !data) throw apiError(response, data, "Vehicle lookup failed");
+    state.vehicles.selectedVehicleId = data.id;
+    state.vehicles.selectedVehicle = data;
+    if (data.customer_id) {
+      state.customers.selectedCustomerId = data.customer_id;
+    }
+    renderVehicleDetail(data);
+    populateVehicleForm(data);
+    renderVehiclesList();
+    if (remember) void rememberSelectedVehicle(data);
+    return data;
+  } catch (error) {
+    if (!suppressErrors) showToast(`Vehicle lookup failed: ${error.message}`, "error");
+    return null;
+  }
+}
+
+async function loadVehicles() {
+  if (!await requireAuthenticated("login")) return;
+  const list = $("vehicles-list");
+  list.innerHTML = '<div class="loading-panel"><span class="loading-spinner"></span><div><strong>Loading vehicles</strong><br><small>Reading PostgreSQL vehicle records.</small></div></div>';
+  const searchParams = new URLSearchParams({
+    page: String(state.vehicles.page),
+    page_size: String(state.vehicles.pageSize),
+    archived: String(state.vehicles.archivedOnly),
+  });
+  if (state.vehicles.search.trim()) searchParams.set("search", state.vehicles.search.trim());
+  if (state.vehicles.customerFilterId) searchParams.set("customer_id", String(state.vehicles.customerFilterId));
+  try {
+    const response = await apiFetch(`/api/vehicles?${searchParams.toString()}`);
+    const data = await readApiPayload(response);
+    if (!response.ok || !data) throw apiError(response, data, "Vehicle list failed");
+    state.vehicles.items = data.items;
+    state.vehicles.total = data.total;
+    state.vehicles.hasMore = data.has_more;
+    renderVehiclesList();
+    if (state.vehicles.selectedVehicleId) {
+      const selected = data.items.find((item) => item.id === state.vehicles.selectedVehicleId);
+      if (selected) {
+        state.vehicles.selectedVehicle = selected;
+        renderVehicleDetail(selected);
+        populateVehicleForm(selected);
+      } else if (!state.vehicles.selectedVehicle || state.vehicles.selectedVehicle.customer_id !== state.vehicles.customerFilterId) {
+        state.vehicles.selectedVehicleId = null;
+        state.vehicles.selectedVehicle = null;
+        renderVehicleDetail(null);
+        populateVehicleForm(null, { preferredCustomerId: state.vehicles.customerFilterId });
+      }
+    } else if (!state.vehicles.selectedVehicle) {
+      populateVehicleForm(null, { preferredCustomerId: state.vehicles.customerFilterId });
+    }
+  } catch (error) {
+    list.innerHTML = `<div class="error-card"><strong>Vehicle list failed</strong><p>${escapeHtml(error.message)}</p></div>`;
+    showToast(`Vehicle list failed: ${error.message}`, "error");
+  }
+}
+
+async function submitVehicleForm(event) {
+  event.preventDefault();
+  if (!await requireAuthenticated("login")) return;
+  const vehicleId = $("vehicle-id").value.trim();
+  const customerId = $("vehicle-customer-id").value.trim();
+  if (!vehicleId && !customerId) {
+    showToast("Select a customer before creating a vehicle.", "error");
+    $("vehicle-customer-id").focus();
+    return;
+  }
+  const submit = $("vehicle-save");
+  submit.disabled = true;
+  submit.textContent = vehicleId ? "Saving…" : "Creating…";
+  try {
+    const response = await apiFetch(vehicleId ? `/api/vehicles/${vehicleId}` : `/api/customers/${customerId}/vehicles`, {
+      method: vehicleId ? "PATCH" : "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(vehiclePayloadFromForm()),
+    });
+    const data = await readApiPayload(response);
+    if (!response.ok || !data) throw apiError(response, data, "Vehicle save failed");
+    state.vehicles.selectedVehicleId = data.id;
+    state.vehicles.selectedVehicle = data;
+    state.vehicles.page = 1;
+    if (data.customer_id) setVehicleCustomerFilter(data.customer_id);
+    populateVehicleForm(data);
+    renderVehicleDetail(data);
+    await loadVehicles();
+    if (state.customers.selectedCustomerId === data.customer_id) {
+      await loadCustomerVehiclePreview(data.customer_id);
+    }
+    showToast(vehicleId ? "Vehicle updated." : "Vehicle created.", "success");
+    void rememberSelectedVehicle(data);
+  } catch (error) {
+    showToast(`Vehicle save failed: ${error.message}`, "error");
+  } finally {
+    submit.disabled = false;
+    submit.textContent = "Save vehicle";
+  }
+}
+
+async function archiveSelectedVehicle() {
+  const vehicle = state.vehicles.selectedVehicle;
+  if (!vehicle) return;
+  if (!window.confirm(`Archive ${vehicle.display_name}?`)) return;
+  try {
+    const response = await apiFetch(`/api/vehicles/${vehicle.id}`, { method: "DELETE" });
+    const data = await readApiPayload(response);
+    if (!response.ok || !data) throw apiError(response, data, "Vehicle archive failed");
+    const archivedVehicle = data.vehicle;
+    if (!state.vehicles.archivedOnly) {
+      state.vehicles.selectedVehicleId = null;
+      state.vehicles.selectedVehicle = null;
+      renderVehicleDetail(null);
+      populateVehicleForm(null, { preferredCustomerId: archivedVehicle.customer_id });
+      void clearSelectedVehicleReference();
+    } else {
+      state.vehicles.selectedVehicleId = archivedVehicle.id;
+      state.vehicles.selectedVehicle = archivedVehicle;
+      renderVehicleDetail(archivedVehicle);
+      populateVehicleForm(archivedVehicle);
+      void rememberSelectedVehicle(archivedVehicle);
+    }
+    await loadVehicles();
+    if (state.customers.selectedCustomerId === archivedVehicle.customer_id) {
+      await loadCustomerVehiclePreview(archivedVehicle.customer_id);
+    }
+    showToast("Vehicle archived.", "success");
+  } catch (error) {
+    showToast(`Vehicle archive failed: ${error.message}`, "error");
+  }
+}
+
+async function openCustomerForSelectedVehicle() {
+  const vehicle = state.vehicles.selectedVehicle;
+  if (!vehicle) return;
+  const customer = await selectCustomer(vehicle.customer_id, {
+    remember: true,
+    refreshVehicles: true,
+    suppressErrors: false,
+  });
+  if (!customer) return;
+  navigate("customers");
+}
+
+async function restoreSelectionsFromContext() {
+  if (!state.auth.authenticated) return;
+  try {
+    const [customerResponse, vehicleResponse] = await Promise.all([
+      apiFetch("/api/context/customers?scope=session"),
+      apiFetch("/api/context/vehicles?scope=session"),
+    ]);
+    const customerPayload = await readApiPayload(customerResponse);
+    const vehiclePayload = await readApiPayload(vehicleResponse);
+
+    const customerEntry = customerPayload?.entries?.find((entry) => entry.context_key === "selected-customer");
+    if (customerResponse.ok && customerEntry?.value) {
+      try {
+        const parsed = JSON.parse(customerEntry.value);
+        if (parsed?.id) {
+          const restoredCustomer = await selectCustomer(Number(parsed.id), {
+            remember: false,
+            refreshVehicles: true,
+            suppressErrors: true,
+          });
+          if (!restoredCustomer) {
+            void apiFetch("/api/context/customers/selected-customer?scope=session", { method: "DELETE" });
+          }
+        }
+      } catch {
+        // Ignore malformed assistive context values.
+      }
+    }
+
+    const vehicleEntry = vehiclePayload?.entries?.find((entry) => entry.context_key === "selected-vehicle");
+    if (vehicleResponse.ok && vehicleEntry?.value) {
+      try {
+        const parsed = JSON.parse(vehicleEntry.value);
+        if (parsed?.customer_id) setVehicleCustomerFilter(parsed.customer_id);
+        if (parsed?.id) {
+          const restoredVehicle = await selectVehicle(Number(parsed.id), {
+            remember: false,
+            suppressErrors: true,
+          });
+          if (!restoredVehicle) {
+            void clearSelectedVehicleReference();
+          } else if (restoredVehicle.customer_id) {
+            await selectCustomer(restoredVehicle.customer_id, {
+              remember: false,
+              refreshVehicles: true,
+              suppressErrors: true,
+            });
+          }
+        }
+      } catch {
+        // Ignore malformed assistive context values.
+      }
+    }
+  } catch {
+    // Context restoration is best-effort only.
+  }
+}
+
+function initializeVehicles() {
+  $("vehicle-form").addEventListener("submit", (event) => {
+    void submitVehicleForm(event);
+  });
+  $("vehicle-cancel").addEventListener("click", () => {
+    state.vehicles.selectedVehicleId = null;
+    state.vehicles.selectedVehicle = null;
+    populateVehicleForm(null, { preferredCustomerId: state.vehicles.customerFilterId });
+    renderVehicleDetail(null);
+    void clearSelectedVehicleReference();
+  });
+  $("vehicles-new").addEventListener("click", async () => {
+    await loadCustomerOptions();
+    state.vehicles.selectedVehicleId = null;
+    state.vehicles.selectedVehicle = null;
+    populateVehicleForm(null, { preferredCustomerId: state.vehicles.customerFilterId });
+    renderVehicleDetail(null);
+    $("vehicle-vin").focus();
+  });
+  $("vehicles-refresh").addEventListener("click", () => {
+    void loadVehicles();
+  });
+  $("vehicles-search").addEventListener("input", () => {
+    state.vehicles.search = $("vehicles-search").value;
+    state.vehicles.page = 1;
+    void loadVehicles();
+  });
+  $("vehicles-customer-filter").addEventListener("change", () => {
+    setVehicleCustomerFilter($("vehicles-customer-filter").value);
+    state.vehicles.page = 1;
+    state.vehicles.selectedVehicleId = null;
+    state.vehicles.selectedVehicle = null;
+    populateVehicleForm(null, { preferredCustomerId: state.vehicles.customerFilterId });
+    renderVehicleDetail(null);
+    void loadVehicles();
+  });
+  $("vehicles-archived-only").addEventListener("change", () => {
+    state.vehicles.archivedOnly = $("vehicles-archived-only").checked;
+    state.vehicles.page = 1;
+    state.vehicles.selectedVehicleId = null;
+    state.vehicles.selectedVehicle = null;
+    populateVehicleForm(null, { preferredCustomerId: state.vehicles.customerFilterId });
+    renderVehicleDetail(null);
+    void loadVehicles();
+  });
+  $("vehicles-prev").addEventListener("click", () => {
+    state.vehicles.page = Math.max(1, state.vehicles.page - 1);
+    void loadVehicles();
+  });
+  $("vehicles-next").addEventListener("click", () => {
+    if (!state.vehicles.hasMore) return;
+    state.vehicles.page += 1;
+    void loadVehicles();
+  });
+  $("vehicle-archive").addEventListener("click", () => {
+    void archiveSelectedVehicle();
+  });
+  $("vehicle-open-customer").addEventListener("click", () => {
+    void openCustomerForSelectedVehicle();
+  });
+  populateVehicleForm(null);
+  renderVehicleDetail(null);
 }
 
 function setStatus(id, text, online = null) {
@@ -1058,6 +1602,7 @@ function initializeApp() {
   initializeLocation();
   initializeChat();
   initializeCustomers();
+  initializeVehicles();
   initializeEstimate();
   initializeSystem();
   initializeAuth();
@@ -1067,6 +1612,10 @@ function initializeApp() {
       navigate("login");
       return;
     }
+    void loadCustomerOptions().catch(() => {
+      showToast("Customer options failed to load.", "error");
+    });
+    void restoreSelectionsFromContext();
     if (window.location.pathname === "/login") navigate("dashboard");
   });
   void loadHealth(false);

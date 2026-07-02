@@ -14,4 +14,4 @@ Relevant sources: `git status`, `git diff --stat`, `app/auth.py`, `app/context_s
 ## Deferred Verification Notes
 
 - Billable live chat and estimate calls were intentionally skipped in this session because they may spend money through OpenAI-backed requests. This is a verification gap, not a confirmed defect.
-- The Customer slice is verified for backend and frontend authenticated flows, but Vehicles and downstream business records are intentionally not started yet.
+- The Customer and Vehicle slices are verified for backend and frontend authenticated flows, but live billable Estimate flows were intentionally not rerun and downstream Approval or Work Order slices remain unstarted.
