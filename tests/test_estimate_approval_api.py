@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -21,10 +22,10 @@ from app.models import (
     Confidence,
     DecodedVehicle,
     EstimateApprovalActionRequest,
-    EstimateFeeItem,
     EstimateApprovalTokenRequest,
     EstimateCreate,
     EstimateDeclineActionRequest,
+    EstimateFeeItem,
     EstimateLaborItem,
     EstimatePaymentOption,
     EstimatePaymentOptionCode,
@@ -133,6 +134,32 @@ def fixture_estimate_response() -> EstimateResponse:
     )
 
 
+def fixture_estimate_response_with_sensitive_research() -> EstimateResponse:
+    """Same as ``fixture_estimate_response`` but with additional internal
+    research detail that must never reach the public approval-view endpoint:
+    an unselected competing-retailer part option and internal labor
+    reasoning (basis/special tools/risk flags)."""
+    response = fixture_estimate_response().model_copy(deep=True)
+    response.research.labor.basis = "INTERNAL-LABOR-BASIS-MARKER-7788"
+    response.research.labor.special_tools = ["INTERNAL-SPECIAL-TOOL-MARKER-7788"]
+    response.research.labor.risk_flags = ["INTERNAL-RISK-FLAG-MARKER-7788"]
+    response.research.parts.requirements[0].options.append(
+        PartOption(
+            retailer="UNSELECTED-COMPETITOR-RETAILER-7788",
+            unit_price=999,
+            availability=Availability.CONFIRMED_IN_STOCK,
+            url=HttpUrl("https://example.com/unselected-competitor-option"),
+            confidence=Confidence.MEDIUM,
+        )
+    )
+    return response
+
+
+async def stub_sensitive_research_estimate_job(self, request):  # type: ignore[no-untyped-def]
+    del self, request
+    return fixture_estimate_response_with_sensitive_research()
+
+
 def zero_value_estimate_response() -> EstimateResponse:
     return EstimateResponse(
         vehicle=DecodedVehicle(year=2018, make="Honda", model="Civic"),
@@ -181,6 +208,34 @@ def zero_value_estimate_response() -> EstimateResponse:
     )
 
 
+def partial_collapse_estimate_response() -> EstimateResponse:
+    """Real, priced parts sitting next to a single fabricated zero-hour labor line."""
+    response = fixture_estimate_response().model_copy(deep=True)
+    response.labor_items = [
+        EstimateLaborItem(
+            description="Replace front brakes",
+            labor_hours=0,
+            labor_rate=100,
+            labor_total=0,
+        )
+    ]
+    response.totals.labor_hours = 0
+    response.totals.labor_total = 0
+    response.totals.estimated_total = 167.7
+    return response
+
+
+def parts_only_estimate_response() -> EstimateResponse:
+    """A legitimate labor-optional job: explicitly no labor items, real parts pricing."""
+    response = fixture_estimate_response().model_copy(deep=True)
+    response.labor_items = []
+    response.totals.labor_hours = 0
+    response.totals.labor_rate = 100
+    response.totals.labor_total = 0
+    response.totals.estimated_total = 167.7
+    return response
+
+
 def forged_total_estimate_response() -> EstimateResponse:
     response = fixture_estimate_response().model_copy(deep=True)
     response.totals.estimated_total = 1
@@ -214,6 +269,16 @@ async def stub_forged_total_estimate_job(self, request):  # type: ignore[no-unty
 async def stub_negative_value_estimate_job(self, request):  # type: ignore[no-untyped-def]
     del self, request
     return negative_value_estimate_response()
+
+
+async def stub_partial_collapse_estimate_job(self, request):  # type: ignore[no-untyped-def]
+    del self, request
+    return partial_collapse_estimate_response()
+
+
+async def stub_parts_only_estimate_job(self, request):  # type: ignore[no-untyped-def]
+    del self, request
+    return parts_only_estimate_response()
 
 
 def estimate_create_payload(customer_id: int, vehicle_id: int) -> EstimateCreate:
@@ -326,6 +391,79 @@ async def test_create_send_approve_and_audit_estimate(
 
 
 @pytest.mark.anyio
+async def test_public_approval_view_excludes_internal_research_and_raw_overrides(
+    monkeypatch, settings, db_session: Session
+) -> None:  # type: ignore[no-untyped-def]
+    """The unauthenticated, token-authenticated approval-view endpoint must
+    never leak unselected competing-retailer part options, internal labor
+    reasoning (basis/special tools/risk flags), or raw request rate/fee
+    overrides, while still returning everything the customer needs."""
+    monkeypatch.setattr(
+        OptimusResearchOrchestrator, "estimate_job", stub_sensitive_research_estimate_job
+    )
+    _, response = await login_as(settings, db_session)
+    auth = auth_context(settings, db_session, raw_cookie_from_response(response))
+    customer_id = await create_customer_for_auth(settings, db_session, auth)
+    vehicle = await main.create_vehicle_record(customer_id, vehicle_payload(), db_session, auth)
+    estimate = await main.create_estimate_record(
+        estimate_create_payload(customer_id, vehicle.id),
+        db_session,
+        settings,
+        auth,
+    )
+    sent = await main.send_estimate_record_for_approval(
+        estimate.id,
+        EstimateSendForApprovalRequest(),
+        db_session,
+        auth,
+        request_for("/api/estimates/1/send-for-approval", method="POST"),
+    )
+    token = sent.approval_link.split("#token=", 1)[1]
+
+    approval_view = await main.approval_view(
+        EstimateApprovalTokenRequest(token=token),
+        db_session,
+        request_for("/api/estimate-approval/view", method="POST"),
+        settings,
+    )
+    payload = approval_view.model_dump(mode="json")
+    body = json.dumps(payload)
+
+    # Internal research reasoning and unselected competing options must not leak
+    # anywhere in the serialized payload.
+    assert "INTERNAL-LABOR-BASIS-MARKER-7788" not in body
+    assert "INTERNAL-SPECIAL-TOOL-MARKER-7788" not in body
+    assert "INTERNAL-RISK-FLAG-MARKER-7788" not in body
+    assert "UNSELECTED-COMPETITOR-RETAILER-7788" not in body
+
+    revision = payload["revision"]
+    research = revision["estimate"]["research"]
+
+    # The narrow research view exposes only summary/warnings: no parts
+    # requirement/option research and no internal labor reasoning fields.
+    assert set(research.keys()) == {"summary", "warnings"}
+
+    # The internal generation request (which may carry raw labor rate, mobile
+    # service fee, shop supplies percent, and parts tax rate overrides) must
+    # not be present on the narrow revision view at all.
+    assert "request" not in revision
+
+    # Everything a customer needs to review and act on the estimate must remain.
+    assert payload["estimate_number"] == estimate.estimate_number
+    assert payload["token_expires_at"]
+    assert revision["revision_number"] == 1
+    assert revision["customer"]["display_name"]
+    assert revision["vehicle"]["display_name"]
+    assert revision["terms_text"] == "Customer must approve before work begins."
+    assert len(revision["payment_options"]) == 2
+    assert revision["estimate"]["labor_items"][0]["description"] == "Replace front brakes"
+    assert revision["estimate"]["selected_parts"][0]["part_name"] == "Brake pad set"
+    assert revision["estimate"]["fee_items"][0]["code"] == "shop_supplies"
+    assert revision["estimate"]["totals"]["estimated_total"] == 417.7
+    assert research["summary"] == "Fixture research bundle"
+
+
+@pytest.mark.anyio
 async def test_zero_value_estimate_is_rejected_before_persistence(
     monkeypatch, settings, db_session: Session
 ) -> None:  # type: ignore[no-untyped-def]
@@ -343,7 +481,10 @@ async def test_zero_value_estimate_is_rejected_before_persistence(
             auth,
         )
     assert excinfo.value.status_code == 422
-    assert "greater than zero" in str(excinfo.value.detail).lower() or "structured estimate generation failed" in str(excinfo.value.detail).lower()
+    assert (
+        "greater than zero" in str(excinfo.value.detail).lower()
+        or "structured estimate generation failed" in str(excinfo.value.detail).lower()
+    )
     assert db_session.scalar(select(Estimate)) is None
 
 
@@ -355,7 +496,9 @@ async def test_zero_value_estimate_cannot_be_sent_for_approval(
     _, response = await login_as(settings, db_session)
     auth = auth_context(settings, db_session, raw_cookie_from_response(response))
     _, _, estimate = await create_estimate_for_auth(settings, db_session, auth)
-    revision = db_session.scalar(select(EstimateRevision).where(EstimateRevision.estimate_id == estimate.id))
+    revision = db_session.scalar(
+        select(EstimateRevision).where(EstimateRevision.estimate_id == estimate.id)
+    )
     assert revision is not None
     broken = zero_value_estimate_response().model_dump(mode="json")
     revision.estimate_response_payload = broken
@@ -373,9 +516,12 @@ async def test_zero_value_estimate_cannot_be_sent_for_approval(
             db_session,
             auth,
             request_for("/api/estimates/1/send-for-approval", method="POST"),
-    )
+        )
     assert excinfo.value.status_code == 422
-    assert "zero-value estimates cannot be sent for approval" in str(excinfo.value.detail).lower() or "structured estimate generation failed" in str(excinfo.value.detail).lower()
+    assert (
+        "zero-value estimates cannot be sent for approval" in str(excinfo.value.detail).lower()
+        or "structured estimate generation failed" in str(excinfo.value.detail).lower()
+    )
 
 
 @pytest.mark.anyio
@@ -401,10 +547,15 @@ async def test_forged_aggregate_totals_are_rejected_before_persistence(
 
 
 @pytest.mark.anyio
-async def test_negative_financial_values_are_rejected_before_persistence(
+async def test_fabricated_zero_hour_labor_line_next_to_real_parts_is_rejected(
     monkeypatch, settings, db_session: Session
 ) -> None:  # type: ignore[no-untyped-def]
-    monkeypatch.setattr(OptimusResearchOrchestrator, "estimate_job", stub_negative_value_estimate_job)
+    """A non-empty labor_items list whose only line collapsed to zero hours/total
+    must be rejected even when real parts pricing is present, so the customer
+    never sees a nonsense free-labor line on an otherwise-priced estimate."""
+    monkeypatch.setattr(
+        OptimusResearchOrchestrator, "estimate_job", stub_partial_collapse_estimate_job
+    )
     _, response = await login_as(settings, db_session)
     auth = auth_context(settings, db_session, raw_cookie_from_response(response))
     customer_id = await create_customer_for_auth(settings, db_session, auth)
@@ -418,7 +569,58 @@ async def test_negative_financial_values_are_rejected_before_persistence(
             auth,
         )
     assert excinfo.value.status_code == 422
-    assert "negative" in str(excinfo.value.detail).lower() or "structured estimate generation failed" in str(excinfo.value.detail).lower()
+    assert "structured estimate generation failed" in str(excinfo.value.detail).lower()
+    assert db_session.scalar(select(Estimate)) is None
+
+
+@pytest.mark.anyio
+async def test_labor_optional_parts_only_estimate_is_accepted(
+    monkeypatch, settings, db_session: Session
+) -> None:  # type: ignore[no-untyped-def]
+    """An explicitly empty labor_items list next to real parts pricing represents
+    a legitimate labor-optional job (e.g. a parts drop-ship) and must remain
+    valid; only a fabricated zero-hour placeholder line is newly rejected."""
+    monkeypatch.setattr(OptimusResearchOrchestrator, "estimate_job", stub_parts_only_estimate_job)
+    _, response = await login_as(settings, db_session)
+    auth = auth_context(settings, db_session, raw_cookie_from_response(response))
+    customer_id = await create_customer_for_auth(settings, db_session, auth)
+    vehicle = await main.create_vehicle_record(customer_id, vehicle_payload(), db_session, auth)
+
+    estimate = await main.create_estimate_record(
+        estimate_create_payload(customer_id, vehicle.id),
+        db_session,
+        settings,
+        auth,
+    )
+    assert estimate.status is EstimateStatus.DRAFT
+    assert estimate.current_revision.estimate.labor_items == []
+    assert estimate.current_revision.estimate.totals.estimated_total == 167.7
+
+
+@pytest.mark.anyio
+async def test_negative_financial_values_are_rejected_before_persistence(
+    monkeypatch, settings, db_session: Session
+) -> None:  # type: ignore[no-untyped-def]
+    monkeypatch.setattr(
+        OptimusResearchOrchestrator, "estimate_job", stub_negative_value_estimate_job
+    )
+    _, response = await login_as(settings, db_session)
+    auth = auth_context(settings, db_session, raw_cookie_from_response(response))
+    customer_id = await create_customer_for_auth(settings, db_session, auth)
+    vehicle = await main.create_vehicle_record(customer_id, vehicle_payload(), db_session, auth)
+
+    with pytest.raises(HTTPException) as excinfo:
+        await main.create_estimate_record(
+            estimate_create_payload(customer_id, vehicle.id),
+            db_session,
+            settings,
+            auth,
+        )
+    assert excinfo.value.status_code == 422
+    assert (
+        "negative" in str(excinfo.value.detail).lower()
+        or "structured estimate generation failed" in str(excinfo.value.detail).lower()
+    )
     assert db_session.scalar(select(Estimate)) is None
 
 

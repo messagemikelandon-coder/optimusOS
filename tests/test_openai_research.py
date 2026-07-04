@@ -3,10 +3,12 @@ from __future__ import annotations
 import json
 from typing import Any
 
+import httpx
 import pytest
+from openai import NotFoundError
 
-from app.errors import EstimatorResearchError
 from app.config import Settings
+from app.errors import EstimatorResearchError
 from app.models import DecodedVehicle, ResearchBundle, ResolvedLocation
 from app.services.openai_web import (
     CombinedResearchEnvelope,
@@ -112,9 +114,10 @@ class FakeClient:
         self.responses = FakeResponses(fail_structured=fail_structured)
 
 
-def service(client: Any) -> OpenAIWebResearchService:
+def service(client: Any, *, settings: Settings | None = None) -> OpenAIWebResearchService:
     return OpenAIWebResearchService(
-        Settings(
+        settings
+        or Settings(
             openai_api_key="test",
             parts_retailer_hosts=("autozone.com",),
             allow_public_https_parts_links=False,
@@ -294,3 +297,75 @@ def test_markdown_single_response_is_coerced_into_structured_research() -> None:
     assert result.parts.requirements[0].part_name == "Front brake pad set"
     assert result.parts.requirements[0].options[0].unit_price == 57.99
     assert result.summary == "Brake pad research summary."
+
+
+class RaisingResponses(FakeResponses):
+    """Fake responses client whose ``parse`` raises for the first N calls."""
+
+    def __init__(self, *, error: Exception, fail_first_n: int) -> None:
+        super().__init__()
+        self._error = error
+        self._fail_first_n = fail_first_n
+
+    def parse(self, **kwargs):  # type: ignore[no-untyped-def]
+        self.parse_calls += 1
+        self.last_parse_kwargs = kwargs
+        if self.parse_calls <= self._fail_first_n:
+            raise self._error
+        return FakeResponse(parsed=self.envelope(), output=self.sources())
+
+
+class RaisingClient:
+    def __init__(self, *, error: Exception, fail_first_n: int) -> None:
+        self.responses = RaisingResponses(error=error, fail_first_n=fail_first_n)
+
+
+def _fallback_settings() -> Settings:
+    # Explicitly set both models so the test is decoupled from ambient .env
+    # values (which may normalize the primary and fallback models to the
+    # same effective model id).
+    settings = Settings(
+        openai_api_key="test",
+        openai_estimator_model="gpt-primary-test",
+        openai_fallback_model="gpt-fallback-test",
+        parts_retailer_hosts=("autozone.com",),
+        allow_public_https_parts_links=False,
+    )
+    assert settings.estimator_model != settings.openai_fallback_model
+    return settings
+
+
+def test_generic_model_error_does_not_trigger_fallback_retry() -> None:
+    """A non-availability error must not be retried against the fallback model."""
+    client = RaisingClient(error=RuntimeError("boom"), fail_first_n=1)
+    with pytest.raises(EstimatorResearchError):
+        service(client, settings=_fallback_settings()).research(
+            vehicle=DecodedVehicle(year=2020, make="Dodge", model="Charger"),
+            job="Replace starter",
+            location=ResolvedLocation(city="Junction City", region="KS", postal_code="66441"),
+        )
+
+    assert client.responses.parse_calls == 1
+
+
+def test_model_unavailable_error_falls_back_to_second_model() -> None:
+    """A model-unavailable error must retry once against the fallback model."""
+    response = httpx.Response(
+        404, request=httpx.Request("POST", "https://api.openai.com/v1/responses")
+    )
+    error = NotFoundError(
+        "The model was not found",
+        response=response,
+        body={"error": {"code": "model_not_found"}},
+    )
+    client = RaisingClient(error=error, fail_first_n=1)
+
+    result = service(client, settings=_fallback_settings()).research(
+        vehicle=DecodedVehicle(year=2020, make="Dodge", model="Charger"),
+        job="Replace starter",
+        location=ResolvedLocation(city="Junction City", region="KS", postal_code="66441"),
+    )
+
+    assert client.responses.parse_calls == 2
+    assert result.research_mode == "structured"
+    assert any("fallback model" in warning for warning in result.warnings)

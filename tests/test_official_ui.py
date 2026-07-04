@@ -64,7 +64,7 @@ def test_ui_preserves_connected_workflows() -> None:
     assert "/api/estimate-approval/view" in javascript
     assert 'window.location.pathname === "/approval"' in javascript
     assert 'window.location.hash.replace(/^#/, "")' in javascript
-    assert 'history.replaceState(null, "", "/approval")' in javascript
+    assert 'history.replaceState(null, "", "/approval" + window.location.hash)' in javascript
     assert "Approval link required" in javascript
     assert 'apiFetch("/health"' in javascript
 

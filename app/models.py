@@ -809,11 +809,56 @@ class EstimateApprovalSendResponse(BaseModel):
     approval_link: str
 
 
-class EstimateApprovalView(BaseModel):
+class EstimateApprovalResearchView(BaseModel):
+    """Customer-facing research summary. Internal reasoning (labor basis,
+    special tools, risk flags) and competing part options/pricing considered
+    during research are intentionally omitted from this public view."""
+
+    summary: str
+    warnings: list[str] = Field(default_factory=list)
+
+
+class EstimateApprovalEstimateView(BaseModel):
+    """Narrow, customer-safe projection of ``EstimateResponse`` for the public
+    approval link. Excludes unselected part-research options and internal
+    labor reasoning that customers should never see."""
+
+    job: str
+    labor_items: list[EstimateLaborItem] = Field(default_factory=list)
+    selected_parts: list[SelectedPart]
+    fee_items: list[EstimateFeeItem] = Field(default_factory=list)
+    totals: EstimateTotals
+    research: EstimateApprovalResearchView
+
+
+class EstimateApprovalRevisionView(BaseModel):
+    """Narrow, customer-safe projection of ``EstimateRevisionRead``. Excludes
+    the internal generation request, which may carry raw labor rate, mobile
+    service fee, shop supplies percent, and parts tax rate overrides."""
+
+    id: int
+    revision_number: int
+    status: EstimateStatus
+    customer: EstimateCustomerSummary
+    vehicle: EstimateVehicleSummary
+    estimate: EstimateApprovalEstimateView
+    terms_text: str
+    payment_options: list[EstimatePaymentOption]
+    approval_due_at: datetime | None = None
+    content_hash: str
+    created_at: datetime
+
+
+class EstimateApprovalPublicView(BaseModel):
+    """Customer-facing approval-link view returned by
+    ``POST /api/estimate-approval/view``. Excludes internal research detail
+    and raw request overrides that the authenticated owner endpoints
+    (``EstimateRead``/``EstimateRevisionRead``) still expose in full."""
+
     estimate_id: int
     estimate_number: str
     status: EstimateStatus
-    revision: EstimateRevisionRead
+    revision: EstimateApprovalRevisionView
     token_expires_at: datetime
     token_status: str
     can_approve: bool
