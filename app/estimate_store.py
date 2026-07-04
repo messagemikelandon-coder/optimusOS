@@ -4,7 +4,7 @@ import hashlib
 import json
 import secrets
 from datetime import UTC, datetime, timedelta
-from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
+from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 
 from sqlalchemy import Select, func, select
 from sqlalchemy.orm import Session
@@ -22,11 +22,14 @@ from app.models import (
     EstimateApprovalActionRequest,
     EstimateApprovalActionResponse,
     EstimateApprovalAuditResponse,
+    EstimateApprovalEstimateView,
     EstimateApprovalEventRead,
     EstimateApprovalMethod,
+    EstimateApprovalPublicView,
+    EstimateApprovalResearchView,
+    EstimateApprovalRevisionView,
     EstimateApprovalSendResponse,
     EstimateApprovalTokenRequest,
-    EstimateApprovalView,
     EstimateCreate,
     EstimateCustomerSummary,
     EstimateDeclineActionRequest,
@@ -119,10 +122,7 @@ def _money(value: float | Decimal) -> Decimal:
 def _validate_generated_estimate(response_model: EstimateResponse) -> None:
     labor_items = response_model.labor_items
     selected_parts = response_model.selected_parts
-    fee_map = {
-        item.code: _money(item.amount)
-        for item in response_model.fee_items
-    }
+    fee_map = {item.code: _money(item.amount) for item in response_model.fee_items}
 
     if not labor_items and not selected_parts:
         raise EstimateStoreError(
@@ -187,13 +187,21 @@ def _validate_generated_estimate(response_model: EstimateResponse) -> None:
     if _money(totals.parts_subtotal) != recalculated_parts_subtotal:
         raise EstimateStoreError("Structured estimate generation failed. Parts subtotal mismatch.")
     if _money(totals.shop_supplies) != expected_shop_supplies:
-        raise EstimateStoreError("Structured estimate generation failed. Fee totals did not reconcile.")
+        raise EstimateStoreError(
+            "Structured estimate generation failed. Fee totals did not reconcile."
+        )
     if _money(totals.mobile_service_fee) != expected_mobile_fee:
-        raise EstimateStoreError("Structured estimate generation failed. Fee totals did not reconcile.")
+        raise EstimateStoreError(
+            "Structured estimate generation failed. Fee totals did not reconcile."
+        )
     if _money(totals.parts_tax) != expected_parts_tax:
-        raise EstimateStoreError("Structured estimate generation failed. Tax totals did not reconcile.")
+        raise EstimateStoreError(
+            "Structured estimate generation failed. Tax totals did not reconcile."
+        )
     if _money(totals.labor_hours) != _money(recalculated_labor_hours):
-        raise EstimateStoreError("Structured estimate generation failed. Labor hours did not reconcile.")
+        raise EstimateStoreError(
+            "Structured estimate generation failed. Labor hours did not reconcile."
+        )
 
     estimated_total = _money(
         recalculated_labor_total
@@ -211,7 +219,20 @@ def _validate_generated_estimate(response_model: EstimateResponse) -> None:
         raise EstimateStoreError(
             "Structured estimate generation failed. The estimate total must be greater than zero."
         )
-    if positive_labor_lines == 0 and recalculated_parts_subtotal <= 0:
+    # `has_real_labor` is the single source of truth for whether the labor
+    # section represents genuine priced work. An explicitly empty
+    # `labor_items` list (a legitimate labor-optional job, e.g. a parts
+    # drop-ship) is treated differently from a non-empty `labor_items` list
+    # whose lines all collapsed to zero hours/total: the latter is a
+    # fabricated placeholder line and must be rejected even when real parts
+    # pricing is present, otherwise the customer would see a nonsense
+    # free-labor line on an otherwise-priced estimate.
+    has_real_labor = positive_labor_lines > 0
+    if labor_items and not has_real_labor:
+        raise EstimateStoreError(
+            "Structured estimate generation failed. Customer-facing labor or parts data is required."
+        )
+    if not has_real_labor and recalculated_parts_subtotal <= 0:
         raise EstimateStoreError(
             "Structured estimate generation failed. Customer-facing labor or parts data is required."
         )
@@ -325,6 +346,46 @@ def _revision_to_read(revision: EstimateRevision) -> EstimateRevisionRead:
         vehicle=vehicle,
         request=request,
         estimate=estimate,
+        terms_text=revision.terms_text,
+        payment_options=payment_options,
+        approval_due_at=ensure_utc(revision.approval_due_at) if revision.approval_due_at else None,
+        content_hash=revision.content_hash,
+        created_at=ensure_utc(revision.created_at),
+    )
+
+
+def _revision_to_approval_view(revision: EstimateRevision) -> EstimateApprovalRevisionView:
+    """Build the narrow, customer-safe projection of a revision used by the
+    public, token-authenticated approval-view endpoint. This intentionally
+    omits the internal generation request (raw labor rate, mobile service
+    fee, shop supplies percent, and parts tax rate overrides) and narrows the
+    research payload to the customer-facing summary and warnings only,
+    dropping unselected part-research options and internal labor reasoning
+    (basis, special tools, risk flags)."""
+    customer = EstimateCustomerSummary.model_validate(revision.customer_snapshot)
+    vehicle = EstimateVehicleSummary.model_validate(revision.vehicle_snapshot)
+    estimate = EstimateResponse.model_validate(revision.estimate_response_payload)
+    payment_options = [
+        EstimatePaymentOption.model_validate(item) for item in revision.payment_options_payload
+    ]
+    narrow_estimate = EstimateApprovalEstimateView(
+        job=estimate.job,
+        labor_items=estimate.labor_items,
+        selected_parts=estimate.selected_parts,
+        fee_items=estimate.fee_items,
+        totals=estimate.totals,
+        research=EstimateApprovalResearchView(
+            summary=estimate.research.summary,
+            warnings=estimate.research.warnings,
+        ),
+    )
+    return EstimateApprovalRevisionView(
+        id=revision.id,
+        revision_number=revision.revision_number,
+        status=EstimateStatus(revision.status),
+        customer=customer,
+        vehicle=vehicle,
+        estimate=narrow_estimate,
         terms_text=revision.terms_text,
         payment_options=payment_options,
         approval_due_at=ensure_utc(revision.approval_due_at) if revision.approval_due_at else None,
@@ -758,17 +819,17 @@ def _resolve_active_approval_request(db: Session, token: str) -> EstimateApprova
 
 def get_approval_view(
     *, db: Session, payload: EstimateApprovalTokenRequest
-) -> EstimateApprovalView:
+) -> EstimateApprovalPublicView:
     approval_request = _resolve_active_approval_request(db, payload.token)
     estimate = approval_request.estimate
     revision = approval_request.revision
     if revision.revision_number != estimate.current_revision_number:
         raise EstimateApprovalTokenError("Approval token is invalid or unavailable.")
-    return EstimateApprovalView(
+    return EstimateApprovalPublicView(
         estimate_id=estimate.id,
         estimate_number=estimate.estimate_number,
         status=EstimateStatus(estimate.status),
-        revision=_revision_to_read(revision),
+        revision=_revision_to_approval_view(revision),
         token_expires_at=ensure_utc(approval_request.expires_at),
         token_status=approval_request.status,
         can_approve=True,

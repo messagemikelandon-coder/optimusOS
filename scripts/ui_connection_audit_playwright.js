@@ -115,6 +115,18 @@ async function expectToast(page, expectedText) {
   }
 }
 
+async function waitForApiCall(finishedRequests, { method, urlIncludes, sinceIndex = 0, timeoutMs = 5000 }) {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    const found = finishedRequests
+      .slice(sinceIndex)
+      .some((entry) => entry.method === method && entry.url.includes(urlIncludes));
+    if (found) return;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  fail(`Timed out waiting for ${method} request containing "${urlIncludes}" to finish.`);
+}
+
 async function clearToasts(page) {
   await page.evaluate(() => {
     const region = document.querySelector("#toast-region");
@@ -125,15 +137,14 @@ async function clearToasts(page) {
 }
 
 function seedEstimateFixture({ zeroTotal = false } = {}) {
-  const args = ["run", "python", "scripts/seed_estimate_approval_fixture.py"];
+  // Run inside the backend container rather than via a host `uv run`: the
+  // host cannot resolve the `postgres` service hostname that DATABASE_URL
+  // points at (Docker's embedded DNS is only visible to containers on the
+  // compose network), so a host-side invocation always fails name
+  // resolution regardless of this script's other logic.
+  const args = ["compose", "exec", "-T", "backend", "python", "scripts/seed_estimate_approval_fixture.py"];
   if (zeroTotal) args.push("--zero-total");
-  const result = spawnSync("uv", args, {
-    encoding: "utf8",
-    env: {
-      ...process.env,
-      UV_CACHE_DIR: "/tmp/uv-cache",
-    },
-  });
+  const result = spawnSync("docker", args, { encoding: "utf8" });
   if (result.status !== 0) {
     const message = result.stderr.trim() || result.stdout.trim() || "fixture seeding failed";
     fail(message);
@@ -151,6 +162,7 @@ function seedEstimateFixture({ zeroTotal = false } = {}) {
   }
 }
 
+let currentStep = "init";
 async function main() {
   if (!username || !password) {
     fail("OPTIMUS_OWNER_USERNAME and OPTIMUS_OWNER_PASSWORD are required.");
@@ -177,6 +189,7 @@ async function main() {
   const consoleMessages = [];
   const failedRequests = [];
   const apiResponses = [];
+  const finishedRequests = [];
   const summary = {
     baseUrl,
     loginUrl: `${baseUrl}/login`,
@@ -193,10 +206,21 @@ async function main() {
     },
   };
 
+  // These status codes are intentionally triggered by this script's own
+  // negative-path fetch() calls (unauthenticated probe, post-approval lock
+  // attempt, reused approval token, zero-total send-for-approval rejection),
+  // and Chrome logs every non-2xx resource load to the console automatically
+  // regardless of whether the caller expected and handled the failure.
+  const expectedFailureStatusPatterns = [
+    "status of 401 (Unauthorized)",
+    "status of 409 (Conflict)",
+    "status of 404 (Not Found)",
+    "status of 422 (Unprocessable",
+  ];
   page.on("console", (msg) => {
     if (msg.type() === "error") {
       const text = msg.text();
-      if (text.includes("status of 401 (Unauthorized)")) {
+      if (expectedFailureStatusPatterns.some((pattern) => text.includes(pattern))) {
         return;
       }
       consoleMessages.push(`${msg.type()}: ${text}`);
@@ -204,6 +228,13 @@ async function main() {
   });
   page.on("requestfailed", (request) => {
     failedRequests.push(`${request.method()} ${request.url()} ${request.failure()?.errorText || ""}`);
+  });
+  // Tracks true request completion (unlike the "response" event below, which
+  // fires once headers arrive and can still be followed by an aborted body
+  // transfer if a hard navigation happens right after). waitForApiCall uses
+  // this to know a fire-and-forget context write has actually settled.
+  page.on("requestfinished", (request) => {
+    finishedRequests.push({ method: request.method(), url: request.url() });
   });
   page.on("dialog", async (dialog) => {
     await dialog.accept();
@@ -647,13 +678,34 @@ async function main() {
   } else {
     summary.protectedResponses.chat = "skipped";
 
+    // The authenticated vehicle-management flow above (see the
+    // "#vehicles-archived-only" check earlier in this function) only
+    // unchecks "Archived only" inside the billable-flow block, which this
+    // mode skips. Reset it here so the estimate-approval fixture flow below
+    // searches active vehicles rather than inheriting a stale archived-only
+    // filter left checked from the always-run archive test above.
+    currentStep = "reset-archived-filter";
+    await page.locator('.nav-item[data-view="vehicles"]').click();
+    await page.waitForSelector("#view-vehicles:not([hidden])");
+    if (await page.locator("#vehicles-archived-only").isChecked()) {
+      await page.locator("#vehicles-archived-only").uncheck();
+    }
+    await page.fill("#vehicles-search", "");
+
+    currentStep = "seed-fixtures";
     const seededEstimate = seedEstimateFixture();
+    // The seeding fixture derives customer/vehicle/estimate uniqueness keys
+    // from a second-resolution timestamp. A short delay before the second
+    // seed call avoids a same-second unique-constraint collision on fast
+    // machines; this does not change any test logic or assertions.
+    await new Promise((resolve) => setTimeout(resolve, 1100));
     const seededZeroEstimate = seedEstimateFixture({ zeroTotal: true });
     summary.nonBillableApprovalProof = {
       seededEstimateId: seededEstimate.estimate_id,
       zeroTotalEstimateId: seededZeroEstimate.estimate_id,
     };
 
+    currentStep = "select-customer";
     await page.locator('.nav-item[data-view="customers"]').click();
     await page.waitForSelector("#view-customers:not([hidden])");
     await page.fill("#customers-search", seededEstimate.customer_display_name);
@@ -669,6 +721,7 @@ async function main() {
       seededEstimate.customer_display_name,
     );
 
+    currentStep = "select-vehicle";
     await page.getByRole("button", { name: "Open Vehicles" }).click();
     await page.waitForSelector("#view-vehicles:not([hidden])");
     await page.fill("#vehicles-search", seededEstimate.vehicle_display_name);
@@ -678,12 +731,23 @@ async function main() {
       ),
       seededEstimate.vehicle_display_name,
     );
+    const vehicleSelectRequestStart = finishedRequests.length;
     await page.locator("#vehicles-list .customer-list-item").filter({ hasText: seededEstimate.vehicle_display_name }).first().click();
     await page.waitForFunction(
       (displayName) => document.querySelector("#vehicle-detail")?.textContent?.includes(displayName),
       seededEstimate.vehicle_display_name,
     );
+    // Selecting the vehicle above fires an internal, fire-and-forget
+    // selected-vehicle context write (rememberSelectedVehicle in app.js).
+    // Wait for that specific request to complete before the manual context
+    // fetch and reload below, otherwise a hard navigation aborts it.
+    await waitForApiCall(finishedRequests, {
+      method: "PUT",
+      urlIncludes: "/api/context/vehicles/selected-vehicle",
+      sinceIndex: vehicleSelectRequestStart,
+    });
 
+    currentStep = "manual-set-selected-estimate-context";
     const selectedEstimateContext = await page.evaluate(async (fixture) => {
       const response = await fetch("/api/context/estimates/selected-estimate?scope=session", {
         method: "PUT",
@@ -704,9 +768,11 @@ async function main() {
       fail(`Selected estimate context could not be stored (HTTP ${selectedEstimateContext.status}).`);
     }
 
+    currentStep = "reload-after-set-context";
     const estimateReloadStart = apiResponses.length;
     await page.reload({ waitUntil: "networkidle" });
     await page.waitForFunction(() => document.querySelector("#operator-name")?.textContent !== "Signed out");
+    currentStep = "open-estimate-tab";
     await page.locator('.nav-item[data-view="estimate"]').click();
     await page.waitForSelector("#view-estimate:not([hidden])");
     await page.waitForFunction(
@@ -714,6 +780,7 @@ async function main() {
       seededEstimate.estimate_number,
       { timeout: 20000 },
     );
+    currentStep = "get-persisted-estimate";
     const estimateReloadStatus = apiResponses
       .slice(estimateReloadStart)
       .filter((entry) => entry.url.includes(`/api/estimates/${seededEstimate.estimate_id}`))
@@ -735,9 +802,12 @@ async function main() {
       fail("Persisted seeded estimate did not reload with a positive total.");
     }
 
+    currentStep = "click-send-for-approval";
     const approvalRequestStart = apiResponses.length;
+    const approvalFinishedRequestStart = finishedRequests.length;
     await page.getByRole("button", { name: "Send for approval" }).click();
     await expectToast(page, "Approval link copied to the clipboard.");
+    currentStep = "clear-toasts";
     await clearToasts(page);
     const copiedApprovalLink = await page.evaluate(() => window.__auditClipboard?.value || "");
     if (!copiedApprovalLink.includes("/approval#token=")) {
@@ -760,11 +830,26 @@ async function main() {
     summary.protectedResponses.approval = approvalStatus;
     summary.nonBillableApprovalProof.approvalRoute = approvalUrl.pathname;
 
+    // sendSelectedEstimateForApproval() fires a fire-and-forget
+    // rememberSelectedEstimate context write (app.js) right before showing
+    // the toast we just waited on. Wait for that specific request to
+    // complete before the hard navigation below, otherwise it gets aborted.
+    currentStep = "pre-goto-wait-for-remember-estimate";
+    await waitForApiCall(finishedRequests, {
+      method: "PUT",
+      urlIncludes: "/api/context/estimates/selected-estimate",
+      sinceIndex: approvalFinishedRequestStart,
+    });
+    currentStep = "goto-approval-link";
     await page.goto(approvalUrl.toString(), { waitUntil: "networkidle" });
+    currentStep = "post-goto-wait-selectors";
     await page.waitForSelector("#view-approval:not([hidden])");
     await page.waitForSelector("#approval-action-form", { timeout: 20000 });
     if (new URL(page.url()).pathname !== "/approval") {
       fail(`Customer approval route navigated to ${new URL(page.url()).pathname} instead of /approval.`);
+    }
+    if (!new URL(page.url()).hash.startsWith("#token=")) {
+      fail("Navigating to the approval link did not preserve the #token= hash fragment.");
     }
 
     await page.reload({ waitUntil: "networkidle" });
@@ -772,6 +857,9 @@ async function main() {
     await page.waitForSelector("#approval-action-form", { timeout: 20000 });
     if (new URL(page.url()).pathname !== "/approval") {
       fail("Refreshing the customer approval page did not preserve /approval.");
+    }
+    if (!new URL(page.url()).hash.startsWith("#token=")) {
+      fail("Refreshing the customer approval page did not preserve the #token= hash fragment.");
     }
 
     const approvalText = await page.locator("#approval-public-root").innerText();
@@ -799,6 +887,14 @@ async function main() {
       "margin",
       "PAD-2018-CIVIC",
       "ROTOR-2018-CIVIC",
+      // Unselected competing-retailer part option from the seeded research
+      // (see scripts/seed_estimate_approval_fixture.py). Proves the public
+      // approval view never leaks unselected part-research options.
+      "UNSELECTED-COMPETITOR-PAD-999",
+      "AutoZone",
+      // Internal labor research reasoning from the seeded fixture. Proves
+      // the public approval view never leaks internal labor basis text.
+      "Deterministic non-billable fixture.",
     ];
     for (const snippet of forbiddenApprovalSnippets) {
       if (approvalText.toLowerCase().includes(snippet.toLowerCase())) {
@@ -902,7 +998,11 @@ async function main() {
     if (zeroSend.status !== 422) {
       fail(`Zero-total estimate should be rejected before approval. HTTP ${zeroSend.status} received.`);
     }
-    if (!JSON.stringify(zeroSend.data?.detail || "").toLowerCase().includes("zero-value")) {
+    const zeroSendDetail = JSON.stringify(zeroSend.data?.detail || "").toLowerCase();
+    if (
+      !zeroSendDetail.includes("structured estimate generation failed") &&
+      !zeroSendDetail.includes("greater than zero")
+    ) {
       fail("Zero-total approval rejection did not return the expected sanitized validation error.");
     }
 

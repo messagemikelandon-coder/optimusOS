@@ -4,6 +4,7 @@ import argparse
 import json
 from datetime import UTC, datetime, timedelta
 
+from pydantic import HttpUrl
 from sqlalchemy import select
 
 from app.config import get_settings
@@ -27,6 +28,7 @@ from app.models import (
     PartsResearch,
     ResearchBundle,
     ResolvedLocation,
+    VehicleInput,
 )
 from app.services.estimator import EstimateService
 from app.vehicle_store import vehicle_display_name
@@ -34,14 +36,14 @@ from app.vehicle_store import vehicle_display_name
 
 def build_valid_response(settings) -> tuple[EstimateRequest, EstimateResponse]:
     request = EstimateRequest(
-        vehicle={
-            "year": 2018,
-            "make": "Honda",
-            "model": "Civic",
-            "trim": "EX",
-            "engine": "2.0L I4",
-            "drivetrain": "FWD",
-        },
+        vehicle=VehicleInput(
+            year=2018,
+            make="Honda",
+            model="Civic",
+            trim="EX",
+            engine="2.0L I4",
+            drivetrain="FWD",
+        ),
         job="Replace front brake pads and front brake rotors, inspect hardware, and road test the vehicle.",
         location=LocationInput(postal_code="95677"),
         labor_rate=100,
@@ -71,9 +73,24 @@ def build_valid_response(settings) -> tuple[EstimateRequest, EstimateResponse]:
                             availability=Availability.CONFIRMED_IN_STOCK,
                             store_name="NAPA Rocklin",
                             store_distance_miles=4.2,
-                            url="https://example.com/pad-set",
+                            url=HttpUrl("https://example.com/pad-set"),
                             confidence=Confidence.MEDIUM,
-                        )
+                        ),
+                        # A higher-priced competing option that `choose_part`
+                        # must not select. It exists only to prove the public
+                        # approval view never leaks unselected competing-
+                        # retailer research options (Fix 4 narrowing).
+                        PartOption(
+                            retailer="AutoZone",
+                            brand="Duralast",
+                            part_number="UNSELECTED-COMPETITOR-PAD-999",
+                            unit_price=225,
+                            availability=Availability.CONFIRMED_IN_STOCK,
+                            store_name="AutoZone Rocklin",
+                            store_distance_miles=6.0,
+                            url=HttpUrl("https://example.com/competitor-pad-option"),
+                            confidence=Confidence.MEDIUM,
+                        ),
                     ],
                 ),
                 PartRequirement(
@@ -88,7 +105,7 @@ def build_valid_response(settings) -> tuple[EstimateRequest, EstimateResponse]:
                             availability=Availability.CONFIRMED_IN_STOCK,
                             store_name="NAPA Rocklin",
                             store_distance_miles=4.2,
-                            url="https://example.com/rotor",
+                            url=HttpUrl("https://example.com/rotor"),
                             confidence=Confidence.MEDIUM,
                         )
                     ],
@@ -116,11 +133,11 @@ def build_valid_response(settings) -> tuple[EstimateRequest, EstimateResponse]:
 
 def build_zero_response() -> tuple[EstimateRequest, EstimateResponse]:
     request = EstimateRequest(
-        vehicle={
-            "year": 2018,
-            "make": "Honda",
-            "model": "Civic",
-        },
+        vehicle=VehicleInput(
+            year=2018,
+            make="Honda",
+            model="Civic",
+        ),
         job="Replace front brake pads and front brake rotors, inspect hardware, and road test the vehicle.",
         location=LocationInput(postal_code="95677"),
         labor_rate=100,
@@ -131,7 +148,12 @@ def build_zero_response() -> tuple[EstimateRequest, EstimateResponse]:
     response = EstimateResponse.model_validate(
         {
             "vehicle": {"year": 2018, "make": "Honda", "model": "Civic"},
-            "location": {"postal_code": "95677", "city": "Rocklin", "region": "CA", "country": "US"},
+            "location": {
+                "postal_code": "95677",
+                "city": "Rocklin",
+                "region": "CA",
+                "country": "US",
+            },
             "job": request.job,
             "research": {
                 "labor": {
@@ -144,7 +166,14 @@ def build_zero_response() -> tuple[EstimateRequest, EstimateResponse]:
                     "risk_flags": [],
                 },
                 "parts": {
-                    "requirements": [{"part_name": "Front brake pad set", "quantity": 1, "required": True, "options": []}],
+                    "requirements": [
+                        {
+                            "part_name": "Front brake pad set",
+                            "quantity": 1,
+                            "required": True,
+                            "options": [],
+                        }
+                    ],
                     "notes": [],
                 },
                 "summary": "Narrative-only broken fixture.",

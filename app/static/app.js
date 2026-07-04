@@ -242,7 +242,7 @@ function navigate(view) {
   $("sidebar").classList.remove("is-open");
   $("mobile-menu").setAttribute("aria-expanded", "false");
   if (view === "login") history.replaceState(null, "", "/login");
-  else if (view === "approval") history.replaceState(null, "", "/approval");
+  else if (view === "approval") history.replaceState(null, "", "/approval" + window.location.hash);
   else if (window.location.pathname === "/login") history.replaceState(null, "", "/");
   window.scrollTo({ top: 0, behavior: "smooth" });
   if (view === "customers" && state.auth.authenticated) void loadCustomers();

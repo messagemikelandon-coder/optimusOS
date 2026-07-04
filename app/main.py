@@ -81,9 +81,9 @@ from app.models import (
     EstimateApprovalActionRequest,
     EstimateApprovalActionResponse,
     EstimateApprovalAuditResponse,
+    EstimateApprovalPublicView,
     EstimateApprovalSendResponse,
     EstimateApprovalTokenRequest,
-    EstimateApprovalView,
     EstimateCreate,
     EstimateDeclineActionRequest,
     EstimateListResponse,
@@ -946,13 +946,13 @@ async def send_estimate_record_for_approval(
         ) from exc
 
 
-@app.post("/api/estimate-approval/view", response_model=EstimateApprovalView)
+@app.post("/api/estimate-approval/view", response_model=EstimateApprovalPublicView)
 async def approval_view(
     payload: EstimateApprovalTokenRequest,
     db: DbSessionDep,
     request_context: Request,
     settings: SettingsDep,
-) -> EstimateApprovalView:
+) -> EstimateApprovalPublicView:
     await enforce_rate_limit(request_context, settings)
     try:
         return get_approval_view(db=db, payload=payload)
