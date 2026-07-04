@@ -46,6 +46,21 @@ from app.customer_store import (
 from app.db import get_db_session
 from app.db_models import UserAccount
 from app.errors import EstimatorResearchError
+from app.estimate_store import (
+    EstimateApprovalTokenError,
+    EstimateNotFoundError,
+    EstimateStoreError,
+    approval_history,
+    approve_estimate,
+    create_estimate,
+    create_estimate_revision,
+    decline_estimate,
+    get_approval_view,
+    get_estimate,
+    list_estimates,
+    send_estimate_for_approval,
+    update_estimate,
+)
 from app.models import (
     AuthLoginRequest,
     AuthMeResponse,
@@ -63,8 +78,22 @@ from app.models import (
     CustomerListResponse,
     CustomerRead,
     CustomerUpdate,
+    EstimateApprovalActionRequest,
+    EstimateApprovalActionResponse,
+    EstimateApprovalAuditResponse,
+    EstimateApprovalSendResponse,
+    EstimateApprovalTokenRequest,
+    EstimateApprovalView,
+    EstimateCreate,
+    EstimateDeclineActionRequest,
+    EstimateListResponse,
+    EstimateRead,
     EstimateRequest,
     EstimateResponse,
+    EstimateRevisionCreate,
+    EstimateSendForApprovalRequest,
+    EstimateStatus,
+    EstimateUpdate,
     LocationInput,
     ResolvedLocation,
     VehicleArchiveResponse,
@@ -159,6 +188,11 @@ async def index() -> FileResponse:
 
 @app.get("/login", include_in_schema=False)
 async def login_index() -> FileResponse:
+    return FileResponse(STATIC_DIR / "index.html")
+
+
+@app.get("/approval", include_in_schema=False)
+async def approval_index() -> FileResponse:
     return FileResponse(STATIC_DIR / "index.html")
 
 
@@ -728,4 +762,300 @@ async def estimate(
                 "stage": "estimate_pipeline",
                 "request_id": "not-available",
             },
+        ) from exc
+
+
+@app.post("/api/estimates", response_model=EstimateRead)
+async def create_estimate_record(
+    payload: EstimateCreate,
+    db: DbSessionDep,
+    settings: SettingsDep,
+    auth: AuthContextDep,
+) -> EstimateRead:
+    if not settings.openai_api_key:
+        raise HTTPException(status_code=503, detail="OPENAI_API_KEY is not configured.")
+    try:
+        return await create_estimate(
+            db=db,
+            auth=auth,
+            payload=payload,
+            orchestrator=OptimusResearchOrchestrator(settings),
+        )
+    except (CustomerStoreError, VehicleStoreError, EstimateStoreError) as exc:
+        status_code_value = (
+            404
+            if isinstance(exc, (CustomerNotFoundError, VehicleNotFoundError, EstimateNotFoundError))
+            else 422
+        )
+        raise HTTPException(status_code=status_code_value, detail=str(exc)) from exc
+    except EstimatorResearchError as exc:
+        raise HTTPException(status_code=exc.http_status, detail=exc.as_detail()) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Estimate creation failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Estimate storage is unavailable.",
+        ) from exc
+
+
+@app.get("/api/estimates", response_model=EstimateListResponse)
+async def list_estimate_records(
+    db: DbSessionDep,
+    auth: AuthContextDep,
+    page: int = Query(default=1),
+    page_size: int = Query(default=20),
+    status_filter: Annotated[EstimateStatus | None, Query(alias="status")] = None,
+    search: str | None = Query(default=None, max_length=120),
+    customer_id: int | None = Query(default=None, ge=1),
+    vehicle_id: int | None = Query(default=None, ge=1),
+    archived: bool = False,
+) -> EstimateListResponse:
+    try:
+        return list_estimates(
+            db=db,
+            auth=auth,
+            page=page,
+            page_size=page_size,
+            status=status_filter,
+            search=search,
+            customer_id=customer_id,
+            vehicle_id=vehicle_id,
+            archived=archived,
+        )
+    except (CustomerStoreError, VehicleStoreError, EstimateStoreError) as exc:
+        status_code_value = (
+            404
+            if isinstance(exc, (CustomerNotFoundError, VehicleNotFoundError, EstimateNotFoundError))
+            else 422
+        )
+        raise HTTPException(status_code=status_code_value, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Estimate listing failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Estimate storage is unavailable.",
+        ) from exc
+
+
+@app.get("/api/estimates/{estimate_id}", response_model=EstimateRead)
+async def get_estimate_record(
+    estimate_id: int,
+    db: DbSessionDep,
+    auth: AuthContextDep,
+) -> EstimateRead:
+    try:
+        return get_estimate(db=db, auth=auth, estimate_id=estimate_id)
+    except EstimateNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except EstimateStoreError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Estimate retrieval failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Estimate storage is unavailable.",
+        ) from exc
+
+
+@app.patch("/api/estimates/{estimate_id}", response_model=EstimateRead)
+async def update_estimate_record(
+    estimate_id: int,
+    payload: EstimateUpdate,
+    db: DbSessionDep,
+    auth: AuthContextDep,
+) -> EstimateRead:
+    try:
+        return update_estimate(db=db, auth=auth, estimate_id=estimate_id, payload=payload)
+    except EstimateNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except EstimateStoreError as exc:
+        raise HTTPException(
+            status_code=409 if "locked" in str(exc).lower() else 422, detail=str(exc)
+        ) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Estimate update failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Estimate storage is unavailable.",
+        ) from exc
+
+
+@app.post("/api/estimates/{estimate_id}/create-revision", response_model=EstimateRead)
+async def create_estimate_revision_record(
+    estimate_id: int,
+    payload: EstimateRevisionCreate,
+    db: DbSessionDep,
+    settings: SettingsDep,
+    auth: AuthContextDep,
+) -> EstimateRead:
+    if not settings.openai_api_key:
+        raise HTTPException(status_code=503, detail="OPENAI_API_KEY is not configured.")
+    try:
+        return await create_estimate_revision(
+            db=db,
+            auth=auth,
+            estimate_id=estimate_id,
+            payload=payload,
+            orchestrator=OptimusResearchOrchestrator(settings),
+        )
+    except (CustomerStoreError, VehicleStoreError, EstimateStoreError) as exc:
+        status_code_value = (
+            404
+            if isinstance(exc, (CustomerNotFoundError, VehicleNotFoundError, EstimateNotFoundError))
+            else 422
+        )
+        raise HTTPException(status_code=status_code_value, detail=str(exc)) from exc
+    except EstimatorResearchError as exc:
+        raise HTTPException(status_code=exc.http_status, detail=exc.as_detail()) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Estimate revision creation failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Estimate storage is unavailable.",
+        ) from exc
+
+
+@app.post(
+    "/api/estimates/{estimate_id}/send-for-approval", response_model=EstimateApprovalSendResponse
+)
+async def send_estimate_record_for_approval(
+    estimate_id: int,
+    payload: EstimateSendForApprovalRequest,
+    db: DbSessionDep,
+    auth: AuthContextDep,
+    request_context: Request,
+) -> EstimateApprovalSendResponse:
+    del request_context
+    try:
+        return send_estimate_for_approval(
+            db=db,
+            auth=auth,
+            estimate_id=estimate_id,
+            payload=payload,
+            approval_base_url="/approval",
+        )
+    except EstimateNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except EstimateStoreError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Estimate send-for-approval failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Estimate storage is unavailable.",
+        ) from exc
+
+
+@app.post("/api/estimate-approval/view", response_model=EstimateApprovalView)
+async def approval_view(
+    payload: EstimateApprovalTokenRequest,
+    db: DbSessionDep,
+    request_context: Request,
+    settings: SettingsDep,
+) -> EstimateApprovalView:
+    await enforce_rate_limit(request_context, settings)
+    try:
+        return get_approval_view(db=db, payload=payload)
+    except EstimateApprovalTokenError as exc:
+        raise HTTPException(
+            status_code=404,
+            detail="Approval token is invalid or unavailable.",
+        ) from exc
+    except EstimateStoreError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Estimate approval view failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Estimate storage is unavailable.",
+        ) from exc
+
+
+@app.post("/api/estimate-approval/approve", response_model=EstimateApprovalActionResponse)
+async def approval_approve(
+    payload: EstimateApprovalActionRequest,
+    db: DbSessionDep,
+    request_context: Request,
+    settings: SettingsDep,
+) -> EstimateApprovalActionResponse:
+    await enforce_rate_limit(request_context, settings)
+    try:
+        return approve_estimate(
+            db=db,
+            payload=payload,
+            ip_address=request_context.client.host if request_context.client else None,
+            user_agent=request_context.headers.get("user-agent"),
+        )
+    except EstimateApprovalTokenError as exc:
+        raise HTTPException(
+            status_code=404,
+            detail="Approval token is invalid or unavailable.",
+        ) from exc
+    except EstimateStoreError as exc:
+        detail = str(exc)
+        status_code_value = (
+            409 if "mismatch" in detail.lower() or "expired" in detail.lower() else 422
+        )
+        raise HTTPException(status_code=status_code_value, detail=detail) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Estimate approval failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Estimate storage is unavailable.",
+        ) from exc
+
+
+@app.post("/api/estimate-approval/decline", response_model=EstimateApprovalActionResponse)
+async def approval_decline(
+    payload: EstimateDeclineActionRequest,
+    db: DbSessionDep,
+    request_context: Request,
+    settings: SettingsDep,
+) -> EstimateApprovalActionResponse:
+    await enforce_rate_limit(request_context, settings)
+    try:
+        return decline_estimate(
+            db=db,
+            payload=payload,
+            ip_address=request_context.client.host if request_context.client else None,
+            user_agent=request_context.headers.get("user-agent"),
+        )
+    except EstimateApprovalTokenError as exc:
+        raise HTTPException(
+            status_code=404,
+            detail="Approval token is invalid or unavailable.",
+        ) from exc
+    except EstimateStoreError as exc:
+        detail = str(exc)
+        status_code_value = (
+            409 if "mismatch" in detail.lower() or "expired" in detail.lower() else 422
+        )
+        raise HTTPException(status_code=status_code_value, detail=detail) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Estimate decline failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Estimate storage is unavailable.",
+        ) from exc
+
+
+@app.get(
+    "/api/estimates/{estimate_id}/approval-history", response_model=EstimateApprovalAuditResponse
+)
+async def estimate_approval_history(
+    estimate_id: int,
+    db: DbSessionDep,
+    auth: AuthContextDep,
+) -> EstimateApprovalAuditResponse:
+    try:
+        return approval_history(db=db, auth=auth, estimate_id=estimate_id)
+    except EstimateNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except EstimateStoreError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Estimate approval history failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Estimate storage is unavailable.",
         ) from exc

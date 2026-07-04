@@ -216,6 +216,19 @@ class SelectedPart(BaseModel):
     confidence: Confidence
 
 
+class EstimateLaborItem(BaseModel):
+    description: str = Field(min_length=1, max_length=500)
+    labor_hours: float = Field(ge=0, le=500)
+    labor_rate: float = Field(ge=0, le=1_000_000)
+    labor_total: float = Field(ge=0, le=1_000_000)
+
+
+class EstimateFeeItem(BaseModel):
+    code: str = Field(min_length=1, max_length=80)
+    label: str = Field(min_length=1, max_length=120)
+    amount: float = Field(ge=0, le=1_000_000)
+
+
 class EstimateTotals(BaseModel):
     labor_hours: float
     labor_rate: float
@@ -236,7 +249,9 @@ class EstimateResponse(BaseModel):
     location: ResolvedLocation
     job: str
     research: ResearchBundle
+    labor_items: list[EstimateLaborItem] = Field(default_factory=list)
     selected_parts: list[SelectedPart]
+    fee_items: list[EstimateFeeItem] = Field(default_factory=list)
     totals: EstimateTotals
     approval_required: bool = False
     approval_reason: str = "Research and estimating run automatically."
@@ -577,6 +592,248 @@ class VehicleListResponse(BaseModel):
 class VehicleArchiveResponse(BaseModel):
     ok: bool = True
     vehicle: VehicleRead
+
+
+class EstimateStatus(StrEnum):
+    DRAFT = "draft"
+    READY = "ready"
+    AWAITING_APPROVAL = "awaiting_approval"
+    APPROVED = "approved"
+    DECLINED = "declined"
+    EXPIRED = "expired"
+    SUPERSEDED = "superseded"
+    ARCHIVED = "archived"
+
+
+class EstimatePaymentOptionCode(StrEnum):
+    PAY_IN_FULL = "pay_in_full"
+    SPLIT_PAYMENT = "split_payment"
+    TWO_MONTH_PLAN = "two_month_plan"
+
+
+class EstimateApprovalMethod(StrEnum):
+    LINK = "link"
+    INTERNAL = "internal"
+    TYPED_SIGNATURE = "typed_signature"
+
+
+class EstimateCustomerSummary(BaseModel):
+    id: int
+    display_name: str
+    email: str | None = None
+    phone: str | None = None
+
+
+class EstimateVehicleSummary(BaseModel):
+    id: int
+    customer_id: int
+    display_name: str
+    vin: str | None = None
+    license_plate: str | None = None
+    current_mileage: int | None = None
+
+
+class EstimatePaymentOption(BaseModel):
+    code: EstimatePaymentOptionCode
+    label: str = Field(min_length=1, max_length=80)
+    description: str = Field(min_length=1, max_length=400)
+    requires_payment_plan_acknowledgement: bool = False
+
+
+class EstimateRecordBase(BaseModel):
+    customer_id: int = Field(ge=1)
+    vehicle_id: int = Field(ge=1)
+    job: NonBlank = Field(max_length=500)
+    location: LocationInput
+    labor_rate: float | None = Field(default=None, ge=0, le=1000)
+    mobile_service_fee: float | None = Field(default=None, ge=0, le=10_000)
+    shop_supplies_percent: float | None = Field(default=None, ge=0, le=25)
+    parts_tax_rate: float | None = Field(default=None, ge=0, le=20)
+    terms_text: str = Field(
+        default="Customer authorization is required before repair work begins.", max_length=4000
+    )
+    payment_options: list[EstimatePaymentOption] = Field(default_factory=list, max_length=6)
+    expires_in_days: int = Field(default=7, ge=1, le=90)
+
+    @field_validator("terms_text", mode="before")
+    @classmethod
+    def strip_estimate_terms(cls, value: object) -> object:
+        if isinstance(value, str):
+            return value.strip()
+        return value
+
+
+class EstimateCreate(EstimateRecordBase):
+    pass
+
+
+class EstimateUpdate(BaseModel):
+    terms_text: str | None = Field(default=None, max_length=4000)
+    payment_options: list[EstimatePaymentOption] | None = Field(default=None, max_length=6)
+    expires_in_days: int | None = Field(default=None, ge=1, le=90)
+    status: EstimateStatus | None = None
+
+    @field_validator("terms_text", mode="before")
+    @classmethod
+    def strip_estimate_update_terms(cls, value: object) -> object:
+        if isinstance(value, str):
+            stripped = value.strip()
+            return stripped or None
+        return value
+
+
+class EstimateRevisionCreate(EstimateRecordBase):
+    reason: str | None = Field(default=None, max_length=1000)
+
+    @field_validator("reason", mode="before")
+    @classmethod
+    def strip_revision_reason(cls, value: object) -> object:
+        if isinstance(value, str):
+            stripped = value.strip()
+            return stripped or None
+        return value
+
+
+class EstimateSendForApprovalRequest(BaseModel):
+    approval_method: EstimateApprovalMethod = EstimateApprovalMethod.LINK
+    recipient_name: str | None = Field(default=None, max_length=160)
+    expires_in_hours: int = Field(default=72, ge=1, le=720)
+
+    @field_validator("recipient_name", mode="before")
+    @classmethod
+    def strip_recipient_name(cls, value: object) -> object:
+        if isinstance(value, str):
+            stripped = value.strip()
+            return stripped or None
+        return value
+
+
+class EstimateApprovalTokenRequest(BaseModel):
+    token: NonBlank = Field(max_length=400)
+
+
+class EstimateApprovalActionRequest(EstimateApprovalTokenRequest):
+    revision_number: int = Field(ge=1)
+    approving_name: NonBlank = Field(max_length=160)
+    accepted_terms: bool
+    payment_option: EstimatePaymentOptionCode
+    payment_plan_acknowledged: bool = False
+    typed_authorization: str | None = Field(default=None, max_length=1000)
+
+    @field_validator("typed_authorization", mode="before")
+    @classmethod
+    def strip_typed_authorization(cls, value: object) -> object:
+        if isinstance(value, str):
+            stripped = value.strip()
+            return stripped or None
+        return value
+
+
+class EstimateDeclineActionRequest(EstimateApprovalTokenRequest):
+    revision_number: int = Field(ge=1)
+    declining_name: NonBlank = Field(max_length=160)
+    reason: str | None = Field(default=None, max_length=1000)
+
+    @field_validator("reason", mode="before")
+    @classmethod
+    def strip_decline_reason(cls, value: object) -> object:
+        if isinstance(value, str):
+            stripped = value.strip()
+            return stripped or None
+        return value
+
+
+class EstimateApprovalEventRead(BaseModel):
+    id: int
+    event_type: str
+    revision_number: int
+    actor_type: str
+    actor_name: str | None = None
+    approval_method: str | None = None
+    accepted_terms: bool | None = None
+    payment_option: str | None = None
+    payment_plan_acknowledged: bool | None = None
+    decline_reason: str | None = None
+    content_hash: str
+    created_at: datetime
+
+
+class EstimateRevisionRead(BaseModel):
+    id: int
+    revision_number: int
+    status: EstimateStatus
+    customer: EstimateCustomerSummary
+    vehicle: EstimateVehicleSummary
+    request: EstimateRequest
+    estimate: EstimateResponse
+    terms_text: str
+    payment_options: list[EstimatePaymentOption]
+    approval_due_at: datetime | None = None
+    content_hash: str
+    created_at: datetime
+
+
+class EstimateRead(BaseModel):
+    id: int
+    estimate_number: str
+    status: EstimateStatus
+    customer_id: int
+    vehicle_id: int
+    customer_display_name: str
+    vehicle_display_name: str
+    current_revision_number: int
+    approved_revision_number: int | None = None
+    estimate_total: float | None = None
+    payment_option_selected: str | None = None
+    expires_at: datetime | None = None
+    is_archived: bool
+    created_at: datetime
+    updated_at: datetime
+    current_revision: EstimateRevisionRead
+
+
+class EstimateListResponse(BaseModel):
+    items: list[EstimateRead]
+    page: int
+    page_size: int
+    total: int
+    has_more: bool
+
+
+class EstimateApprovalSendResponse(BaseModel):
+    ok: bool = True
+    estimate_id: int
+    revision_number: int
+    status: EstimateStatus
+    expires_at: datetime
+    approval_link: str
+
+
+class EstimateApprovalView(BaseModel):
+    estimate_id: int
+    estimate_number: str
+    status: EstimateStatus
+    revision: EstimateRevisionRead
+    token_expires_at: datetime
+    token_status: str
+    can_approve: bool
+    can_decline: bool
+
+
+class EstimateApprovalActionResponse(BaseModel):
+    ok: bool = True
+    estimate_id: int
+    estimate_number: str
+    status: EstimateStatus
+    revision_number: int
+    decided_at: datetime
+
+
+class EstimateApprovalAuditResponse(BaseModel):
+    estimate_id: int
+    estimate_number: str
+    status: EstimateStatus
+    events: list[EstimateApprovalEventRead]
 
 
 class WorkOrderBase(BaseModel):
