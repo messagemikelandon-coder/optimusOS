@@ -62,6 +62,10 @@ def test_ui_preserves_connected_workflows() -> None:
     assert 'apiFetch("/api/chat"' in javascript
     assert "/api/estimates" in javascript
     assert "/api/estimate-approval/view" in javascript
+    assert 'window.location.pathname === "/approval"' in javascript
+    assert 'window.location.hash.replace(/^#/, "")' in javascript
+    assert 'history.replaceState(null, "", "/approval")' in javascript
+    assert "Approval link required" in javascript
     assert 'apiFetch("/health"' in javascript
 
 
@@ -82,11 +86,15 @@ def test_playwright_audit_supports_safe_authenticated_smoke_mode() -> None:
     )
     assert "OPTIMUS_AUDIT_SKIP_DOCKER" in audit_script
     assert "OPTIMUS_AUDIT_SKIP_BILLABLE" in audit_script
+    assert "seed_estimate_approval_fixture.py" in audit_script
     assert '"/api/auth/me"' in audit_script
     assert '"/api/location/resolve"' in audit_script
     assert '"/api/vehicles"' in audit_script
     assert '"/api/estimates"' in audit_script
     assert '"/send-for-approval"' in audit_script
+    assert '"/approval#token="' in audit_script
+    assert '"/api/estimate-approval/approve"' in audit_script
+    assert "/api/estimates/${estimateId}/approval-history" in audit_script
 
 
 def test_health_identifies_official_build() -> None:

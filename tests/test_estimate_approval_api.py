@@ -15,15 +15,17 @@ import app.main as main
 from app.auth import bootstrap_owner_account
 from app.config import Settings
 from app.db import Base, build_engine, build_session_factory
-from app.db_models import EstimateApprovalEvent, EstimateApprovalRequest
+from app.db_models import Estimate, EstimateApprovalEvent, EstimateApprovalRequest, EstimateRevision
 from app.models import (
     Availability,
     Confidence,
     DecodedVehicle,
     EstimateApprovalActionRequest,
+    EstimateFeeItem,
     EstimateApprovalTokenRequest,
     EstimateCreate,
     EstimateDeclineActionRequest,
+    EstimateLaborItem,
     EstimatePaymentOption,
     EstimatePaymentOptionCode,
     EstimateResponse,
@@ -87,6 +89,14 @@ def fixture_estimate_response() -> EstimateResponse:
             ),
             summary="Fixture research bundle",
         ),
+        labor_items=[
+            EstimateLaborItem(
+                description="Replace front brakes",
+                labor_hours=2.5,
+                labor_rate=100,
+                labor_total=250,
+            )
+        ],
         selected_parts=[
             SelectedPart(
                 part_name="Brake pad set",
@@ -101,6 +111,11 @@ def fixture_estimate_response() -> EstimateResponse:
                 url=HttpUrl("https://example.com/pad-set"),
                 confidence=Confidence.MEDIUM,
             )
+        ],
+        fee_items=[
+            EstimateFeeItem(code="shop_supplies", label="Shop supplies", amount=12.5),
+            EstimateFeeItem(code="mobile_service_fee", label="Mobile service charge", amount=25),
+            EstimateFeeItem(code="parts_tax", label="Parts tax", amount=10.2),
         ],
         totals=EstimateTotals(
             labor_hours=2.5,
@@ -118,9 +133,87 @@ def fixture_estimate_response() -> EstimateResponse:
     )
 
 
+def zero_value_estimate_response() -> EstimateResponse:
+    return EstimateResponse(
+        vehicle=DecodedVehicle(year=2018, make="Honda", model="Civic"),
+        location=ResolvedLocation(postal_code="95677", city="Rocklin", region="CA", country="US"),
+        job="Replace front brakes",
+        research=ResearchBundle(
+            labor=LaborResearch(
+                book_hours=0,
+                practical_hours_low=0,
+                practical_hours_high=0,
+                confidence=Confidence.LOW,
+                basis="Incomplete fixture",
+            ),
+            parts=PartsResearch(
+                requirements=[
+                    PartRequirement(
+                        part_name="Brake pad set",
+                        quantity=1,
+                        required=True,
+                        options=[],
+                    )
+                ]
+            ),
+            summary="Narrative-only estimate mentioning prices without structured pricing.",
+        ),
+        labor_items=[],
+        selected_parts=[],
+        fee_items=[
+            EstimateFeeItem(code="shop_supplies", label="Shop supplies", amount=0),
+            EstimateFeeItem(code="mobile_service_fee", label="Mobile service charge", amount=0),
+            EstimateFeeItem(code="parts_tax", label="Parts tax", amount=0),
+        ],
+        totals=EstimateTotals(
+            labor_hours=0,
+            labor_rate=100,
+            labor_total=0,
+            parts_subtotal=0,
+            shop_supplies=0,
+            mobile_service_fee=0,
+            parts_tax=0,
+            estimated_total=0,
+            practical_time_low=0,
+            practical_time_high=0,
+        ),
+        generated_at_utc=datetime.now(UTC).isoformat(),
+    )
+
+
+def forged_total_estimate_response() -> EstimateResponse:
+    response = fixture_estimate_response().model_copy(deep=True)
+    response.totals.estimated_total = 1
+    return response
+
+
+def negative_value_estimate_response() -> EstimateResponse:
+    response = fixture_estimate_response().model_copy(deep=True)
+    response.selected_parts[0].unit_price = -120
+    response.selected_parts[0].extended_price = -120
+    response.totals.parts_subtotal = -120
+    response.totals.estimated_total = 177.7
+    return response
+
+
 async def stub_estimate_job(self, request):  # type: ignore[no-untyped-def]
     del self, request
     return fixture_estimate_response()
+
+
+async def stub_zero_value_estimate_job(self, request):  # type: ignore[no-untyped-def]
+    del self, request
+    return zero_value_estimate_response()
+
+
+async def stub_forged_total_estimate_job(self, request):  # type: ignore[no-untyped-def]
+    del self, request
+    return forged_total_estimate_response()
+
+
+async def stub_negative_value_estimate_job(self, request):  # type: ignore[no-untyped-def]
+    del self, request
+    return negative_value_estimate_response()
 
 
 def estimate_create_payload(customer_id: int, vehicle_id: int) -> EstimateCreate:
@@ -203,6 +296,8 @@ async def test_create_send_approve_and_audit_estimate(
         settings,
     )
     assert approval_view.revision.vehicle.id == vehicle.id
+    assert approval_view.revision.estimate.labor_items[0].description == "Replace front brakes"
+    assert approval_view.revision.estimate.fee_items[0].code == "shop_supplies"
 
     approved = await main.approval_approve(
         EstimateApprovalActionRequest(
@@ -228,6 +323,103 @@ async def test_create_send_approve_and_audit_estimate(
     assert [event.event_type for event in history.events] == ["sent", "approved"]
     assert history.events[-1].actor_name == "Jane Customer"
     assert history.events[-1].payment_plan_acknowledged is True
+
+
+@pytest.mark.anyio
+async def test_zero_value_estimate_is_rejected_before_persistence(
+    monkeypatch, settings, db_session: Session
+) -> None:  # type: ignore[no-untyped-def]
+    monkeypatch.setattr(OptimusResearchOrchestrator, "estimate_job", stub_zero_value_estimate_job)
+    _, response = await login_as(settings, db_session)
+    auth = auth_context(settings, db_session, raw_cookie_from_response(response))
+    customer_id = await create_customer_for_auth(settings, db_session, auth)
+    vehicle = await main.create_vehicle_record(customer_id, vehicle_payload(), db_session, auth)
+
+    with pytest.raises(HTTPException) as excinfo:
+        await main.create_estimate_record(
+            estimate_create_payload(customer_id, vehicle.id),
+            db_session,
+            settings,
+            auth,
+        )
+    assert excinfo.value.status_code == 422
+    assert "greater than zero" in str(excinfo.value.detail).lower() or "structured estimate generation failed" in str(excinfo.value.detail).lower()
+    assert db_session.scalar(select(Estimate)) is None
+
+
+@pytest.mark.anyio
+async def test_zero_value_estimate_cannot_be_sent_for_approval(
+    monkeypatch, settings, db_session: Session
+) -> None:  # type: ignore[no-untyped-def]
+    monkeypatch.setattr(OptimusResearchOrchestrator, "estimate_job", stub_estimate_job)
+    _, response = await login_as(settings, db_session)
+    auth = auth_context(settings, db_session, raw_cookie_from_response(response))
+    _, _, estimate = await create_estimate_for_auth(settings, db_session, auth)
+    revision = db_session.scalar(select(EstimateRevision).where(EstimateRevision.estimate_id == estimate.id))
+    assert revision is not None
+    broken = zero_value_estimate_response().model_dump(mode="json")
+    revision.estimate_response_payload = broken
+    estimate_model = db_session.get(Estimate, estimate.id)
+    assert estimate_model is not None
+    estimate_model.estimate_total = 0
+    db_session.add(revision)
+    db_session.add(estimate_model)
+    db_session.commit()
+
+    with pytest.raises(HTTPException) as excinfo:
+        await main.send_estimate_record_for_approval(
+            estimate.id,
+            EstimateSendForApprovalRequest(),
+            db_session,
+            auth,
+            request_for("/api/estimates/1/send-for-approval", method="POST"),
+    )
+    assert excinfo.value.status_code == 422
+    assert "zero-value estimates cannot be sent for approval" in str(excinfo.value.detail).lower() or "structured estimate generation failed" in str(excinfo.value.detail).lower()
+
+
+@pytest.mark.anyio
+async def test_forged_aggregate_totals_are_rejected_before_persistence(
+    monkeypatch, settings, db_session: Session
+) -> None:  # type: ignore[no-untyped-def]
+    monkeypatch.setattr(OptimusResearchOrchestrator, "estimate_job", stub_forged_total_estimate_job)
+    _, response = await login_as(settings, db_session)
+    auth = auth_context(settings, db_session, raw_cookie_from_response(response))
+    customer_id = await create_customer_for_auth(settings, db_session, auth)
+    vehicle = await main.create_vehicle_record(customer_id, vehicle_payload(), db_session, auth)
+
+    with pytest.raises(HTTPException) as excinfo:
+        await main.create_estimate_record(
+            estimate_create_payload(customer_id, vehicle.id),
+            db_session,
+            settings,
+            auth,
+        )
+    assert excinfo.value.status_code == 422
+    assert "reconcile" in str(excinfo.value.detail).lower()
+    assert db_session.scalar(select(Estimate)) is None
+
+
+@pytest.mark.anyio
+async def test_negative_financial_values_are_rejected_before_persistence(
+    monkeypatch, settings, db_session: Session
+) -> None:  # type: ignore[no-untyped-def]
+    monkeypatch.setattr(OptimusResearchOrchestrator, "estimate_job", stub_negative_value_estimate_job)
+    _, response = await login_as(settings, db_session)
+    auth = auth_context(settings, db_session, raw_cookie_from_response(response))
+    customer_id = await create_customer_for_auth(settings, db_session, auth)
+    vehicle = await main.create_vehicle_record(customer_id, vehicle_payload(), db_session, auth)
+
+    with pytest.raises(HTTPException) as excinfo:
+        await main.create_estimate_record(
+            estimate_create_payload(customer_id, vehicle.id),
+            db_session,
+            settings,
+            auth,
+        )
+    assert excinfo.value.status_code == 422
+    assert "negative" in str(excinfo.value.detail).lower() or "structured estimate generation failed" in str(excinfo.value.detail).lower()
+    assert db_session.scalar(select(Estimate)) is None
 
 
 @pytest.mark.anyio

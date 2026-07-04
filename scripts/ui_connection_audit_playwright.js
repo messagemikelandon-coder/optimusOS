@@ -124,6 +124,33 @@ async function clearToasts(page) {
   });
 }
 
+function seedEstimateFixture({ zeroTotal = false } = {}) {
+  const args = ["run", "python", "scripts/seed_estimate_approval_fixture.py"];
+  if (zeroTotal) args.push("--zero-total");
+  const result = spawnSync("uv", args, {
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      UV_CACHE_DIR: "/tmp/uv-cache",
+    },
+  });
+  if (result.status !== 0) {
+    const message = result.stderr.trim() || result.stdout.trim() || "fixture seeding failed";
+    fail(message);
+  }
+  const line = result.stdout
+    .split(/\n/)
+    .map((entry) => entry.trim())
+    .filter(Boolean)
+    .at(-1);
+  if (!line) fail("Fixture seeding did not return JSON output.");
+  try {
+    return JSON.parse(line);
+  } catch {
+    fail("Fixture seeding returned malformed JSON.");
+  }
+}
+
 async function main() {
   if (!username || !password) {
     fail("OPTIMUS_OWNER_USERNAME and OPTIMUS_OWNER_PASSWORD are required.");
@@ -619,8 +646,274 @@ async function main() {
     }
   } else {
     summary.protectedResponses.chat = "skipped";
-    summary.protectedResponses.estimate = "skipped";
-    summary.protectedResponses.approval = "skipped";
+
+    const seededEstimate = seedEstimateFixture();
+    const seededZeroEstimate = seedEstimateFixture({ zeroTotal: true });
+    summary.nonBillableApprovalProof = {
+      seededEstimateId: seededEstimate.estimate_id,
+      zeroTotalEstimateId: seededZeroEstimate.estimate_id,
+    };
+
+    await page.locator('.nav-item[data-view="customers"]').click();
+    await page.waitForSelector("#view-customers:not([hidden])");
+    await page.fill("#customers-search", seededEstimate.customer_display_name);
+    await page.waitForFunction(
+      (displayName) => Array.from(document.querySelectorAll("#customers-list .customer-list-item")).some(
+        (item) => item.textContent?.includes(displayName),
+      ),
+      seededEstimate.customer_display_name,
+    );
+    await page.locator("#customers-list .customer-list-item").filter({ hasText: seededEstimate.customer_display_name }).first().click();
+    await page.waitForFunction(
+      (displayName) => document.querySelector("#customer-detail")?.textContent?.includes(displayName),
+      seededEstimate.customer_display_name,
+    );
+
+    await page.getByRole("button", { name: "Open Vehicles" }).click();
+    await page.waitForSelector("#view-vehicles:not([hidden])");
+    await page.fill("#vehicles-search", seededEstimate.vehicle_display_name);
+    await page.waitForFunction(
+      (displayName) => Array.from(document.querySelectorAll("#vehicles-list .customer-list-item")).some(
+        (item) => item.textContent?.includes(displayName),
+      ),
+      seededEstimate.vehicle_display_name,
+    );
+    await page.locator("#vehicles-list .customer-list-item").filter({ hasText: seededEstimate.vehicle_display_name }).first().click();
+    await page.waitForFunction(
+      (displayName) => document.querySelector("#vehicle-detail")?.textContent?.includes(displayName),
+      seededEstimate.vehicle_display_name,
+    );
+
+    const selectedEstimateContext = await page.evaluate(async (fixture) => {
+      const response = await fetch("/api/context/estimates/selected-estimate?scope=session", {
+        method: "PUT",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          value: JSON.stringify({
+            id: fixture.estimate_id,
+            estimate_number: fixture.estimate_number,
+            revision_number: fixture.revision_number,
+          }),
+        }),
+      });
+      const data = await response.json().catch(() => null);
+      return { status: response.status, data };
+    }, seededEstimate);
+    if (selectedEstimateContext.status !== 200) {
+      fail(`Selected estimate context could not be stored (HTTP ${selectedEstimateContext.status}).`);
+    }
+
+    const estimateReloadStart = apiResponses.length;
+    await page.reload({ waitUntil: "networkidle" });
+    await page.waitForFunction(() => document.querySelector("#operator-name")?.textContent !== "Signed out");
+    await page.locator('.nav-item[data-view="estimate"]').click();
+    await page.waitForSelector("#view-estimate:not([hidden])");
+    await page.waitForFunction(
+      (estimateNumber) => document.querySelector("#result .result-hero")?.textContent?.includes(estimateNumber),
+      seededEstimate.estimate_number,
+      { timeout: 20000 },
+    );
+    const estimateReloadStatus = apiResponses
+      .slice(estimateReloadStart)
+      .filter((entry) => entry.url.includes(`/api/estimates/${seededEstimate.estimate_id}`))
+      .map((entry) => entry.status)
+      .at(-1);
+    if (estimateReloadStatus !== 200) {
+      fail(`Reloaded estimate did not come back from PostgreSQL (HTTP ${estimateReloadStatus}).`);
+    }
+    const persistedEstimate = await page.evaluate(async (estimateId) => {
+      const response = await fetch(`/api/estimates/${estimateId}`, {
+        method: "GET",
+        credentials: "same-origin",
+        cache: "no-store",
+      });
+      const data = await response.json().catch(() => null);
+      return { status: response.status, data };
+    }, seededEstimate.estimate_id);
+    if (persistedEstimate.status !== 200 || Number(persistedEstimate.data?.current_revision?.estimate?.totals?.estimated_total || 0) <= 0) {
+      fail("Persisted seeded estimate did not reload with a positive total.");
+    }
+
+    const approvalRequestStart = apiResponses.length;
+    await page.getByRole("button", { name: "Send for approval" }).click();
+    await expectToast(page, "Approval link copied to the clipboard.");
+    await clearToasts(page);
+    const copiedApprovalLink = await page.evaluate(() => window.__auditClipboard?.value || "");
+    if (!copiedApprovalLink.includes("/approval#token=")) {
+      fail("Approval link was not copied in the expected hash-based format.");
+    }
+    const approvalUrl = new URL(copiedApprovalLink, baseUrl);
+    if (approvalUrl.pathname !== "/approval" || !approvalUrl.hash.startsWith("#token=")) {
+      fail("Approval link did not retain the expected approval route.");
+    }
+    const approvalStatus = apiResponses
+      .slice(approvalRequestStart)
+      .filter((entry) => entry.url.includes("/send-for-approval"))
+      .map((entry) => entry.status)
+      .at(-1);
+    if (approvalStatus !== 200) {
+      fail(`Send-for-approval ended with HTTP ${approvalStatus}.`);
+    }
+
+    summary.protectedResponses.estimate = estimateReloadStatus;
+    summary.protectedResponses.approval = approvalStatus;
+    summary.nonBillableApprovalProof.approvalRoute = approvalUrl.pathname;
+
+    await page.goto(approvalUrl.toString(), { waitUntil: "networkidle" });
+    await page.waitForSelector("#view-approval:not([hidden])");
+    await page.waitForSelector("#approval-action-form", { timeout: 20000 });
+    if (new URL(page.url()).pathname !== "/approval") {
+      fail(`Customer approval route navigated to ${new URL(page.url()).pathname} instead of /approval.`);
+    }
+
+    await page.reload({ waitUntil: "networkidle" });
+    await page.waitForSelector("#view-approval:not([hidden])");
+    await page.waitForSelector("#approval-action-form", { timeout: 20000 });
+    if (new URL(page.url()).pathname !== "/approval") {
+      fail("Refreshing the customer approval page did not preserve /approval.");
+    }
+
+    const approvalText = await page.locator("#approval-public-root").innerText();
+    const expectedApprovalSnippets = [
+      seededEstimate.customer_display_name,
+      seededEstimate.vehicle_display_name,
+      "Front brake pad set",
+      "Front brake rotor",
+      "Labor subtotal",
+      "Parts subtotal",
+      "Shop supplies",
+      "Mobile service charge",
+      "Parts tax",
+      "Pay in full",
+      "Two-month plan",
+    ];
+    for (const snippet of expectedApprovalSnippets) {
+      if (!approvalText.includes(snippet)) {
+        fail(`Approval page did not render expected customer-facing content: ${snippet}`);
+      }
+    }
+    const forbiddenApprovalSnippets = [
+      "supplier cost",
+      "markup",
+      "margin",
+      "PAD-2018-CIVIC",
+      "ROTOR-2018-CIVIC",
+    ];
+    for (const snippet of forbiddenApprovalSnippets) {
+      if (approvalText.toLowerCase().includes(snippet.toLowerCase())) {
+        fail(`Approval page exposed non-customer data: ${snippet}`);
+      }
+    }
+
+    await screenshot(page, "04-approval-customer-view.png");
+    summary.screenshots.push("docs/screenshots/auth-integration/04-approval-customer-view.png");
+
+    await page.fill("#approval-name", "Fixture Customer");
+    await page.fill("#approval-typed-authorization", "Fixture Customer approves this synthetic estimate revision.");
+    await page.locator('input[name="approval-payment-option"][value="two_month_plan"]').check();
+    await page.locator("#approval-accept-terms").check();
+    await page.locator("#approval-ack-payment-plan").check();
+    const approvalDecisionStart = apiResponses.length;
+    await page.getByRole("button", { name: "Approve estimate" }).click();
+    await page.waitForFunction(
+      () => document.querySelector("#approval-public-root")?.textContent?.includes("Estimate approved"),
+      { timeout: 20000 },
+    );
+    const approvalDecisionStatus = apiResponses
+      .slice(approvalDecisionStart)
+      .filter((entry) => entry.url.includes("/api/estimate-approval/approve"))
+      .map((entry) => entry.status)
+      .at(-1);
+    if (approvalDecisionStatus !== 200) {
+      fail(`Customer approval ended with HTTP ${approvalDecisionStatus}.`);
+    }
+
+    const approvalHistory = await page.evaluate(async (estimateId) => {
+      const response = await fetch(`/api/estimates/${estimateId}/approval-history`, {
+        method: "GET",
+        credentials: "same-origin",
+        cache: "no-store",
+      });
+      const data = await response.json().catch(() => null);
+      return { status: response.status, data };
+    }, seededEstimate.estimate_id);
+    const latestApprovalEvent = approvalHistory.data?.events?.at(-1);
+    if (
+      approvalHistory.status !== 200
+      || latestApprovalEvent?.event_type !== "approved"
+      || latestApprovalEvent?.payment_option !== "two_month_plan"
+      || latestApprovalEvent?.revision_number !== seededEstimate.revision_number
+    ) {
+      fail("Approval history did not persist the approved revision and payment option.");
+    }
+
+    const approvedEstimate = await page.evaluate(async (estimateId) => {
+      const response = await fetch(`/api/estimates/${estimateId}`, {
+        method: "GET",
+        credentials: "same-origin",
+        cache: "no-store",
+      });
+      const data = await response.json().catch(() => null);
+      return { status: response.status, data };
+    }, seededEstimate.estimate_id);
+    if (
+      approvedEstimate.status !== 200
+      || approvedEstimate.data?.status !== "approved"
+      || approvedEstimate.data?.payment_option_selected !== "two_month_plan"
+    ) {
+      fail("Approved estimate did not persist the approved status and payment option.");
+    }
+
+    const lockAttempt = await page.evaluate(async (estimateId) => {
+      const response = await fetch(`/api/estimates/${estimateId}`, {
+        method: "PATCH",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ terms_text: "Attempted post-approval edit." }),
+      });
+      const data = await response.json().catch(() => null);
+      return { status: response.status, data };
+    }, seededEstimate.estimate_id);
+    if (lockAttempt.status !== 409) {
+      fail(`Approved estimate was not locked. PATCH returned HTTP ${lockAttempt.status}.`);
+    }
+
+    await page.reload({ waitUntil: "networkidle" });
+    await page.waitForSelector("#approval-public-root .error-card", { timeout: 20000 });
+    if (new URL(page.url()).pathname !== "/approval") {
+      fail("Approval token reuse refresh did not remain on /approval.");
+    }
+    const reusedTokenText = await page.locator("#approval-public-root .error-card").innerText();
+    if (!reusedTokenText.includes("Approval token is invalid or unavailable.")) {
+      fail("Approval token reuse did not fail with the expected sanitized message.");
+    }
+
+    const zeroSend = await page.evaluate(async (estimateId) => {
+      const response = await fetch(`/api/estimates/${estimateId}/send-for-approval`, {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ approval_method: "link", expires_in_hours: 72 }),
+      });
+      const data = await response.json().catch(() => null);
+      return { status: response.status, data };
+    }, seededZeroEstimate.estimate_id);
+    if (zeroSend.status !== 422) {
+      fail(`Zero-total estimate should be rejected before approval. HTTP ${zeroSend.status} received.`);
+    }
+    if (!JSON.stringify(zeroSend.data?.detail || "").toLowerCase().includes("zero-value")) {
+      fail("Zero-total approval rejection did not return the expected sanitized validation error.");
+    }
+
+    summary.nonBillableApprovalProof = {
+      ...summary.nonBillableApprovalProof,
+      persistedEstimateTotal: approvedEstimate.data.current_revision.estimate.totals.estimated_total,
+      approvalHistoryEvents: approvalHistory.data.events.map((event) => event.event_type),
+      tokenReuseMessage: "Approval token is invalid or unavailable.",
+      zeroTotalSendStatus: zeroSend.status,
+      approvedEstimateLockedStatus: lockAttempt.status,
+    };
   }
 
   await logout(page);

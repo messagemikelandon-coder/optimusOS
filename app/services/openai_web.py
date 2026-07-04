@@ -576,7 +576,7 @@ Security rules:
         vehicle: DecodedVehicle,
         job: str,
         location: ResolvedLocation,
-    ) -> tuple[CombinedResearchEnvelope, Any]:
+    ) -> tuple[CombinedResearchEnvelope, Any, str]:
         response = self._client.responses.parse(
             model=model,
             **self._model_options(model),
@@ -587,108 +587,16 @@ Security rules:
             text_format=CombinedResearchEnvelope,
         )
         parsed = getattr(response, "output_parsed", None)
-        if not isinstance(parsed, CombinedResearchEnvelope):
-            raise ValueError("Structured research returned no parsed estimate data.")
-        return parsed, response
+        if isinstance(parsed, CombinedResearchEnvelope):
+            return parsed, response, "structured"
 
-    @staticmethod
-    def _json_contract() -> str:
-        template = {
-            "labor": {
-                "book_hours": 0.0,
-                "practical_hours_low": 0.0,
-                "practical_hours_high": 0.0,
-                "confidence": "low",
-                "basis": "evidence summary",
-                "special_tools": [],
-                "risk_flags": [],
-            },
-            "parts": {
-                "requirements": [
-                    {
-                        "part_name": "part name",
-                        "quantity": 1,
-                        "required": True,
-                        "options": [
-                            {
-                                "retailer": "retailer",
-                                "brand": None,
-                                "part_number": None,
-                                "unit_price": None,
-                                "availability": "unknown",
-                                "store_name": None,
-                                "store_distance_miles": None,
-                                "url": None,
-                                "fitment_notes": None,
-                                "confidence": "low",
-                            }
-                        ],
-                    }
-                ],
-                "notes": [],
-            },
-            "summary": "research summary",
-            "warnings": [],
-        }
-        return (
-            "Compatibility mode: output only one valid JSON object with this exact key shape. "
-            "Use null exactly where data is unavailable. Template: " + json.dumps(template)
-        )
-
-    def _json_fallback_request(
-        self,
-        *,
-        model: str,
-        vehicle: DecodedVehicle,
-        job: str,
-        location: ResolvedLocation,
-    ) -> tuple[CombinedResearchEnvelope, Any]:
-        request_input = self._request_input(vehicle=vehicle, job=job, location=location)
-        request_input.append({"role": "system", "content": self._json_contract()})
-        response = self._client.responses.create(
-            model=model,
-            **self._model_options(model),
-            tools=cast(Any, [self._location_tool(location)]),
-            tool_choice="required",
-            include=["web_search_call.action.sources"],
-            input=cast(Any, request_input),
-        )
         raw_text = _response_output_text(response)
         try:
             payload = parse_json_object(raw_text)
         except json.JSONDecodeError:
             payload = _parse_markdown_research_fallback(raw_text)
         parsed = _coerce_combined_research_envelope(payload)
-        return parsed, response
-
-    def _json_fallback_with_retry(
-        self,
-        *,
-        model: str,
-        vehicle: DecodedVehicle,
-        job: str,
-        location: ResolvedLocation,
-    ) -> tuple[CombinedResearchEnvelope, Any]:
-        attempts = 2
-        last_exc: Exception | None = None
-        for attempt in range(attempts):
-            try:
-                return self._json_fallback_request(
-                    model=model,
-                    vehicle=vehicle,
-                    job=job,
-                    location=location,
-                )
-            except Exception as exc:
-                last_exc = exc
-                is_last = attempt == attempts - 1
-                if is_last or not isinstance(
-                    exc, (ValidationError, ValueError, TypeError, json.JSONDecodeError)
-                ):
-                    raise
-        if last_exc is None:
-            raise RuntimeError("JSON fallback retry ended without an exception or result.")
-        raise last_exc
+        return parsed, response, "json_fallback"
 
     @staticmethod
     def _error_code(exc: Exception) -> str:
@@ -829,39 +737,20 @@ Security rules:
         request_id: str,
     ) -> tuple[CombinedResearchEnvelope, Any, str]:
         try:
-            parsed, response = self._structured_request(
+            return self._structured_request(
                 model=model,
                 vehicle=vehicle,
                 job=job,
                 location=location,
             )
-            return parsed, response, "structured"
         except Exception as structured_exc:
             if self._is_model_unavailable(structured_exc):
                 raise
-            if not self._can_use_json_fallback(structured_exc):
-                raise self._classified_error(
-                    structured_exc,
-                    stage="structured_web_research",
-                    request_id=request_id,
-                ) from structured_exc
-
-        try:
-            parsed, response = self._json_fallback_with_retry(
-                model=model,
-                vehicle=vehicle,
-                job=job,
-                location=location,
-            )
-            return parsed, response, "json_fallback"
-        except Exception as fallback_exc:
-            if self._is_model_unavailable(fallback_exc):
-                raise
             raise self._classified_error(
-                fallback_exc,
-                stage="json_fallback_web_research",
+                structured_exc,
+                stage="structured_web_research",
                 request_id=request_id,
-            ) from fallback_exc
+            ) from structured_exc
 
     def _sanitize_labor(
         self,

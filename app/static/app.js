@@ -61,6 +61,10 @@ const viewMeta = {
   system: { eyebrow: "Configuration", title: "System bay" },
 };
 
+function allowsAnonymousView(view) {
+  return view === "login" || view === "approval";
+}
+
 function showToast(message, type = "info") {
   const region = $("toast-region");
   const toast = document.createElement("div");
@@ -215,7 +219,7 @@ async function performLogout() {
 
 function navigate(view) {
   if (!viewMeta[view]) return;
-  if (view !== "login" && !state.auth.authenticated) {
+  if (!allowsAnonymousView(view) && !state.auth.authenticated) {
     history.replaceState(null, "", "/login");
     return navigate("login");
   }
@@ -238,6 +242,7 @@ function navigate(view) {
   $("sidebar").classList.remove("is-open");
   $("mobile-menu").setAttribute("aria-expanded", "false");
   if (view === "login") history.replaceState(null, "", "/login");
+  else if (view === "approval") history.replaceState(null, "", "/approval");
   else if (window.location.pathname === "/login") history.replaceState(null, "", "/");
   window.scrollTo({ top: 0, behavior: "smooth" });
   if (view === "customers" && state.auth.authenticated) void loadCustomers();
@@ -1631,14 +1636,46 @@ async function loadPublicApprovalPage() {
     const data = await readApiPayload(response);
     if (!response.ok || !data) throw apiError(response, data, "Estimate approval view failed");
     $("approval-estimate-number").textContent = data.estimate_number;
-    const paymentOptions = data.revision.payment_options.map((option) => `
-      <label class="field full"><input type="radio" name="approval-payment-option" value="${escapeHtml(option.code)}"${option.code === "pay_in_full" ? " checked" : ""}> ${escapeHtml(option.label)} <small>${escapeHtml(option.description)}</small></label>
-    `).join("");
-    const parts = data.revision.estimate.selected_parts.map((part) => `<li>${escapeHtml(part.part_name)} × ${part.quantity} · ${money(part.extended_price)}</li>`).join("") || "<li>No currently priced part options were captured.</li>";
+    const estimate = data.revision.estimate;
+    const laborItems = estimate.labor_items?.length
+      ? estimate.labor_items.map((item) => `
+        <tr>
+          <td>${escapeHtml(item.description)}</td>
+          <td>${escapeHtml(String(item.labor_hours))}</td>
+          <td>${money(item.labor_rate)}</td>
+          <td>${money(item.labor_total)}</td>
+        </tr>`).join("")
+      : `<tr><td colspan="4">No customer-facing labor items were captured.</td></tr>`;
+    const parts = estimate.selected_parts.map((part) => `
+      <tr>
+        <td>${escapeHtml(part.part_name)}</td>
+        <td>${escapeHtml(String(part.quantity))}</td>
+        <td>${money(part.unit_price)}</td>
+        <td>${money(part.extended_price)}</td>
+      </tr>`).join("") || `<tr><td colspan="4">No customer-facing part pricing was captured.</td></tr>`;
+    const feeItems = estimate.fee_items?.map((item) => `
+      <tr>
+        <td>${escapeHtml(item.label)}</td>
+        <td>${money(item.amount)}</td>
+      </tr>`).join("") || "";
+    const exclusions = estimate.research.warnings?.length
+      ? estimate.research.warnings.map((warning) => `<li>${escapeHtml(warning)}</li>`).join("")
+      : "<li>No additional exclusions were recorded.</li>";
+    const paymentOptions = data.revision.payment_options.map((option) => {
+      const planDetails = option.code === "two_month_plan"
+        ? `<small>Deposit due before parts are ordered: ${money(estimate.totals.parts_subtotal)}. Remaining balance after deposit: ${money(Math.max(estimate.totals.estimated_total - estimate.totals.parts_subtotal, 0))}. First payment due 30 days after service, second payment due 60 days after service.</small>`
+        : `<small>${escapeHtml(option.description)}</small>`;
+      return `
+      <label class="field full">
+        <input type="radio" name="approval-payment-option" value="${escapeHtml(option.code)}"${option.code === "pay_in_full" ? " checked" : ""}>
+        ${escapeHtml(option.label)}
+        ${planDetails}
+      </label>`;
+    }).join("");
     root.innerHTML = `
       <div class="result-hero">
-        <div><span class="section-kicker"><i></i> Revision ${data.revision.revision_number}</span><h2>${escapeHtml(data.revision.vehicle.display_name)}</h2><p>${escapeHtml(data.revision.estimate.job)}</p></div>
-        <div class="result-total"><span>Total</span><strong>${money(data.revision.estimate.totals.estimated_total)}</strong></div>
+        <div><span class="section-kicker"><i></i> Revision ${data.revision.revision_number}</span><h2>${escapeHtml(data.revision.vehicle.display_name)}</h2><p>${escapeHtml(estimate.job)}</p></div>
+        <div class="result-total"><span>Total</span><strong>${money(estimate.totals.estimated_total)}</strong></div>
       </div>
       <div class="money-grid">
         <div class="money-card"><span>Customer</span><strong>${escapeHtml(data.revision.customer.display_name)}</strong></div>
@@ -1646,8 +1683,52 @@ async function loadPublicApprovalPage() {
         <div class="money-card"><span>Status</span><strong>${escapeHtml(data.status.replaceAll("_", " "))}</strong></div>
         <div class="money-card"><span>Expires</span><strong>${new Date(data.token_expires_at).toLocaleString()}</strong></div>
       </div>
-      <section class="result-section"><h3>Selected parts</h3><ul>${parts}</ul></section>
-      <section class="result-section"><h3>Terms and conditions</h3><p>${escapeHtml(data.revision.terms_text)}</p></section>
+      <div class="result-grid">
+        <section class="result-section">
+          <h3>Customer and vehicle</h3>
+          <p><strong>${escapeHtml(data.revision.customer.display_name)}</strong></p>
+          <p>${escapeHtml(data.revision.vehicle.display_name)}${data.revision.vehicle.current_mileage != null ? ` · ${escapeHtml(data.revision.vehicle.current_mileage.toLocaleString())} mi` : ""}</p>
+          <p>Estimate ${escapeHtml(data.estimate_number)} · Revision ${data.revision.revision_number} · ${escapeHtml(data.status.replaceAll("_", " "))}</p>
+        </section>
+        <section class="result-section">
+          <h3>Work requested</h3>
+          <p>${escapeHtml(estimate.job)}</p>
+          <p>${escapeHtml(estimate.research.summary)}</p>
+        </section>
+        <section class="result-section">
+          <h3>Conditions</h3>
+          <p>${escapeHtml(data.revision.terms_text)}</p>
+        </section>
+        <section class="result-section">
+          <h3>Exclusions and warnings</h3>
+          <ul>${exclusions}</ul>
+        </section>
+      </div>
+      <section class="result-section">
+        <h3>Labor</h3>
+        <table class="approval-breakdown-table">
+          <thead><tr><th>Service</th><th>Hours</th><th>Rate</th><th>Total</th></tr></thead>
+          <tbody>${laborItems}</tbody>
+        </table>
+      </section>
+      <section class="result-section">
+        <h3>Parts</h3>
+        <table class="approval-breakdown-table">
+          <thead><tr><th>Part</th><th>Qty</th><th>Unit price</th><th>Line total</th></tr></thead>
+          <tbody>${parts}</tbody>
+        </table>
+      </section>
+      <section class="result-section">
+        <h3>Fees and totals</h3>
+        <table class="approval-breakdown-table">
+          <tbody>
+            <tr><td>Labor subtotal</td><td>${money(estimate.totals.labor_total)}</td></tr>
+            <tr><td>Parts subtotal</td><td>${money(estimate.totals.parts_subtotal)}</td></tr>
+            ${feeItems}
+            <tr><td><strong>Final estimate total</strong></td><td><strong>${money(estimate.totals.estimated_total)}</strong></td></tr>
+          </tbody>
+        </table>
+      </section>
       <form id="approval-action-form">
         <label class="field full">Approving name <input id="approval-name" maxlength="160" placeholder="Customer name" required></label>
         <label class="field full">Typed authorization evidence <textarea id="approval-typed-authorization" maxlength="1000" placeholder="Example: Jane Customer approves revision 1 of this estimate." required></textarea></label>

@@ -216,6 +216,19 @@ class SelectedPart(BaseModel):
     confidence: Confidence
 
 
+class EstimateLaborItem(BaseModel):
+    description: str = Field(min_length=1, max_length=500)
+    labor_hours: float = Field(ge=0, le=500)
+    labor_rate: float = Field(ge=0, le=1_000_000)
+    labor_total: float = Field(ge=0, le=1_000_000)
+
+
+class EstimateFeeItem(BaseModel):
+    code: str = Field(min_length=1, max_length=80)
+    label: str = Field(min_length=1, max_length=120)
+    amount: float = Field(ge=0, le=1_000_000)
+
+
 class EstimateTotals(BaseModel):
     labor_hours: float
     labor_rate: float
@@ -236,7 +249,9 @@ class EstimateResponse(BaseModel):
     location: ResolvedLocation
     job: str
     research: ResearchBundle
+    labor_items: list[EstimateLaborItem] = Field(default_factory=list)
     selected_parts: list[SelectedPart]
+    fee_items: list[EstimateFeeItem] = Field(default_factory=list)
     totals: EstimateTotals
     approval_required: bool = False
     approval_reason: str = "Research and estimating run automatically."

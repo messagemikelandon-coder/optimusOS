@@ -8,6 +8,8 @@ from app.models import (
     Availability,
     Confidence,
     DecodedVehicle,
+    EstimateFeeItem,
+    EstimateLaborItem,
     EstimateRequest,
     EstimateResponse,
     EstimateTotals,
@@ -142,13 +144,32 @@ class EstimateService:
             warnings.append("Sales tax is excluded because PARTS_TAX_RATE is 0.00.")
 
         updated_research = research.model_copy(update={"warnings": list(dict.fromkeys(warnings))})
+        labor_items = [
+            EstimateLaborItem(
+                description=request.job,
+                labor_hours=labor_hours,
+                labor_rate=_money(labor_rate),
+                labor_total=labor_total,
+            )
+        ]
+        fee_items = [
+            EstimateFeeItem(code="shop_supplies", label="Shop supplies", amount=shop_supplies),
+            EstimateFeeItem(
+                code="mobile_service_fee",
+                label="Mobile service charge",
+                amount=_money(mobile_fee),
+            ),
+            EstimateFeeItem(code="parts_tax", label="Parts tax", amount=parts_tax),
+        ]
 
         return EstimateResponse(
             vehicle=vehicle,
             location=location,
             job=request.job,
             research=updated_research,
+            labor_items=labor_items,
             selected_parts=selected_parts,
+            fee_items=fee_items,
             totals=EstimateTotals(
                 labor_hours=labor_hours,
                 labor_rate=_money(labor_rate),
