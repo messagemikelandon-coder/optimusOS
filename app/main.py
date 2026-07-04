@@ -782,7 +782,11 @@ async def create_estimate_record(
             orchestrator=OptimusResearchOrchestrator(settings),
         )
     except (CustomerStoreError, VehicleStoreError, EstimateStoreError) as exc:
-        status_code_value = 404 if isinstance(exc, (CustomerNotFoundError, VehicleNotFoundError, EstimateNotFoundError)) else 422
+        status_code_value = (
+            404
+            if isinstance(exc, (CustomerNotFoundError, VehicleNotFoundError, EstimateNotFoundError))
+            else 422
+        )
         raise HTTPException(status_code=status_code_value, detail=str(exc)) from exc
     except EstimatorResearchError as exc:
         raise HTTPException(status_code=exc.http_status, detail=exc.as_detail()) from exc
@@ -819,7 +823,11 @@ async def list_estimate_records(
             archived=archived,
         )
     except (CustomerStoreError, VehicleStoreError, EstimateStoreError) as exc:
-        status_code_value = 404 if isinstance(exc, (CustomerNotFoundError, VehicleNotFoundError, EstimateNotFoundError)) else 422
+        status_code_value = (
+            404
+            if isinstance(exc, (CustomerNotFoundError, VehicleNotFoundError, EstimateNotFoundError))
+            else 422
+        )
         raise HTTPException(status_code=status_code_value, detail=str(exc)) from exc
     except SQLAlchemyError as exc:
         logger.warning("Estimate listing failed due to storage error.")
@@ -861,7 +869,9 @@ async def update_estimate_record(
     except EstimateNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except EstimateStoreError as exc:
-        raise HTTPException(status_code=409 if "locked" in str(exc).lower() else 422, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=409 if "locked" in str(exc).lower() else 422, detail=str(exc)
+        ) from exc
     except SQLAlchemyError as exc:
         logger.warning("Estimate update failed due to storage error.")
         raise HTTPException(
@@ -889,7 +899,11 @@ async def create_estimate_revision_record(
             orchestrator=OptimusResearchOrchestrator(settings),
         )
     except (CustomerStoreError, VehicleStoreError, EstimateStoreError) as exc:
-        status_code_value = 404 if isinstance(exc, (CustomerNotFoundError, VehicleNotFoundError, EstimateNotFoundError)) else 422
+        status_code_value = (
+            404
+            if isinstance(exc, (CustomerNotFoundError, VehicleNotFoundError, EstimateNotFoundError))
+            else 422
+        )
         raise HTTPException(status_code=status_code_value, detail=str(exc)) from exc
     except EstimatorResearchError as exc:
         raise HTTPException(status_code=exc.http_status, detail=exc.as_detail()) from exc
@@ -901,7 +915,9 @@ async def create_estimate_revision_record(
         ) from exc
 
 
-@app.post("/api/estimates/{estimate_id}/send-for-approval", response_model=EstimateApprovalSendResponse)
+@app.post(
+    "/api/estimates/{estimate_id}/send-for-approval", response_model=EstimateApprovalSendResponse
+)
 async def send_estimate_record_for_approval(
     estimate_id: int,
     payload: EstimateSendForApprovalRequest,
@@ -977,7 +993,9 @@ async def approval_approve(
         ) from exc
     except EstimateStoreError as exc:
         detail = str(exc)
-        status_code_value = 409 if "mismatch" in detail.lower() or "expired" in detail.lower() else 422
+        status_code_value = (
+            409 if "mismatch" in detail.lower() or "expired" in detail.lower() else 422
+        )
         raise HTTPException(status_code=status_code_value, detail=detail) from exc
     except SQLAlchemyError as exc:
         logger.warning("Estimate approval failed due to storage error.")
@@ -1009,7 +1027,9 @@ async def approval_decline(
         ) from exc
     except EstimateStoreError as exc:
         detail = str(exc)
-        status_code_value = 409 if "mismatch" in detail.lower() or "expired" in detail.lower() else 422
+        status_code_value = (
+            409 if "mismatch" in detail.lower() or "expired" in detail.lower() else 422
+        )
         raise HTTPException(status_code=status_code_value, detail=detail) from exc
     except SQLAlchemyError as exc:
         logger.warning("Estimate decline failed due to storage error.")
@@ -1019,7 +1039,9 @@ async def approval_decline(
         ) from exc
 
 
-@app.get("/api/estimates/{estimate_id}/approval-history", response_model=EstimateApprovalAuditResponse)
+@app.get(
+    "/api/estimates/{estimate_id}/approval-history", response_model=EstimateApprovalAuditResponse
+)
 async def estimate_approval_history(
     estimate_id: int,
     db: DbSessionDep,

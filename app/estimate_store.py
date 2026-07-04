@@ -107,9 +107,8 @@ def _estimate_query(auth: AuthContext) -> Select[tuple[Estimate]]:
 
 
 def _approval_request_query(token: str) -> Select[tuple[EstimateApprovalRequest]]:
-    return (
-        select(EstimateApprovalRequest)
-        .where(EstimateApprovalRequest.token_hash == _hash_token(token))
+    return select(EstimateApprovalRequest).where(
+        EstimateApprovalRequest.token_hash == _hash_token(token)
     )
 
 
@@ -153,7 +152,9 @@ def _request_for_vehicle(payload: EstimateRecordBase, vehicle) -> EstimateReques
     )
 
 
-def _resolve_payment_options(options: list[EstimatePaymentOption] | None) -> list[EstimatePaymentOption]:
+def _resolve_payment_options(
+    options: list[EstimatePaymentOption] | None,
+) -> list[EstimatePaymentOption]:
     return options if options else _default_payment_options()
 
 
@@ -183,7 +184,9 @@ def _revision_to_read(revision: EstimateRevision) -> EstimateRevisionRead:
     vehicle = EstimateVehicleSummary.model_validate(revision.vehicle_snapshot)
     request = EstimateRequest.model_validate(revision.estimate_request_payload)
     estimate = EstimateResponse.model_validate(revision.estimate_response_payload)
-    payment_options = [EstimatePaymentOption.model_validate(item) for item in revision.payment_options_payload]
+    payment_options = [
+        EstimatePaymentOption.model_validate(item) for item in revision.payment_options_payload
+    ]
     return EstimateRevisionRead(
         id=revision.id,
         revision_number=revision.revision_number,
@@ -248,9 +251,12 @@ def _require_estimate(db: Session, auth: AuthContext, estimate_id: int) -> Estim
 
 
 def _next_estimate_number(db: Session, auth: AuthContext) -> str:
-    count = db.scalar(
-        select(func.count()).select_from(Estimate).where(Estimate.owner_user_id == auth.user.id)
-    ) or 0
+    count = (
+        db.scalar(
+            select(func.count()).select_from(Estimate).where(Estimate.owner_user_id == auth.user.id)
+        )
+        or 0
+    )
     return f"EST-{auth.user.id:03d}-{count + 1:05d}"
 
 
@@ -325,7 +331,12 @@ async def create_estimate(
     payload: EstimateCreate,
     orchestrator: OptimusResearchOrchestrator,
 ) -> EstimateRead:
-    customer_summary, vehicle_summary, request_model, response_model = await _build_estimate_payload(
+    (
+        customer_summary,
+        vehicle_summary,
+        request_model,
+        response_model,
+    ) = await _build_estimate_payload(
         auth=auth,
         db=db,
         payload=payload,
@@ -409,7 +420,9 @@ def list_estimates(
     total = db.scalar(select(func.count()).select_from(query.subquery())) or 0
     offset = (page - 1) * page_size
     estimates = db.scalars(
-        query.order_by(Estimate.updated_at.desc(), Estimate.id.desc()).offset(offset).limit(page_size)
+        query.order_by(Estimate.updated_at.desc(), Estimate.id.desc())
+        .offset(offset)
+        .limit(page_size)
     ).all()
     return EstimateListResponse(
         items=[_estimate_to_read(item) for item in estimates],
@@ -435,7 +448,8 @@ def update_estimate(
         revision.terms_text = payload.terms_text
     if payload.payment_options is not None:
         revision.payment_options_payload = [
-            option.model_dump(mode="json") for option in _resolve_payment_options(payload.payment_options)
+            option.model_dump(mode="json")
+            for option in _resolve_payment_options(payload.payment_options)
         ]
     if payload.expires_in_days is not None:
         revision.approval_due_at = datetime.now(UTC) + timedelta(days=payload.expires_in_days)
@@ -490,7 +504,12 @@ async def create_estimate_revision(
             content_hash=prior_revision.content_hash,
             actor_user_id=auth.user.id,
         )
-    customer_summary, vehicle_summary, request_model, response_model = await _build_estimate_payload(
+    (
+        customer_summary,
+        vehicle_summary,
+        request_model,
+        response_model,
+    ) = await _build_estimate_payload(
         auth=auth,
         db=db,
         payload=payload,
@@ -604,7 +623,9 @@ def _resolve_active_approval_request(db: Session, token: str) -> EstimateApprova
     return approval_request
 
 
-def get_approval_view(*, db: Session, payload: EstimateApprovalTokenRequest) -> EstimateApprovalView:
+def get_approval_view(
+    *, db: Session, payload: EstimateApprovalTokenRequest
+) -> EstimateApprovalView:
     approval_request = _resolve_active_approval_request(db, payload.token)
     estimate = approval_request.estimate
     revision = approval_request.revision
@@ -648,10 +669,15 @@ def approve_estimate(
     payment_options = [
         EstimatePaymentOption.model_validate(item) for item in revision.payment_options_payload
     ]
-    selected_option = next((item for item in payment_options if item.code == payload.payment_option), None)
+    selected_option = next(
+        (item for item in payment_options if item.code == payload.payment_option), None
+    )
     if selected_option is None:
         raise EstimateStoreError("Selected payment option is not available for this estimate.")
-    if selected_option.requires_payment_plan_acknowledgement and not payload.payment_plan_acknowledged:
+    if (
+        selected_option.requires_payment_plan_acknowledgement
+        and not payload.payment_plan_acknowledged
+    ):
         raise EstimateStoreError("Payment-plan acknowledgement is required for this option.")
     estimate.status = EstimateStatus.APPROVED.value
     revision.status = EstimateStatus.APPROVED.value
@@ -742,7 +768,9 @@ def decline_estimate(
     )
 
 
-def approval_history(*, db: Session, auth: AuthContext, estimate_id: int) -> EstimateApprovalAuditResponse:
+def approval_history(
+    *, db: Session, auth: AuthContext, estimate_id: int
+) -> EstimateApprovalAuditResponse:
     estimate = _require_estimate(db, auth, estimate_id)
     events = db.scalars(
         select(EstimateApprovalEvent)

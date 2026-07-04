@@ -131,6 +131,21 @@ async function main() {
 
   const browser = await chromium.launch({ channel: "chrome", headless: true });
   const context = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
+  await context.addInitScript(() => {
+    const clipboardStore = { value: "" };
+    Object.defineProperty(window, "__auditClipboard", {
+      value: clipboardStore,
+      configurable: true,
+    });
+    Object.defineProperty(navigator, "clipboard", {
+      value: {
+        writeText: async (text) => {
+          clipboardStore.value = String(text);
+        },
+      },
+      configurable: true,
+    });
+  });
   const page = await context.newPage();
   const consoleMessages = [];
   const failedRequests = [];
@@ -497,14 +512,36 @@ async function main() {
     await screenshot(page, "03-chat-authenticated.png");
     summary.screenshots.push("docs/screenshots/auth-integration/03-chat-authenticated.png");
 
+    await page.locator('.nav-item[data-view="vehicles"]').click();
+    await page.waitForSelector("#view-vehicles:not([hidden])");
+    await page.locator("#vehicles-archived-only").uncheck();
+    await page.fill("#vehicles-search", firstVehicleVin);
+    await page.waitForFunction(
+      (vin) => {
+        const item = document.querySelector("#vehicles-list .customer-list-item");
+        return Boolean(item) && item.innerText.includes(vin);
+      },
+      firstVehicleVin,
+    );
+    await page.locator("#vehicles-list .customer-list-item").first().click();
+    await page.waitForFunction(
+      (vin) => {
+        const detail = document.querySelector("#vehicle-detail");
+        return Boolean(detail && detail.textContent && detail.textContent.includes(vin));
+      },
+      firstVehicleVin,
+    );
+
     await page.locator('.nav-item[data-view="estimate"]').click();
     await page.waitForSelector("#view-estimate:not([hidden])");
     const estimatePanel = page.locator("#view-estimate:not([hidden])");
-    await estimatePanel.locator("#year").fill("2020");
-    await estimatePanel.locator("#make").fill("Toyota");
-    await estimatePanel.locator("#model").fill("Camry");
+    const selectedEstimateVehicle = await estimatePanel.locator("#estimate-selected-vehicle").innerText();
+    if (!selectedEstimateVehicle.includes("Honda") && !selectedEstimateVehicle.includes("Civic")) {
+      fail("Estimate view did not preserve the selected vehicle context.");
+    }
     await estimatePanel.locator("#job").fill("Front brake pad replacement");
-    await page.getByRole("button", { name: "Research and estimate" }).click();
+    const estimateRequestStart = apiResponses.length;
+    await page.getByRole("button", { name: "Create saved estimate" }).click();
     await page.waitForFunction(
       () => Boolean(document.querySelector("#result .result-hero, #result .error-card")),
       { timeout: 180000 },
@@ -515,8 +552,48 @@ async function main() {
       fail(`Estimate did not render successfully: ${errorText}`);
     }
     const estimateTitle = await page.locator("#result .result-hero h2").innerText();
-    if (!estimateTitle.includes("Toyota") && !estimateTitle.includes("Camry")) {
+    if (!estimateTitle.includes("Honda") && !estimateTitle.includes("Civic")) {
       fail("Estimate did not render the researched vehicle.");
+    }
+    const estimateContext = await page.evaluate(async () => {
+      const response = await fetch("/api/context/estimates?scope=session", {
+        method: "GET",
+        credentials: "same-origin",
+        cache: "no-store",
+      });
+      const data = await response.json().catch(() => null);
+      return { status: response.status, data };
+    });
+    const selectedEstimateEntry = estimateContext.data?.entries?.find(
+      (entry) => entry.context_key === "selected-estimate",
+    );
+    if (estimateContext.status !== 200 || !selectedEstimateEntry?.value) {
+      fail("Selected estimate context entry was not stored.");
+    }
+    let selectedEstimateValue = null;
+    try {
+      selectedEstimateValue = JSON.parse(selectedEstimateEntry.value);
+    } catch {
+      fail("Selected estimate context entry was not valid JSON.");
+    }
+    if (!selectedEstimateValue?.id || selectedEstimateValue?.token || selectedEstimateValue?.signature) {
+      fail("Selected estimate context stored more than the lightweight estimate reference.");
+    }
+    const approvalRequestStart = apiResponses.length;
+    await page.getByRole("button", { name: "Send for approval" }).click();
+    await expectToast(page, "Approval link copied to the clipboard.");
+    await clearToasts(page);
+    const copiedApprovalLink = await page.evaluate(() => window.__auditClipboard?.value || "");
+    if (!copiedApprovalLink.includes("/approval#token=")) {
+      fail("Approval link was not copied in the expected hash-based format.");
+    }
+    const approvalStatus = apiResponses
+      .slice(approvalRequestStart)
+      .filter((entry) => entry.url.includes("/send-for-approval"))
+      .map((entry) => entry.status)
+      .at(-1);
+    if (approvalStatus !== 200) {
+      fail(`Send-for-approval ended with HTTP ${approvalStatus}.`);
     }
     await screenshot(page, "04-estimate-authenticated.png");
     summary.screenshots.push("docs/screenshots/auth-integration/04-estimate-authenticated.png");
@@ -526,18 +603,24 @@ async function main() {
       .map((entry) => entry.status)
       .at(-1);
     summary.protectedResponses.estimate = apiResponses
-      .filter((entry) => entry.url.includes("/api/estimate"))
+      .slice(estimateRequestStart)
+      .filter((entry) => entry.url.includes("/api/estimates"))
       .map((entry) => entry.status)
       .at(-1);
+    summary.protectedResponses.approval = approvalStatus;
     if (summary.protectedResponses.chat !== 200) {
       fail(`Authenticated chat ended with HTTP ${summary.protectedResponses.chat}.`);
     }
     if (summary.protectedResponses.estimate !== 200) {
       fail(`Authenticated estimate ended with HTTP ${summary.protectedResponses.estimate}.`);
     }
+    if (summary.protectedResponses.approval !== 200) {
+      fail(`Authenticated approval-link flow ended with HTTP ${summary.protectedResponses.approval}.`);
+    }
   } else {
     summary.protectedResponses.chat = "skipped";
     summary.protectedResponses.estimate = "skipped";
+    summary.protectedResponses.approval = "skipped";
   }
 
   await logout(page);

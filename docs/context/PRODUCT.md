@@ -4,22 +4,22 @@ Purpose: verified product scope, users, and current versus not-yet-built modules
 Information owner: Landon Motor Works owners and repository maintainers.
 Read when: evaluating workflows, UI scope, or what should be shown to an owner or customer.
 Update when: the product scope, supported workflows, or owner approval boundaries change.
-Last verified date: 2026-07-02.
+Last verified date: 2026-07-04.
 Relevant sources: `README.md`, `app/static/index.html`, `app/static/app.js`, `app/control.py`, `docs/frontend-audit.md`, `docs/ui-control-matrix.md`, `app/models.py`.
 
 ## Verified Product Facts
 
 - Intended owner and user: Landon Motor Works owner/operator, with Optimus as the owner-facing management agent.
-- OptimusOS currently supports owner sign-in, protected chat, protected location resolution, protected estimates, health checks, and readiness checks.
+- OptimusOS currently supports owner sign-in, protected chat, protected location resolution, protected saved estimates, customer approval views, health checks, and readiness checks.
 - Customer-visible UI currently centers on the command deck, talk-to-Optimus flow, job estimator, and system bay.
 - Estimates are itemized and include labor, selected parts, fees, supplies, taxes, warnings, tools, and source links.
 
 ## Status Labels
 
-- Partially implemented: owner-facing business output and estimate presentation, because the repo documents the flow but not all downstream business records.
-- Implemented: owner login/logout/me, server-side sessions, chat, estimate workflow, location resolution, health, readiness, static frontend delivery, customer management, and vehicle management.
-- Planned: work orders, invoice handling, approval queue, observability expansion, staging, and production hardening.
-- Not approved: any claim that the repository already contains separate work-order or approval modules.
+- Partially implemented: estimate approval runtime proof, because source and local automated coverage exist but billable live browser proof remains intentionally deferred pending owner approval.
+- Implemented: owner login/logout/me, server-side sessions, chat, estimate workflow, estimate approval persistence and UI routes, location resolution, health, readiness, static frontend delivery, customer management, and vehicle management.
+- Planned: work orders, invoice handling, observability expansion, staging, and production hardening.
+- Not approved: any claim that the repository already contains a completed Work Order or invoice module.
 
 ## Current Versus Future
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TypedDict, Unpack
 
@@ -14,7 +15,7 @@ import app.main as main
 from app.auth import bootstrap_owner_account
 from app.config import Settings
 from app.db import Base, build_engine, build_session_factory
-from app.db_models import Vehicle
+from app.db_models import AuthSession, Vehicle
 from app.models import VehicleCreate, VehicleUpdate
 from tests.test_api import request_for
 from tests.test_context_api import auth_context, create_user, login_as, raw_cookie_from_response
@@ -142,7 +143,9 @@ async def test_list_customer_vehicles_and_global_search(settings, db_session: Se
 
     first = await main.create_vehicle_record(
         customer_id,
-        vehicle_payload(vin="1HGCM82633A004352", license_plate="8abc123", make="Honda", model="Civic"),
+        vehicle_payload(
+            vin="1HGCM82633A004352", license_plate="8abc123", make="Honda", model="Civic"
+        ),
         db_session,
         auth,
     )
@@ -293,7 +296,9 @@ async def test_vehicle_cross_user_isolation(settings, db_session: Session) -> No
     )
     other_auth = auth_context(settings, db_session, raw_cookie_from_response(other_response))
     customer_id = await create_customer_for_auth(settings, db_session, owner_auth)
-    vehicle = await main.create_vehicle_record(customer_id, vehicle_payload(), db_session, owner_auth)
+    vehicle = await main.create_vehicle_record(
+        customer_id, vehicle_payload(), db_session, owner_auth
+    )
 
     with pytest.raises(HTTPException) as excinfo:
         await main.get_vehicle_record(vehicle.id, db_session, other_auth)
@@ -323,14 +328,23 @@ def test_vehicle_restart_persistence(tmp_path: Path) -> None:
         bootstrap_owner_account(settings=settings, db=first)
         owner = first.get(main.UserAccount, 1)
         assert owner is not None
+        auth_session = AuthSession(
+            user_id=owner.id,
+            token_hash="vehicle-persistence-test",
+            expires_at=datetime.now(UTC) + timedelta(hours=1),
+        )
+        first.add(auth_session)
+        first.commit()
+        first.refresh(auth_session)
+        auth = main.AuthContext(user=owner, session=auth_session)
         customer = main.create_customer(
             db=first,
-            auth=main.AuthContext(user=owner, session=owner.sessions[0] if owner.sessions else None),  # type: ignore[arg-type]
+            auth=auth,
             payload=customer_payload(),
         )
         vehicle = main.create_vehicle(
             db=first,
-            auth=main.AuthContext(user=owner, session=owner.sessions[0] if owner.sessions else None),  # type: ignore[arg-type]
+            auth=auth,
             customer_id=customer.id,
             payload=vehicle_payload(),
         )

@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 from fastapi import HTTPException
+from pydantic import HttpUrl
 from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
@@ -77,7 +78,7 @@ def fixture_estimate_response() -> EstimateResponse:
                                 retailer="NAPA",
                                 unit_price=120,
                                 availability=Availability.CONFIRMED_IN_STOCK,
-                                url="https://example.com/pad-set",
+                                url=HttpUrl("https://example.com/pad-set"),
                                 confidence=Confidence.MEDIUM,
                             )
                         ],
@@ -97,7 +98,7 @@ def fixture_estimate_response() -> EstimateResponse:
                 extended_price=120,
                 availability=Availability.CONFIRMED_IN_STOCK,
                 store_name="NAPA Rocklin",
-                url="https://example.com/pad-set",
+                url=HttpUrl("https://example.com/pad-set"),
                 confidence=Confidence.MEDIUM,
             )
         ],
@@ -305,7 +306,9 @@ async def test_invalid_expired_and_reused_tokens_fail_safely(
 
 
 @pytest.mark.anyio
-async def test_token_reuse_and_revision_mismatch(monkeypatch, settings, db_session: Session) -> None:  # type: ignore[no-untyped-def]
+async def test_token_reuse_and_revision_mismatch(
+    monkeypatch, settings, db_session: Session
+) -> None:  # type: ignore[no-untyped-def]
     monkeypatch.setattr(OptimusResearchOrchestrator, "estimate_job", stub_estimate_job)
     _, response = await login_as(settings, db_session)
     auth = auth_context(settings, db_session, raw_cookie_from_response(response))
@@ -381,7 +384,9 @@ async def test_cross_user_access_isolated(monkeypatch, settings, db_session: Ses
 
 
 @pytest.mark.anyio
-async def test_approval_lock_requires_new_revision(monkeypatch, settings, db_session: Session) -> None:  # type: ignore[no-untyped-def]
+async def test_approval_lock_requires_new_revision(
+    monkeypatch, settings, db_session: Session
+) -> None:  # type: ignore[no-untyped-def]
     monkeypatch.setattr(OptimusResearchOrchestrator, "estimate_job", stub_estimate_job)
     _, response = await login_as(settings, db_session)
     auth = auth_context(settings, db_session, raw_cookie_from_response(response))
@@ -500,9 +505,7 @@ async def test_approval_storage_failures_are_sanitized_and_do_not_log_tokens(
 
 
 @pytest.mark.anyio
-async def test_restart_persistence_for_approved_estimates(
-    monkeypatch, tmp_path: Path
-) -> None:  # type: ignore[no-untyped-def]
+async def test_restart_persistence_for_approved_estimates(monkeypatch, tmp_path: Path) -> None:  # type: ignore[no-untyped-def]
     monkeypatch.setattr(OptimusResearchOrchestrator, "estimate_job", stub_estimate_job)
     database_path = tmp_path / "estimate-approval.db"
     settings = Settings(

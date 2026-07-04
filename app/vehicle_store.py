@@ -85,7 +85,9 @@ def validate_required_identity(*, make: str | None, model: str | None) -> None:
 
 def vehicle_display_name(vehicle: Vehicle) -> str:
     label = " ".join(
-        part for part in [str(vehicle.year) if vehicle.year else None, vehicle.make, vehicle.model] if part
+        part
+        for part in [str(vehicle.year) if vehicle.year else None, vehicle.make, vehicle.model]
+        if part
     )
     if vehicle.trim:
         label = f"{label} {vehicle.trim}".strip()
@@ -142,11 +144,7 @@ def _ensure_unique_active_vin(
 ) -> None:
     if vin is None:
         return
-    query = (
-        _owner_query(auth)
-        .where(Vehicle.vin == vin)
-        .where(Vehicle.is_archived.is_(False))
-    )
+    query = _owner_query(auth).where(Vehicle.vin == vin).where(Vehicle.is_archived.is_(False))
     if ignore_vehicle_id is not None:
         query = query.where(Vehicle.id != ignore_vehicle_id)
     if db.scalar(query) is not None:
@@ -229,7 +227,9 @@ def list_vehicles(
     customer_id: int | None = None,
 ) -> VehicleListResponse:
     if page_size > settings.vehicles_max_page_size:
-        raise VehicleStoreError(f"Page size exceeds the maximum of {settings.vehicles_max_page_size}.")
+        raise VehicleStoreError(
+            f"Page size exceeds the maximum of {settings.vehicles_max_page_size}."
+        )
     if page < 1:
         raise VehicleStoreError("Page must be 1 or greater.")
     if customer_id is not None:
@@ -244,7 +244,9 @@ def list_vehicles(
             token_clauses = []
             for token in lowered_tokens:
                 uppercase_token = token.upper()
-                normalized_plate = "".join(character for character in uppercase_token if character.isalnum())
+                normalized_plate = "".join(
+                    character for character in uppercase_token if character.isalnum()
+                )
                 clause = or_(
                     func.coalesce(Vehicle.vin, "").contains(uppercase_token),
                     func.lower(func.coalesce(Vehicle.make, "")).contains(token),
@@ -254,7 +256,9 @@ def list_vehicles(
                 if normalized_plate:
                     clause = or_(
                         clause,
-                        func.coalesce(Vehicle.license_plate_normalized, "").contains(normalized_plate),
+                        func.coalesce(Vehicle.license_plate_normalized, "").contains(
+                            normalized_plate
+                        ),
                     )
                 if token.isdigit():
                     clause = or_(

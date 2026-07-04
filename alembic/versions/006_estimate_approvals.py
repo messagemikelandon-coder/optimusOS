@@ -207,9 +207,13 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    op.drop_index("ix_estimate_approval_events_estimate_created", table_name="estimate_approval_events")
+    op.drop_index(
+        "ix_estimate_approval_events_estimate_created", table_name="estimate_approval_events"
+    )
     op.drop_table("estimate_approval_events")
-    op.drop_index("ix_estimate_approval_requests_estimate_status", table_name="estimate_approval_requests")
+    op.drop_index(
+        "ix_estimate_approval_requests_estimate_status", table_name="estimate_approval_requests"
+    )
     op.drop_table("estimate_approval_requests")
     op.drop_index("ix_estimate_revisions_owner_estimate_revision", table_name="estimate_revisions")
     op.drop_table("estimate_revisions")

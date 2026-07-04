@@ -634,7 +634,9 @@ class EstimateRecordBase(BaseModel):
     mobile_service_fee: float | None = Field(default=None, ge=0, le=10_000)
     shop_supplies_percent: float | None = Field(default=None, ge=0, le=25)
     parts_tax_rate: float | None = Field(default=None, ge=0, le=20)
-    terms_text: str = Field(default="Customer authorization is required before repair work begins.", max_length=4000)
+    terms_text: str = Field(
+        default="Customer authorization is required before repair work begins.", max_length=4000
+    )
     payment_options: list[EstimatePaymentOption] = Field(default_factory=list, max_length=6)
     expires_in_days: int = Field(default=7, ge=1, le=90)
 
