@@ -31,6 +31,27 @@ _JSON_BLOCK_RE = re.compile(r"```(?:json)?\s*(\{.*\})\s*```", re.DOTALL | re.IGN
 _SECTION_RE = re.compile(r"^\*\*(.+?):\*\*\s*$", re.MULTILINE)
 
 
+def _text_format_param(model: type[BaseModel]) -> dict[str, Any]:
+    """Build the Responses API `text.format` structured-output payload for
+    `model`, matching what `responses.parse(text_format=model)` sends on the
+    request side. Reuses only the stable, explicitly re-exported
+    `type_to_response_format_param` helper (not the deeper, non-exported
+    `_responses.type_to_text_format_param`) to keep this reshaping visible
+    and independent of the SDK's own eager response-side (de)serialization,
+    which is the part we intentionally bypass in `_structured_request`.
+    """
+    from openai.lib._parsing import type_to_response_format_param
+
+    response_format = type_to_response_format_param(model)
+    json_schema = cast(dict[str, Any], response_format)["json_schema"]
+    return {
+        "type": "json_schema",
+        "strict": True,
+        "name": json_schema["name"],
+        "schema": json_schema["schema"],
+    }
+
+
 def parse_json_object(text: str) -> dict[str, Any]:
     stripped = text.strip()
     match = _JSON_BLOCK_RE.fullmatch(stripped)
@@ -577,26 +598,39 @@ Security rules:
         job: str,
         location: ResolvedLocation,
     ) -> tuple[CombinedResearchEnvelope, Any, str]:
-        response = self._client.responses.parse(
+        # Deliberately uses responses.create() rather than responses.parse().
+        # .parse() eagerly deserializes the model's JSON output against
+        # `text_format` *inside* the SDK (openai.lib._parsing._responses
+        # .parse_text -> CombinedResearchEnvelope.model_validate_json),
+        # invoked as a post_parser callback that sits outside the SDK's own
+        # response-validation exception handling. If that strict, immediate
+        # validation fails for any reason, the ValidationError propagates
+        # out of .parse() with no Response object attached, so our own
+        # lenient extraction/coercion below (parse_json_object /
+        # _parse_markdown_research_fallback / _coerce_combined_research_envelope)
+        # never runs. Building the same structured-output schema manually
+        # and calling create() keeps the request identical (the model is
+        # still constrained to the same schema) while guaranteeing we always
+        # get the raw response to parse ourselves, through one canonical,
+        # already-tested adapter path, in exactly one API call.
+        response = self._client.responses.create(
             model=model,
             **self._model_options(model),
             tools=cast(Any, [self._location_tool(location)]),
             tool_choice="required",
             include=["web_search_call.action.sources"],
             input=cast(Any, self._request_input(vehicle=vehicle, job=job, location=location)),
-            text_format=CombinedResearchEnvelope,
+            text=cast(Any, {"format": _text_format_param(CombinedResearchEnvelope)}),
         )
-        parsed = getattr(response, "output_parsed", None)
-        if isinstance(parsed, CombinedResearchEnvelope):
-            return parsed, response, "structured"
-
         raw_text = _response_output_text(response)
         try:
             payload = parse_json_object(raw_text)
+            mode = "structured"
         except json.JSONDecodeError:
             payload = _parse_markdown_research_fallback(raw_text)
+            mode = "json_fallback"
         parsed = _coerce_combined_research_envelope(payload)
-        return parsed, response, "json_fallback"
+        return parsed, response, mode
 
     @staticmethod
     def _error_code(exc: Exception) -> str:
