@@ -4,80 +4,74 @@ Purpose: replaceable handoff template for the next substantial Codex/Claude sess
 Information owner: the active session author.
 Read when: starting or resuming work.
 Update when: a substantial task completes or context needs to be handed forward.
-Last verified date: 2026-07-06.
-Relevant sources: `docs/context/CURRENT_STATE.md`, `docs/context/DECISIONS.md`, `docs/context/KNOWN_ISSUES.md`, `git status`.
+Last verified date: 2026-07-07.
+Relevant sources: `docs/context/CURRENT_STATE.md`, `docs/context/PLANS.md`, `docs/context/KNOWN_ISSUES.md`, `git status`.
 
 ## Identity
 
-- Updated UTC: 2026-07-06T00:20Z
-- Agent: Claude
-- Branch: `feat/vehicle-management`, ahead of `origin/feat/vehicle-management` by 1 commit (not pushed)
-- HEAD: `14e51c3cf2ee31e4fe1cc246759202739e0c27a2` ("fix: harden estimate approval runtime flow")
+- Updated UTC: 2026-07-07T00:00Z
+- Agent: Claude (this handoff); most recent commit on the branch was made by Codex
+- Branch: `feat/estimate-approval` (renamed from `feat/vehicle-management`), ahead of `origin/feat/estimate-approval` by 1 commit (not pushed)
+- HEAD: `c46d53f49f2010a9a7a1faa1b787db94c026e617` ("docs: update agent operating rules", authored by Codex)
+- Origin HEAD: `ce3956199abe3443d8809cbb666cfa6a20032f2e` ("verify: complete estimate approval live proof") — this is the last commit confirmed pushed
 - Worktree: primary (`/home/dejake/optimus-server`)
-- Git status summary: the estimate-approval repair (12 files) is committed at `14e51c3`. Uncommitted this session: `app/services/openai_web.py` (the `estimator_output_invalid` fix), `tests/test_openai_research.py` (rewritten fake OpenAI client + new tests), `docs/context/CURRENT_STATE.md`, `docs/context/KNOWN_ISSUES.md`, `docs/context/SESSION_HANDOFF.md`. Remaining unrelated: `AGENTS.md` (pre-existing AI Coordination Pack diff, confirmed untouched this session). Untracked: `.claude/`, `.github/`, `CLAUDE.md`, `docs/context/AI_WORKFLOW.md`, `scripts/ai_context_snapshot.sh`, `scripts/check_ai_handoff.py` (pre-existing, unrelated).
+- Git status summary: `c46d53f` (Codex's `AGENTS.md` update) is committed locally but **not yet pushed**. Untracked: `.claude/agents/*.md` (6 files), `.claude/skills/*/SKILL.md` (6 files), `.github/workflows/ai-coordination.yml`, `CLAUDE.md`, `docs/context/AI_WORKFLOW.md`, `scripts/ai_context_snapshot.sh`, `scripts/check_ai_handoff.py` — the rest of the AI Coordination Pack that `c46d53f`'s `AGENTS.md` change references but that hasn't been committed yet.
 
 ## Active task
 
-- Goal: Repair the `estimator_output_invalid` schema mismatch and complete the final controlled live OpenAI-backed proof for the Estimate Approval slice.
-- Owner: unassigned (awaiting next session)
-- Status: **Estimate Approval slice: code-complete, non-billably verified, and now fully live-verified end to end against a real OpenAI call (2026-07-06). Recommend proceeding to the Work Order slice next.**
-- Out of scope this session: Work Orders (not started — recommended next task, but not begun); a "revoked" approval-token status/endpoint (real gap, intentionally deferred).
+- Goal: Finish Phase 0 (freeze/backup of the Estimate Approval slice), then begin **Phase 1 — Work Orders**.
+- Owner: unassigned (awaiting next session — Codex is the suggested owner per the roadmap in `docs/context/PLANS.md`)
+- Status: **Estimate Approval slice is code-complete and fully live-verified (2026-07-06, real OpenAI call, full approval lifecycle including restart persistence). Phase 0 backup is ~90% done — see below for the exact remaining steps. Work Orders has not started.**
+- Out of scope right now: Work Orders (do not start until Phase 0 is fully checked off in `docs/context/PLANS.md`); change-order / `waiting_for_approval` flow (status reserved in the enum for Phase 1 but not implemented until a later slice); a "revoked" approval-token status (deferred to Phase 6).
 
 ## Verified baseline
 
-- Migration head: `006_estimate_approvals` (unchanged; the schema-mismatch fix is response-handling logic only, no schema change)
-- Test count/result: `env UV_CACHE_DIR=/tmp/uv-cache uv run pytest` — 120 passed
-- Local runtime state: `docker compose ps` healthy (PostgreSQL, Redis, backend, worker, frontend). Backend/worker were rebuilt with the fix, restarted multiple times during proof work (including once as part of the final live proof itself), and are currently healthy on real API connectivity (no mock override active).
-- Last known good commit: `14e51c3` on `feat/vehicle-management` (the schema-mismatch fix is uncommitted on top of it)
+- Migration head: `006_estimate_approvals` (Work Orders will add `007_work_orders` — not yet created)
+- Test count/result: `env UV_CACHE_DIR=/tmp/uv-cache uv run pytest` — 120 passed (as of the last full run, 2026-07-06)
+- Local runtime state: `docker compose ps` was healthy (PostgreSQL, Redis, backend, worker, frontend) as of the last check. Re-verify with `/project-sync` before trusting this without a fresh check — time has passed and this environment may have changed outside this session's visibility (note: the last local commit, `c46d53f`, was made by Codex, not by the Claude session that wrote most of this file — confirm current state before proceeding).
+- Last known good, pushed commit: `ce39561` on `feat/estimate-approval`
 
-## Changes in this session
+## The roadmap
 
-1. **Root-caused and fixed `estimator_output_invalid`** (see `KNOWN_ISSUES.md` for full detail): `OpenAIWebResearchService._structured_request()` in `app/services/openai_web.py` now calls `client.responses.create(...)` instead of `client.responses.parse(text_format=...)`. The SDK's `.parse()` eagerly deserialized the model's JSON via strict Pydantic validation *inside* the SDK, and if that failed (confirmed reproducible when optional research fields are `null`), the exception propagated with no `Response` object attached, making the service's own lenient fallback parsing unreachable. The fix sends an identical request-side schema (byte-identical, confirmed) but always retrieves the raw response and routes it through the existing, already-tested adapter. No validation weakened, no prices hard-coded, no second OpenAI call added.
-2. **Tests**: `tests/test_openai_research.py` rewritten — fake OpenAI client now mocks `.create()`. Added `test_null_optional_research_fields_reproduce_and_are_fixed` and `test_narrative_only_output_without_recognizable_structure_is_rejected`; retired two tests whose premise no longer applies. Net count unchanged (10 in file, 120 in suite).
-3. **Non-billable Docker-level proof** (Phase 6, earlier in this session): temporarily pointed `OPENAI_BASE_URL` at a local mock server, exercised the real application code path end-to-end, reverted the override afterward (diff-confirmed clean).
-4. **Final live proof (2026-07-06, this turn)**: with fresh explicit single-call authorization, ran the real live proof against the real OpenAI API. **Succeeded completely** — see Evidence below. This is the first time the Estimate Approval slice has been verified end-to-end against a real, non-mocked, non-fixture OpenAI response.
-5. Archived all synthetic customer/vehicle records created across this session's reproduction/proof work (both this session's and leftovers from the prior session's two live-proof attempts) via the supported `DELETE /api/customers/{id}` / `DELETE /api/vehicles/{id}` archive endpoints — no direct database deletion.
+**Read `docs/context/PLANS.md` before doing anything else.** It is the full phase-by-phase roadmap (Phase 0 through Phase 6: Work Orders → Invoices/PDF → Payments → Local MVP hardening → Staging → Production) with acceptance criteria, required tests, agent assignments, stop conditions, and the GitHub workflow. This handoff file only tracks the immediate next steps; `PLANS.md` is the durable reference so no future session re-derives the sequence.
 
-## Evidence
+## Immediate next steps (Phase 0 completion)
 
-| Gate | Command | Result |
-|---|---|---|
-| Format/Lint/Typecheck | `ruff format .`, `ruff check .`, `pyright` | all clean, 0 errors |
-| Tests | `pytest` | 120 passed |
-| Docker | `config -q`, `build backend worker`, `up -d`, `alembic current` | all succeeded; `006_estimate_approvals (head)` |
-| Live proof: auth/customer/vehicle | real frontend | succeeded (synthetic data, unique suffix per attempt) |
-| Live proof: single generation call | one click of "Create saved estimate" | exactly 1 `POST https://api.openai.com/v1/responses`, `200 OK`, model `gpt-4.1-mini` |
-| Live proof: structured data | `GET /api/estimates/{id}` | 1 labor line (positive hours/rate/total), "Front Brake Pads" @ $74.93, "Front Brake Rotors" qty 2 @ $77.60, labor total $180.00, parts subtotal $230.13, server-calculated estimated total $410.13 — no hard-coded values |
-| Live proof: persistence | reload, `GET /api/estimates/{id}` | estimate reloaded correctly from PostgreSQL |
-| Live proof: approval link | real generated link, `page.goto()` + reload | stayed on `/approval`, token hash preserved through refresh |
-| Live proof: rendering + exposure | approval-view payload + rendered page | full customer-facing content present (customer, vehicle, labor, parts, fees, totals, both payment options); no supplier-cost/markup/margin/internal-reasoning/unselected-competitor-pricing/internal-notes leakage at either the JSON-payload or rendered-text level |
-| Live proof: approval | UI approval with synthetic signature, two-month plan | approval audit persisted (`sent` + `approved` events), approved status + payment option persisted, post-approval `PATCH` correctly returned `409` (locked), repeat approval-view fetch with the same token correctly failed safely (sanitized message, no raw detail) |
-| Live proof: restart persistence | `docker compose restart backend worker`, then direct non-billable API read | estimate #61 still `status: approved`, `payment_option_selected: two_month_plan`, approval history intact — survived the restart |
-| Log inspection | `docker compose logs backend` (full session) | no API keys, session cookie values, long-hex tokens, unhandled tracebacks, raw `psycopg`/`sqlalchemy` errors, or supplier-cost/markup/margin terms found |
+1. Push the current branch and confirm the remote matches:
+   ```bash
+   git push origin feat/estimate-approval
+   git rev-parse HEAD
+   git rev-parse origin/feat/estimate-approval
+   ```
+   (Requires your explicit approval before pushing — do not push automatically.)
+2. Decide the fate of the untracked AI Coordination Pack files listed above. Recommendation from the roadmap: commit them as their own clearly-labeled commit (e.g. `chore: add AI coordination pack`) rather than leaving them untracked indefinitely — but this needs your explicit sign-off on the exact file list first, same as every commit this project has made.
+3. Update `docs/context/PLANS.md`'s Phase 0 checklist to reflect the above once done.
+4. Only then: begin Phase 1 (Work Orders) on a new branch `feat/work-orders` created from `feat/estimate-approval`.
 
 ## Unverified
 
-- Token usage and estimated cost for any OpenAI call made this session: not available (the application does not log OpenAI response usage/cost data).
-- Production/staging checks not run.
+- Current live Docker/git state has not been re-confirmed by this session after Codex's `c46d53f` commit — re-run `/project-sync` at the start of the next session rather than trusting this file's "Verified baseline" section blindly.
+- Token usage and estimated cost for OpenAI calls made during the Estimate Approval live proofs: still not available (no usage logging exists in the application).
+- Production/staging checks not run (expected — blocked until Phase 4 per `PLANS.md`).
 
 ## Unrelated preexisting changes
 
-- Do not modify: `AGENTS.md` (pre-existing AI Coordination Pack diff, confirmed untouched), plus the untracked AI Coordination Pack files (`.claude/`, `.github/`, `CLAUDE.md`, `docs/context/AI_WORKFLOW.md`, `scripts/ai_context_snapshot.sh`, `scripts/check_ai_handoff.py`).
+- The AI Coordination Pack (`AGENTS.md`'s agent-operating-rules section, `.claude/`, `.github/`, `CLAUDE.md`, `docs/context/AI_WORKFLOW.md`, `scripts/ai_context_snapshot.sh`, `scripts/check_ai_handoff.py`) is the coordination-workflow infrastructure this whole roadmap runs on top of — not a code change to the product itself. See "Immediate next steps" above for what to do with it.
 
 ## Blockers and risks
 
-1. GitHub push remains unverified from this environment; the estimate-approval repair commit (`14e51c3`) and this session's uncommitted schema-mismatch fix have not been pushed or committed together.
-2. No "revoked" approval-token status or revoke endpoint exists yet (only `active`, `expired`, `used`) — a real, intentionally deferred gap, not a regression.
-3. Live AI web-research parts lookup can still legitimately return no priced parts for some vehicle/job combinations — inherent variability, observed in the first (2026-07-04) live attempt, not a defect.
-4. Minor log-hygiene item from an earlier, now-superseded failure path (verbose Pydantic serialization warnings echoing research-text fragments) remains unaddressed, out of scope.
+1. Local HEAD (`c46d53f`) is not yet pushed — this is the first Phase 0 backup gap to close.
+2. No "revoked" approval-token status or revoke endpoint exists yet (only `active`, `expired`, `used`) — deferred to Phase 6 per `PLANS.md`, not a regression.
+3. Live AI web-research parts lookup can still legitimately return no priced parts for some vehicle/job combinations — inherent variability observed during the Estimate Approval live proofs, not a defect, and not specific to Work Orders.
+4. Minor log-hygiene item from an earlier, superseded failure path (verbose Pydantic serialization warnings echoing research-text fragments) remains unaddressed, out of scope.
 
 ## Exact next task
 
-Review and commit the uncommitted `estimator_output_invalid` fix (`app/services/openai_web.py`, `tests/test_openai_research.py`) if it should be preserved — do not commit or push without explicit approval. Then begin the **Work Order slice**, following the same inspect → plan → implement → test → independent review → security review → release-readiness → non-billable proof → (explicitly authorized) live proof workflow already established for Estimate Approval.
+Complete Phase 0 (push + AI Coordination Pack decision, both requiring explicit approval first), update `PLANS.md`'s checklist, then begin Phase 1 — Work Orders exactly as scoped in `docs/context/PLANS.md`: new branch `feat/work-orders`, read-only exploration of the estimate/revision/approval models first, a bounded implementation plan presented for approval before any code is written, then the full backend + frontend + 14 required test categories + non-billable runtime proof + independent review + security review + docs update. No live OpenAI calls needed for this slice. Do not commit, push, or start Phase 2 without explicit approval at each step.
 
 ## Fast pickup
 
 Read only these files first:
-1. `docs/context/CURRENT_STATE.md`
-2. `docs/context/KNOWN_ISSUES.md`
-3. `app/estimate_store.py` (for the pattern to follow when starting Work Orders)
+1. `docs/context/PLANS.md` (the roadmap — read this in full)
+2. `docs/context/CURRENT_STATE.md`
+3. `app/estimate_store.py` (the pattern to follow for Work Orders: ownership scoping, status handling, revision snapshots)
