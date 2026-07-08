@@ -23,6 +23,7 @@ def test_official_landon_motor_works_interface_is_packaged() -> None:
     assert "tilt-surface" in css
     assert (STATIC / "logo-mark.svg").is_file()
     assert (STATIC / "favicon.svg").is_file()
+    assert (STATIC / "invoice.css").is_file()
     assert (STATIC / "manifest.webmanifest").is_file()
 
 
@@ -42,6 +43,9 @@ def test_ui_preserves_connected_workflows() -> None:
         "vehicles-customer-filter",
         "vehicles-list",
         "vehicle-detail",
+        "invoices-list",
+        "invoice-detail",
+        "invoice-issue-form",
         "estimate-form",
         "estimate-selected-customer",
         "estimate-selected-vehicle",
@@ -61,9 +65,14 @@ def test_ui_preserves_connected_workflows() -> None:
     assert "/api/context/estimates/selected-estimate?scope=session" in javascript
     assert 'apiFetch("/api/chat"' in javascript
     assert "/api/estimates" in javascript
+    assert "/api/invoices" in javascript
+    assert 'apiFetch(`/api/invoices/${invoiceId}/issue`' in javascript
+    assert 'window.open(`/api/invoices/${invoiceId}/${kind}`' in javascript
+    assert "renderInvoiceList();" in javascript
     assert 'apiFetch(`/api/estimates/${estimateId}`)' in javascript
     assert "/api/estimate-approval/view" in javascript
     assert "async function openEstimateRecord" in javascript
+    assert "async function openInvoiceForSelectedWorkOrder" in javascript
     assert 'window.location.pathname === "/approval"' in javascript
     assert 'window.location.hash.replace(/^#/, "")' in javascript
     assert 'history.replaceState(null, "", "/approval" + window.location.hash)' in javascript

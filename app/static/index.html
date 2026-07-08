@@ -43,6 +43,10 @@
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h12v3h2v15H4V6h2V3Zm2 3h8V5H8v1Zm0 4h8V8H8v2Zm0 4h5v-2H8v2Zm7.2 6-3.6-3.6 1.4-1.4 2.2 2.2 4.4-4.4L21 15l-5.8 5Z"/></svg>
           <span>Work orders</span>
         </button>
+        <button class="nav-item" type="button" data-view="invoices">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 2h9l5 5v15H6V2Zm8 1.5V8h4.5L14 3.5ZM8 11h10v2H8v-2Zm0 4h10v2H8v-2Zm0-8h4v2H8V7Z"/></svg>
+          <span>Invoices</span>
+        </button>
         <button class="nav-item" type="button" data-view="chat">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5h14v10H8.5L5 18.5V5Zm3 4v2h8V9H8Z"/></svg>
           <span>Talk to Optimus</span>
@@ -563,6 +567,7 @@
                   <div class="customers-form-actions">
                     <button class="text-button" type="button" id="work-order-open-estimate">Open estimate</button>
                     <button class="text-button" type="button" id="work-order-open-vehicle">Open vehicle</button>
+                    <button class="text-button" type="button" id="work-order-open-invoice">Open invoice</button>
                   </div>
                 </div>
                 <div id="work-order-detail" class="customer-detail-card">
@@ -650,6 +655,83 @@
                   <div><strong>Owner note stream</strong><span>Notes are append-only and kept with the work order history.</span></div>
                   <div class="customers-form-actions">
                     <button class="primary-button compact" type="submit" id="work-order-note-save">Add note</button>
+                  </div>
+                </div>
+              </form>
+            </section>
+          </div>
+        </section>
+
+        <section class="app-view" id="view-invoices" data-view-panel="invoices" hidden>
+          <div class="customers-layout">
+            <section class="panel customers-list-panel">
+              <div class="panel-heading">
+                <div><span class="section-kicker"><i></i> Customer billing</span><h2>Invoices</h2><p>Completed work orders generate draft invoices with customer-safe snapshots and exportable HTML/PDF documents.</p></div>
+                <button class="secondary-button compact" type="button" id="invoices-refresh">Refresh</button>
+              </div>
+
+              <div class="vehicles-toolbar">
+                <label class="field full">
+                  Search
+                  <input id="invoices-search" placeholder="Search invoice number or repair title">
+                </label>
+                <label class="field">
+                  Status filter
+                  <select id="invoices-status-filter">
+                    <option value="">All statuses</option>
+                    <option value="draft">Draft</option>
+                    <option value="issued">Issued</option>
+                    <option value="partially_paid">Partially paid</option>
+                    <option value="paid">Paid</option>
+                    <option value="overdue">Overdue</option>
+                    <option value="void">Void</option>
+                  </select>
+                </label>
+              </div>
+
+              <div id="invoices-list" class="customers-list" aria-live="polite"></div>
+
+              <div class="customers-pagination">
+                <button class="secondary-button compact" type="button" id="invoices-prev">Previous</button>
+                <span id="invoices-page-status">Page 1</span>
+                <button class="secondary-button compact" type="button" id="invoices-next">Next</button>
+              </div>
+            </section>
+
+            <section class="customers-detail-stack">
+              <section class="panel" id="invoice-detail-panel">
+                <div class="panel-heading">
+                  <div><span class="section-kicker"><i></i> Billing detail</span><h3>Selected invoice</h3></div>
+                  <div class="customers-form-actions">
+                    <button class="text-button" type="button" id="invoice-open-work-order">Open work order</button>
+                    <button class="text-button" type="button" id="invoice-open-html">Open HTML</button>
+                    <button class="text-button" type="button" id="invoice-open-pdf">Open PDF</button>
+                  </div>
+                </div>
+                <div id="invoice-detail" class="customer-detail-card">
+                  <p>Select a completed-work-order invoice from the list.</p>
+                </div>
+              </section>
+
+              <form class="panel estimate-form-panel" id="invoice-issue-form">
+                <div class="panel-heading">
+                  <div><span class="section-kicker"><i></i> Issue invoice</span><h3>Finalize billing</h3></div>
+                  <span class="estimate-number" id="invoice-form-mode">DRAFT</span>
+                </div>
+                <input id="invoice-id" type="hidden">
+
+                <fieldset>
+                  <legend><span>01</span> Due date</legend>
+                  <div class="form-grid two">
+                    <label class="field">Due in days <input id="invoice-due-days" type="number" min="1" max="180" value="30"></label>
+                    <div class="empty-card"><strong>Issue action</strong><p>Issuing a draft stamps the issue time and due date. Payment tracking remains a later slice.</p></div>
+                  </div>
+                </fieldset>
+
+                <div class="estimate-submit-row">
+                  <div><strong>Customer-safe document</strong><span>HTML and PDF document views stay limited to invoice-safe fields only.</span></div>
+                  <div class="customers-form-actions">
+                    <button class="primary-button compact" type="submit" id="invoice-issue-save">Issue invoice</button>
                   </div>
                 </div>
               </form>
@@ -830,6 +912,7 @@
     <button type="button" data-view="customers"><span>▣</span>Customers</button>
     <button type="button" data-view="vehicles"><span>◈</span>Vehicles</button>
     <button type="button" data-view="work-orders"><span>✓</span>Work</button>
+    <button type="button" data-view="invoices"><span>◫</span>Bill</button>
     <button type="button" data-view="chat"><span>◉</span>Optimus</button>
     <button type="button" data-view="system"><span>⚙</span>System</button>
   </nav>

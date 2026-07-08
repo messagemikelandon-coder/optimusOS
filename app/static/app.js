@@ -56,6 +56,17 @@ const state = {
     search: "",
     statusFilter: "",
   },
+  invoices: {
+    items: [],
+    selectedInvoiceId: null,
+    selectedInvoice: null,
+    page: 1,
+    pageSize: 20,
+    total: 0,
+    hasMore: false,
+    search: "",
+    statusFilter: "",
+  },
   currentView: "dashboard",
   health: null,
   lastEstimate: null,
@@ -67,6 +78,7 @@ const viewMeta = {
   customers: { eyebrow: "Records", title: "Customers" },
   vehicles: { eyebrow: "Fleet", title: "Vehicles" },
   "work-orders": { eyebrow: "Repair execution", title: "Work orders" },
+  invoices: { eyebrow: "Customer billing", title: "Invoices" },
   chat: { eyebrow: "Owner channel", title: "Talk to Optimus" },
   estimate: { eyebrow: "Pricing workflow", title: "Job estimator" },
   approval: { eyebrow: "Customer authorization", title: "Estimate approval" },
@@ -262,6 +274,7 @@ function navigate(view) {
   if (view === "customers" && state.auth.authenticated) void loadCustomers();
   if (view === "vehicles" && state.auth.authenticated) void loadVehicles();
   if (view === "work-orders" && state.auth.authenticated) void loadWorkOrders();
+  if (view === "invoices" && state.auth.authenticated) void loadInvoices();
   if (view === "chat") window.setTimeout(() => $("chat-message").focus(), 180);
   if (view === "login") window.setTimeout(() => $("login-username").focus(), 180);
 }
@@ -1906,6 +1919,7 @@ function renderWorkOrderDetail(workOrder = null) {
     $("work-order-authorization-confirmed").checked = false;
     $("work-order-open-estimate").disabled = true;
     $("work-order-open-vehicle").disabled = true;
+    $("work-order-open-invoice").disabled = true;
     $("work-order-blocked-status").innerHTML = "<strong>No blockers</strong><p>Select a work order to see blocked transitions and prerequisites.</p>";
     populateWorkOrderStatusOptions(null);
     return;
@@ -1930,6 +1944,8 @@ function renderWorkOrderDetail(workOrder = null) {
       <div><span>Labor estimate</span><strong>${escapeHtml(`${workOrder.labor_hours_estimate ?? 0} hr`)}</strong></div>
       <div><span>Payment option</span><strong>${escapeHtml(workOrder.payment_option_selected || "Not selected")}</strong></div>
       <div><span>Scheduled for</span><strong>${escapeHtml(workOrder.scheduled_for ? new Date(workOrder.scheduled_for).toLocaleString() : "Not scheduled")}</strong></div>
+      <div><span>Invoice</span><strong>${escapeHtml(workOrder.invoice_number || "Not generated yet")}</strong></div>
+      <div><span>Invoice status</span><strong>${escapeHtml(workOrder.invoice_status ? workOrder.invoice_status.replaceAll("_", " ") : "Not generated")}</strong></div>
     </div>
     <div class="result-grid">
       <section class="result-section"><h3>Approved revision</h3><p>${escapeHtml(workOrder.source_revision.request.job)}</p><p>${money(workOrder.source_revision.estimate.totals.estimated_total)} · revision ${workOrder.source_revision.revision_number}</p></section>
@@ -1944,6 +1960,7 @@ function renderWorkOrderDetail(workOrder = null) {
   $("work-order-authorization-confirmed").checked = Boolean(workOrder.authorization_confirmed);
   $("work-order-open-estimate").disabled = false;
   $("work-order-open-vehicle").disabled = false;
+  $("work-order-open-invoice").disabled = !workOrder.invoice_id;
   $("work-order-form-status-detail").textContent = blocked.length
     ? blocked.map(([, reason]) => reason).join(" ")
     : "Work order is ready for the allowed next status transitions.";
@@ -2171,6 +2188,16 @@ function openVehicleForSelectedWorkOrder() {
   void selectVehicle(vehicleId, { remember: true, suppressErrors: false });
 }
 
+async function openInvoiceForSelectedWorkOrder() {
+  const invoiceId = state.workOrders.selectedWorkOrder?.invoice_id;
+  if (!invoiceId) {
+    showToast("This work order does not have an invoice yet.", "error");
+    return;
+  }
+  navigate("invoices");
+  await selectInvoice(invoiceId);
+}
+
 function initializeWorkOrders() {
   $("work-orders-create").addEventListener("click", () => {
     void createWorkOrderFromSelectedEstimate();
@@ -2210,7 +2237,207 @@ function initializeWorkOrders() {
     void openEstimateForSelectedWorkOrder();
   });
   $("work-order-open-vehicle").addEventListener("click", openVehicleForSelectedWorkOrder);
+  $("work-order-open-invoice").addEventListener("click", () => {
+    void openInvoiceForSelectedWorkOrder();
+  });
   renderWorkOrderDetail(null);
+}
+
+function invoiceStatusLabel(status) {
+  return String(status || "").replaceAll("_", " ");
+}
+
+function renderInvoiceDetail(invoice = null) {
+  const detail = $("invoice-detail");
+  if (!invoice) {
+    detail.innerHTML = "<p>Select a completed-work-order invoice from the list.</p>";
+    $("invoice-id").value = "";
+    $("invoice-form-mode").textContent = "DRAFT";
+    $("invoice-due-days").value = "30";
+    $("invoice-open-work-order").disabled = true;
+    $("invoice-open-html").disabled = true;
+    $("invoice-open-pdf").disabled = true;
+    $("invoice-issue-save").disabled = true;
+    return;
+  }
+  const lineItems = invoice.line_items.map((item) => `
+    <li><strong>${escapeHtml(item.kind.replaceAll("_", " "))}</strong> · ${escapeHtml(item.description)} · ${escapeHtml(String(item.quantity))} × ${money(item.unit_amount)} = ${money(item.line_total)}</li>
+  `).join("") || "<li>No line items.</li>";
+  detail.innerHTML = `
+    <div class="customer-detail-header">
+      <strong>${escapeHtml(invoice.invoice_number)} · ${escapeHtml(invoice.title)}</strong>
+      <span>${escapeHtml(invoiceStatusLabel(invoice.status))}</span>
+    </div>
+    <p>${escapeHtml(invoice.complaint)}</p>
+    <div class="customer-detail-grid">
+      <div><span>Customer</span><strong>${escapeHtml(invoice.customer.display_name)}</strong></div>
+      <div><span>Vehicle</span><strong>${escapeHtml(invoice.vehicle.display_name)}</strong></div>
+      <div><span>Issued</span><strong>${escapeHtml(invoice.issued_at ? new Date(invoice.issued_at).toLocaleString() : "Draft")}</strong></div>
+      <div><span>Due</span><strong>${escapeHtml(invoice.due_at ? new Date(invoice.due_at).toLocaleString() : "Not issued")}</strong></div>
+      <div><span>Labor total</span><strong>${money(invoice.labor_total)}</strong></div>
+      <div><span>Parts total</span><strong>${money(invoice.parts_total)}</strong></div>
+      <div><span>Fees total</span><strong>${money(invoice.fees_total)}</strong></div>
+      <div><span>Invoice total</span><strong>${money(invoice.invoice_total)}</strong></div>
+    </div>
+    <section class="result-section"><h3>Line items</h3><ul>${lineItems}</ul></section>
+  `;
+  $("invoice-id").value = String(invoice.id);
+  $("invoice-form-mode").textContent = invoice.status.toUpperCase();
+  $("invoice-open-work-order").disabled = false;
+  $("invoice-open-html").disabled = false;
+  $("invoice-open-pdf").disabled = false;
+  $("invoice-issue-save").disabled = invoice.status !== "draft";
+}
+
+function renderInvoiceList() {
+  const container = $("invoices-list");
+  if (!state.invoices.items.length) {
+    container.innerHTML = '<div class="empty-card"><strong>No invoices found</strong><p>Complete a work order to generate a draft invoice.</p></div>';
+  } else {
+    container.innerHTML = state.invoices.items.map((item) => `
+      <button type="button" class="customer-list-item${state.invoices.selectedInvoiceId === item.id ? " is-active" : ""}" data-invoice-id="${item.id}">
+        <strong>${escapeHtml(item.invoice_number)} · ${escapeHtml(item.title)}</strong>
+        <span>${escapeHtml(item.customer.display_name)} · ${escapeHtml(invoiceStatusLabel(item.status))} · ${money(item.invoice_total)}</span>
+      </button>
+    `).join("");
+    $$("[data-invoice-id]", container).forEach((button) => {
+      button.addEventListener("click", () => {
+        void selectInvoice(Number(button.dataset.invoiceId));
+      });
+    });
+  }
+  $("invoices-page-status").textContent = `Page ${state.invoices.page} · ${state.invoices.total} total`;
+  $("invoices-prev").disabled = state.invoices.page <= 1;
+  $("invoices-next").disabled = !state.invoices.hasMore;
+}
+
+async function selectInvoice(invoiceId) {
+  try {
+    const response = await apiFetch(`/api/invoices/${invoiceId}`);
+    const data = await readApiPayload(response);
+    if (!response.ok || !data) throw apiError(response, data, "Invoice load failed");
+    state.invoices.selectedInvoiceId = data.id;
+    state.invoices.selectedInvoice = data;
+    renderInvoiceList();
+    renderInvoiceDetail(data);
+  } catch (error) {
+    showToast(`Invoice load failed: ${error.message}`, "error");
+  }
+}
+
+async function loadInvoices() {
+  const list = $("invoices-list");
+  list.innerHTML = '<div class="loading-panel"><span class="loading-spinner"></span><div><strong>Loading invoices</strong><br><small>Reading completed-work-order billing records.</small></div></div>';
+  const searchParams = new URLSearchParams({
+    page: String(state.invoices.page),
+    page_size: String(state.invoices.pageSize),
+  });
+  if (state.invoices.search.trim()) searchParams.set("search", state.invoices.search.trim());
+  if (state.invoices.statusFilter) searchParams.set("status", state.invoices.statusFilter);
+  try {
+    const response = await apiFetch(`/api/invoices?${searchParams.toString()}`);
+    const data = await readApiPayload(response);
+    if (!response.ok || !data) throw apiError(response, data, "Invoice listing failed");
+    state.invoices.items = data.items;
+    state.invoices.total = data.total;
+    state.invoices.hasMore = data.has_more;
+    if (state.invoices.selectedInvoiceId) {
+      const selected = data.items.find((item) => item.id === state.invoices.selectedInvoiceId);
+      if (selected) {
+        state.invoices.selectedInvoice = selected;
+      } else {
+        state.invoices.selectedInvoiceId = null;
+        state.invoices.selectedInvoice = null;
+      }
+    }
+    renderInvoiceList();
+    renderInvoiceDetail(state.invoices.selectedInvoice);
+  } catch (error) {
+    state.invoices.items = [];
+    state.invoices.total = 0;
+    state.invoices.hasMore = false;
+    renderInvoiceList();
+    renderInvoiceDetail(null);
+    showToast(`Invoice listing failed: ${error.message}`, "error");
+  }
+}
+
+async function submitInvoiceIssue(event) {
+  event.preventDefault();
+  const invoiceId = $("invoice-id").value.trim();
+  if (!invoiceId) {
+    showToast("Select an invoice before issuing it.", "error");
+    return;
+  }
+  try {
+    const response = await apiFetch(`/api/invoices/${invoiceId}/issue`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        due_in_days: Number($("invoice-due-days").value || "30"),
+      }),
+    });
+    const data = await readApiPayload(response);
+    if (!response.ok || !data) throw apiError(response, data, "Invoice issue failed");
+    state.invoices.selectedInvoice = data;
+    state.invoices.selectedInvoiceId = data.id;
+    renderInvoiceDetail(data);
+    void loadInvoices();
+    showToast("Invoice issued.", "success");
+  } catch (error) {
+    showToast(`Invoice issue failed: ${error.message}`, "error");
+  }
+}
+
+async function openWorkOrderForSelectedInvoice() {
+  const workOrderId = state.invoices.selectedInvoice?.work_order_id;
+  if (!workOrderId) return;
+  navigate("work-orders");
+  await selectWorkOrder(workOrderId);
+}
+
+function openInvoiceDocument(kind) {
+  const invoiceId = state.invoices.selectedInvoice?.id;
+  if (!invoiceId) return;
+  window.open(`/api/invoices/${invoiceId}/${kind}`, "_blank", "noopener");
+}
+
+function initializeInvoices() {
+  $("invoices-refresh").addEventListener("click", () => {
+    void loadInvoices();
+  });
+  $("invoices-search").addEventListener("input", () => {
+    state.invoices.search = $("invoices-search").value;
+    state.invoices.page = 1;
+    void loadInvoices();
+  });
+  $("invoices-status-filter").addEventListener("change", () => {
+    state.invoices.statusFilter = $("invoices-status-filter").value;
+    state.invoices.page = 1;
+    void loadInvoices();
+  });
+  $("invoices-prev").addEventListener("click", () => {
+    state.invoices.page = Math.max(1, state.invoices.page - 1);
+    void loadInvoices();
+  });
+  $("invoices-next").addEventListener("click", () => {
+    if (!state.invoices.hasMore) return;
+    state.invoices.page += 1;
+    void loadInvoices();
+  });
+  $("invoice-issue-form").addEventListener("submit", (event) => {
+    void submitInvoiceIssue(event);
+  });
+  $("invoice-open-work-order").addEventListener("click", () => {
+    void openWorkOrderForSelectedInvoice();
+  });
+  $("invoice-open-html").addEventListener("click", () => {
+    openInvoiceDocument("html");
+  });
+  $("invoice-open-pdf").addEventListener("click", () => {
+    openInvoiceDocument("pdf");
+  });
+  renderInvoiceDetail(null);
 }
 
 function setStatus(id, text, online = null) {
@@ -2279,6 +2506,7 @@ function initializeApp() {
   initializeCustomers();
   initializeVehicles();
   initializeWorkOrders();
+  initializeInvoices();
   initializeEstimate();
   initializeSystem();
   initializeAuth();

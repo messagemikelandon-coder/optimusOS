@@ -965,6 +965,9 @@ class WorkOrderRead(BaseModel):
     estimate_total: float | None = None
     labor_hours_estimate: float | None = None
     payment_option_selected: str | None = None
+    invoice_id: int | None = None
+    invoice_number: str | None = None
+    invoice_status: InvoiceStatus | None = None
     deposit_received: bool
     authorization_confirmed: bool
     scheduled_for: datetime | None = None
@@ -983,6 +986,81 @@ class WorkOrderListResponse(BaseModel):
     page_size: int
     total: int
     has_more: bool
+
+
+class InvoiceStatus(StrEnum):
+    DRAFT = "draft"
+    ISSUED = "issued"
+    PARTIALLY_PAID = "partially_paid"
+    PAID = "paid"
+    OVERDUE = "overdue"
+    VOID = "void"
+
+
+class InvoiceLineItemKind(StrEnum):
+    LABOR = "labor"
+    PART = "part"
+    FEE = "fee"
+
+
+class InvoiceCustomerSnapshot(BaseModel):
+    display_name: str
+    email: str | None = None
+    phone: str | None = None
+
+
+class InvoiceVehicleSnapshot(BaseModel):
+    display_name: str
+    vin: str | None = None
+    license_plate: str | None = None
+    current_mileage: int | None = None
+
+
+class InvoiceLineItemRead(BaseModel):
+    id: int
+    sort_order: int
+    kind: InvoiceLineItemKind
+    description: str
+    quantity: float
+    unit_amount: float
+    line_total: float
+
+
+class InvoiceRead(BaseModel):
+    id: int
+    invoice_number: str
+    status: InvoiceStatus
+    work_order_id: int
+    estimate_id: int
+    estimate_revision_id: int
+    customer_id: int
+    vehicle_id: int
+    customer: InvoiceCustomerSnapshot
+    vehicle: InvoiceVehicleSnapshot
+    title: str
+    complaint: str
+    payment_option_selected: str | None = None
+    issued_at: datetime | None = None
+    due_at: datetime | None = None
+    labor_total: float
+    parts_total: float
+    fees_total: float
+    invoice_total: float
+    line_items: list[InvoiceLineItemRead] = Field(default_factory=list)
+    created_at: datetime
+    updated_at: datetime
+
+
+class InvoiceListResponse(BaseModel):
+    items: list[InvoiceRead]
+    page: int
+    page_size: int
+    total: int
+    has_more: bool
+
+
+class InvoiceIssueRequest(BaseModel):
+    due_in_days: int = Field(default=30, ge=1, le=180)
 
 
 class ApprovalBase(BaseModel):

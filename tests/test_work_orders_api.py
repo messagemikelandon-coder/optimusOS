@@ -34,9 +34,10 @@ async def create_approved_estimate_for_auth(
     auth,
     *,
     payment_option: EstimatePaymentOptionCode = EstimatePaymentOptionCode.PAY_IN_FULL,
+    estimate_job_stub=stub_estimate_job,
     **vehicle_overrides,
 ):  # type: ignore[no-untyped-def]
-    monkeypatch.setattr(OptimusResearchOrchestrator, "estimate_job", stub_estimate_job)
+    monkeypatch.setattr(OptimusResearchOrchestrator, "estimate_job", estimate_job_stub)
     _, vehicle, estimate = await create_estimate_for_auth(
         settings,
         db_session,

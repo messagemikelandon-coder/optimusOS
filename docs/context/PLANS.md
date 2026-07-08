@@ -79,6 +79,27 @@ Branch: `feat/invoices`, from the merged/verified Phase 1 state.
 
 Required tests: invoice generated on completion; duplicate completion does not duplicate invoice; totals preserved; PDF generated; PDF excludes forbidden internal fields (supplier cost, markup, margin, internal notes, and any other policy-forbidden field); cross-user isolation; historical snapshot persistence; restart persistence.
 
+- Implemented in source: backend invoice store/routes/models, Alembic migration `008_invoices`, owner-facing invoice UI list/detail/issue/document flow, and targeted regression tests in `tests/test_invoices_api.py`.
+- Verified complete:
+  - invoice generated on work-order completion
+  - duplicate completion remains idempotent
+  - totals and customer-safe line items preserved
+  - HTML and PDF document outputs generated
+  - forbidden-field exclusion checks pass for HTML/PDF output
+  - cross-user isolation proven in tests and live proof
+  - historical snapshot persistence proven after customer/vehicle updates
+  - restart persistence proven in tests and live proof
+  - full suite green
+  - `ruff` / `pyright` green
+  - Docker rebuild green
+  - Alembic script head and live DB head both at `008_invoices`
+  - non-billable live proof of completion → invoice issue → HTML/PDF retrieval → restart persistence
+  - independent review completed and follow-up fixes applied for atomic completion/invoice creation and CSP-safe invoice styling
+  - independent review follow-up also fixed full-fee aggregation, long-description schema safety, long/multiline PDF rendering, and invoice-list selection refresh
+  - security review completed with no findings
+  - independent re-review completed with no remaining findings
+- [ ] Commit/push the verified Phase 2 slice before starting Phase 3
+
 **Acceptance:** all 8 test categories pass; PDF text-extraction test asserts forbidden fields never appear; idempotent completion; restart persistence; reviews pass; docs updated.
 
 ### Phase 3 — Payment Tracking

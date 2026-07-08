@@ -11,10 +11,12 @@ from app.config import Settings
 from app.customer_store import display_name as customer_display_name
 from app.db_models import Estimate, WorkOrder, WorkOrderNote, WorkOrderStatusEvent
 from app.estimate_store import EstimateNotFoundError, _revision_to_read
+from app.invoice_store import ensure_draft_invoice_for_work_order
 from app.models import (
     EstimatePaymentOptionCode,
     EstimateRevisionRead,
     EstimateStatus,
+    InvoiceStatus,
     WorkOrderListResponse,
     WorkOrderNoteCreate,
     WorkOrderNoteRead,
@@ -184,6 +186,9 @@ def _to_read(work_order: WorkOrder) -> WorkOrderRead:
         estimate_total=work_order.estimate_total,
         labor_hours_estimate=work_order.labor_hours_estimate,
         payment_option_selected=work_order.payment_option_selected,
+        invoice_id=work_order.invoice.id if work_order.invoice else None,
+        invoice_number=work_order.invoice.invoice_number if work_order.invoice else None,
+        invoice_status=InvoiceStatus(work_order.invoice.status) if work_order.invoice else None,
         deposit_received=work_order.deposit_received,
         authorization_confirmed=work_order.authorization_confirmed,
         scheduled_for=ensure_utc(work_order.scheduled_for) if work_order.scheduled_for else None,
@@ -402,9 +407,17 @@ def transition_work_order_status(
         reason=payload.reason,
         auth=auth,
     )
-    db.commit()
-    db.refresh(work_order)
-    return _to_read(work_order)
+    try:
+        if target_status is WorkOrderStatus.COMPLETED:
+            ensure_draft_invoice_for_work_order(db=db, auth=auth, work_order=work_order)
+            db.refresh(work_order)
+            return _to_read(work_order)
+        db.commit()
+        db.refresh(work_order)
+        return _to_read(work_order)
+    except Exception:
+        db.rollback()
+        raise
 
 
 def add_work_order_note(
