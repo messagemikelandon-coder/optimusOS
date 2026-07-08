@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import textwrap
 from datetime import UTC, datetime, timedelta
+from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from html import escape
 from typing import Any
 
@@ -11,23 +12,33 @@ from sqlalchemy.orm import Session
 
 from app.auth import AuthContext, ensure_utc
 from app.config import Settings
-from app.db_models import Invoice, InvoiceLineItem, WorkOrder
+from app.db_models import Invoice, InvoiceLineItem, InvoicePayment, PaymentSchedule, WorkOrder
 from app.estimate_store import _revision_to_approval_view
 from app.models import (
     EstimateApprovalRevisionView,
     EstimateFeeItem,
     EstimateLaborItem,
+    EstimatePaymentOptionCode,
     InvoiceCustomerSnapshot,
     InvoiceIssueRequest,
     InvoiceLineItemKind,
     InvoiceLineItemRead,
     InvoiceListResponse,
+    InvoicePaymentRead,
     InvoiceRead,
     InvoiceStatus,
     InvoiceVehicleSnapshot,
+    PaymentAppliesTo,
+    PaymentScheduleEntryRead,
     SelectedPart,
     WorkOrderStatus,
 )
+
+# Money columns for payments/schedule are Decimal(10, 2), deliberately distinct
+# from the Phase 2 Float invoice/line-item columns. This local `_money` helper
+# mirrors the one in `app/estimate_store.py` (duplicated rather than imported,
+# consistent with this repo's per-store-module helper convention).
+MONEY = Decimal("0.01")
 
 
 class InvoiceStoreError(ValueError):
@@ -36,6 +47,67 @@ class InvoiceStoreError(ValueError):
 
 class InvoiceNotFoundError(InvoiceStoreError):
     pass
+
+
+def _money(value: float | Decimal) -> Decimal:
+    try:
+        normalized = Decimal(str(value))
+    except (InvalidOperation, ValueError) as exc:
+        raise InvoiceStoreError("Invalid monetary amount.") from exc
+    if not normalized.is_finite():
+        raise InvoiceStoreError("Invalid monetary amount.")
+    return normalized.quantize(MONEY, rounding=ROUND_HALF_UP)
+
+
+def now_utc() -> datetime:
+    """Plain module-level clock, monkeypatchable in tests. No background jobs;
+    overdue status is always computed fresh at read time instead."""
+    return datetime.now(UTC)
+
+
+def derive_invoice_status(
+    invoice_total: Decimal,
+    total_paid: Decimal,
+    due_at: datetime | None,
+    current_status: InvoiceStatus,
+    now: datetime,
+) -> InvoiceStatus:
+    """Pure function: never mutates anything, never client-supplied. `draft`
+    and `void` invoices are untouched by payments."""
+    if current_status in (InvoiceStatus.DRAFT, InvoiceStatus.VOID):
+        return current_status
+    if total_paid <= 0:
+        base = InvoiceStatus.ISSUED
+    elif total_paid >= invoice_total:
+        base = InvoiceStatus.PAID
+    else:
+        base = InvoiceStatus.PARTIALLY_PAID
+    if (
+        base in (InvoiceStatus.ISSUED, InvoiceStatus.PARTIALLY_PAID)
+        and due_at is not None
+        and now > due_at
+    ):
+        return InvoiceStatus.OVERDUE
+    return base
+
+
+def _payment_summary(invoice: Invoice, *, now: datetime) -> tuple[Decimal, InvoiceStatus, bool]:
+    """Fresh, read-time-only derivation of (total_paid, effective_status,
+    is_overdue) from the stored payment rows. Reversal rows already carry a
+    negative amount, so a simple sum nets them out -- no filtering needed."""
+    total_paid = sum((_money(payment.amount) for payment in invoice.payments), Decimal("0.00"))
+    invoice_total = _money(invoice.invoice_total)
+    due_at = ensure_utc(invoice.due_at) if invoice.due_at else None
+    current_status = InvoiceStatus(invoice.status)
+    effective_status = derive_invoice_status(
+        invoice_total=invoice_total,
+        total_paid=total_paid,
+        due_at=due_at,
+        current_status=current_status,
+        now=now,
+    )
+    is_overdue = effective_status is InvoiceStatus.OVERDUE
+    return total_paid, effective_status, is_overdue
 
 
 def _invoice_query(auth: AuthContext) -> Select[tuple[Invoice]]:
@@ -82,11 +154,40 @@ def _line_item_to_read(item: InvoiceLineItem) -> InvoiceLineItemRead:
     )
 
 
+def _payment_to_read(payment: InvoicePayment) -> InvoicePaymentRead:
+    return InvoicePaymentRead(
+        id=payment.id,
+        amount=float(_money(payment.amount)),
+        method_label=payment.method_label,
+        applies_to=PaymentAppliesTo(payment.applies_to),
+        note=payment.note,
+        recorded_at=ensure_utc(payment.recorded_at),
+        reversal_of_payment_id=payment.reversal_of_payment_id,
+        is_reversal=payment.reversal_of_payment_id is not None,
+        created_by_user_id=payment.created_by_user_id,
+        created_by_display_name=None,
+        created_at=ensure_utc(payment.created_at),
+    )
+
+
+def _schedule_to_read(entry: PaymentSchedule) -> PaymentScheduleEntryRead:
+    return PaymentScheduleEntryRead(
+        id=entry.id,
+        sort_order=entry.sort_order,
+        label=entry.label,
+        due_at=ensure_utc(entry.due_at) if entry.due_at else None,
+        amount=float(_money(entry.amount)),
+    )
+
+
 def _to_read(invoice: Invoice) -> InvoiceRead:
+    total_paid, effective_status, is_overdue = _payment_summary(invoice, now=now_utc())
+    invoice_total = _money(invoice.invoice_total)
+    balance_due = max(invoice_total - total_paid, Decimal("0.00"))
     return InvoiceRead(
         id=invoice.id,
         invoice_number=invoice.invoice_number,
-        status=InvoiceStatus(invoice.status),
+        status=effective_status,
         work_order_id=invoice.work_order_id,
         estimate_id=invoice.estimate_id,
         estimate_revision_id=invoice.estimate_revision_id,
@@ -103,7 +204,12 @@ def _to_read(invoice: Invoice) -> InvoiceRead:
         parts_total=invoice.parts_total,
         fees_total=invoice.fees_total,
         invoice_total=invoice.invoice_total,
+        total_paid=float(total_paid),
+        balance_due=float(balance_due),
+        is_overdue=is_overdue,
         line_items=[_line_item_to_read(item) for item in invoice.line_items],
+        payments=[_payment_to_read(payment) for payment in invoice.payments],
+        schedule=[_schedule_to_read(entry) for entry in invoice.schedule],
         created_at=ensure_utc(invoice.created_at),
         updated_at=ensure_utc(invoice.updated_at),
     )
@@ -162,7 +268,9 @@ def _invoice_line_payloads(
 
 def _invoice_fees_total(revision_view: EstimateApprovalRevisionView) -> float:
     return float(
-        sum(EstimateFeeItem.model_validate(item).amount for item in revision_view.estimate.fee_items)
+        sum(
+            EstimateFeeItem.model_validate(item).amount for item in revision_view.estimate.fee_items
+        )
     )
 
 
@@ -280,6 +388,58 @@ def get_invoice(*, db: Session, auth: AuthContext, invoice_id: int) -> InvoiceRe
     return _to_read(_require_invoice(db, auth, invoice_id))
 
 
+def _generate_schedule_rows(
+    *,
+    invoice: Invoice,
+    payment_option_selected: str | None,
+    invoice_total: Decimal,
+    issued_at: datetime,
+    due_at: datetime,
+) -> list[PaymentSchedule]:
+    """Generate the invoice's one-time payment schedule.
+
+    PLACEHOLDER DEFAULT (see docs/context/BUSINESS_RULES.md -- the real
+    deposit/installment percentage split is unconfirmed business-rule
+    evidence): this uses a simple even split so the owner has a starting
+    schedule to override manually later. Amounts always sum exactly to
+    `invoice_total` (remainder absorbed into the last row).
+
+    Schedule rows are purely informational display data -- balance, status,
+    and overdue logic (`derive_invoice_status`/`_payment_summary`) never read
+    this table, only `invoice_payments` + `invoice_total` + `due_at`.
+    """
+    rows: list[tuple[str, datetime, Decimal]]
+    if payment_option_selected == EstimatePaymentOptionCode.SPLIT_PAYMENT.value:
+        deposit = _money(invoice_total / 2)
+        balance = invoice_total - deposit
+        rows = [
+            ("Deposit", issued_at, deposit),
+            ("Balance", due_at, balance),
+        ]
+    elif payment_option_selected == EstimatePaymentOptionCode.TWO_MONTH_PLAN.value:
+        deposit = _money(invoice_total / 3)
+        installment_1 = deposit
+        installment_2 = invoice_total - deposit - installment_1
+        rows = [
+            ("Deposit", issued_at, deposit),
+            ("Installment 1", issued_at + timedelta(days=30), installment_1),
+            ("Installment 2", issued_at + timedelta(days=60), installment_2),
+        ]
+    else:
+        rows = [("Full payment", due_at, invoice_total)]
+    return [
+        PaymentSchedule(
+            owner_user_id=invoice.owner_user_id,
+            invoice_id=invoice.id,
+            sort_order=sort_order,
+            label=label,
+            due_at=row_due_at,
+            amount=amount,
+        )
+        for sort_order, (label, row_due_at, amount) in enumerate(rows, start=1)
+    ]
+
+
 def issue_invoice(
     *,
     db: Session,
@@ -296,10 +456,23 @@ def issue_invoice(
     if current_status is not InvoiceStatus.DRAFT:
         raise InvoiceStoreError("Only draft invoices can be issued.")
     issued_at = datetime.now(UTC)
+    due_at = issued_at + timedelta(days=payload.due_in_days)
     invoice.status = InvoiceStatus.ISSUED.value
     invoice.issued_at = issued_at
-    invoice.due_at = issued_at + timedelta(days=payload.due_in_days)
+    invoice.due_at = due_at
     db.add(invoice)
+    db.flush()
+    # Belt and suspenders: issue is already a one-time draft->issued
+    # transition, but only generate the schedule if none exists yet.
+    if not invoice.schedule:
+        for row in _generate_schedule_rows(
+            invoice=invoice,
+            payment_option_selected=invoice.payment_option_selected,
+            invoice_total=_money(invoice.invoice_total),
+            issued_at=issued_at,
+            due_at=due_at,
+        ):
+            db.add(row)
     db.commit()
     db.refresh(invoice)
     return _to_read(invoice)
@@ -471,8 +644,7 @@ def render_invoice_pdf(invoice: InvoiceRead, *, business_name: str) -> bytes:
         pdf.extend(f"{offset:010d} 00000 n \n".encode("ascii"))
     pdf.extend(
         (
-            f"trailer << /Size {len(objects) + 1} /Root 1 0 R >>\n"
-            f"startxref\n{xref_offset}\n%%EOF"
+            f"trailer << /Size {len(objects) + 1} /Root 1 0 R >>\nstartxref\n{xref_offset}\n%%EOF"
         ).encode("ascii")
     )
     return bytes(pdf)

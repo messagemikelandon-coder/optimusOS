@@ -1003,6 +1003,14 @@ class InvoiceLineItemKind(StrEnum):
     FEE = "fee"
 
 
+class PaymentAppliesTo(StrEnum):
+    DEPOSIT = "deposit"
+    INSTALLMENT = "installment"
+    BALANCE = "balance"
+    FULL = "full"
+    OTHER = "other"
+
+
 class InvoiceCustomerSnapshot(BaseModel):
     display_name: str
     email: str | None = None
@@ -1026,6 +1034,56 @@ class InvoiceLineItemRead(BaseModel):
     line_total: float
 
 
+class InvoicePaymentCreate(BaseModel):
+    amount: float = Field(gt=0, le=1_000_000)
+    method_label: NonBlank = Field(max_length=60)
+    applies_to: PaymentAppliesTo = PaymentAppliesTo.OTHER
+    note: str | None = Field(default=None, max_length=2000)
+    recorded_at: datetime | None = None
+
+    @field_validator("note", mode="before")
+    @classmethod
+    def strip_payment_note(cls, value: object) -> object:
+        if isinstance(value, str):
+            stripped = value.strip()
+            return stripped or None
+        return value
+
+
+class InvoicePaymentVoidRequest(BaseModel):
+    reason: str | None = Field(default=None, max_length=2000)
+
+    @field_validator("reason", mode="before")
+    @classmethod
+    def strip_void_reason(cls, value: object) -> object:
+        if isinstance(value, str):
+            stripped = value.strip()
+            return stripped or None
+        return value
+
+
+class InvoicePaymentRead(BaseModel):
+    id: int
+    amount: float
+    method_label: str
+    applies_to: PaymentAppliesTo
+    note: str | None = None
+    recorded_at: datetime
+    reversal_of_payment_id: int | None = None
+    is_reversal: bool
+    created_by_user_id: int | None = None
+    created_by_display_name: str | None = None
+    created_at: datetime
+
+
+class PaymentScheduleEntryRead(BaseModel):
+    id: int
+    sort_order: int
+    label: str
+    due_at: datetime | None = None
+    amount: float
+
+
 class InvoiceRead(BaseModel):
     id: int
     invoice_number: str
@@ -1046,7 +1104,12 @@ class InvoiceRead(BaseModel):
     parts_total: float
     fees_total: float
     invoice_total: float
+    total_paid: float
+    balance_due: float
+    is_overdue: bool
     line_items: list[InvoiceLineItemRead] = Field(default_factory=list)
+    payments: list[InvoicePaymentRead] = Field(default_factory=list)
+    schedule: list[PaymentScheduleEntryRead] = Field(default_factory=list)
     created_at: datetime
     updated_at: datetime
 

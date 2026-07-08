@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from decimal import Decimal
 
 from sqlalchemy import (
     JSON,
@@ -9,6 +10,7 @@ from sqlalchemy import (
     DateTime,
     ForeignKey,
     Index,
+    Numeric,
     String,
     Text,
     UniqueConstraint,
@@ -791,6 +793,16 @@ class Invoice(Base):
         cascade="all, delete-orphan",
         order_by="InvoiceLineItem.sort_order",
     )
+    payments: Mapped[list[InvoicePayment]] = relationship(
+        back_populates="invoice",
+        cascade="all, delete-orphan",
+        order_by="InvoicePayment.recorded_at",
+    )
+    schedule: Mapped[list[PaymentSchedule]] = relationship(
+        back_populates="invoice",
+        cascade="all, delete-orphan",
+        order_by="PaymentSchedule.sort_order",
+    )
 
 
 class InvoiceLineItem(Base):
@@ -816,3 +828,112 @@ class InvoiceLineItem(Base):
     line_total: Mapped[float] = mapped_column(nullable=False)
 
     invoice: Mapped[Invoice] = relationship(back_populates="line_items")
+
+
+class InvoicePayment(Base):
+    """A single append-only payment (or reversal) event on an invoice.
+
+    Payments are never updated or deleted after insert. Voiding a payment inserts
+    a new row with a negative ``amount`` and ``reversal_of_payment_id`` pointing
+    back at the original row; the balance is always ``SUM(amount)`` over every
+    row for the invoice, so the reversal cancels the original arithmetically
+    without mutating it.
+    """
+
+    __tablename__ = "invoice_payments"
+    __table_args__ = (
+        CheckConstraint(
+            "applies_to IN ('deposit', 'installment', 'balance', 'full', 'other')",
+            name="ck_invoice_payments_applies_to",
+        ),
+        CheckConstraint(
+            "(reversal_of_payment_id IS NULL AND amount > 0) "
+            "OR (reversal_of_payment_id IS NOT NULL AND amount < 0)",
+            name="ck_invoice_payments_amount_sign",
+        ),
+        UniqueConstraint(
+            "reversal_of_payment_id",
+            name="uq_invoice_payments_reversal_of",
+        ),
+        Index(
+            "ix_invoice_payments_owner_invoice_recorded",
+            "owner_user_id",
+            "invoice_id",
+            "recorded_at",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    owner_user_id: Mapped[int] = mapped_column(
+        ForeignKey("user_accounts.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    invoice_id: Mapped[int] = mapped_column(
+        ForeignKey("invoices.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    amount: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False)
+    applies_to: Mapped[str] = mapped_column(String(20), nullable=False)
+    method_label: Mapped[str] = mapped_column(String(60), nullable=False)
+    note: Mapped[str | None] = mapped_column(Text)
+    recorded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    reversal_of_payment_id: Mapped[int | None] = mapped_column(
+        ForeignKey("invoice_payments.id", ondelete="RESTRICT"),
+        nullable=True,
+    )
+    created_by_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("user_accounts.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+
+    invoice: Mapped[Invoice] = relationship(back_populates="payments")
+
+
+class PaymentSchedule(Base):
+    """A single informational, read-only payment-schedule row for an invoice.
+
+    Generated once at issue time from a placeholder even-split default (see
+    ``app/invoice_store.py``). Purely informational display data -- balance,
+    status, and overdue logic never read this table.
+    """
+
+    __tablename__ = "payment_schedules"
+    __table_args__ = (
+        UniqueConstraint(
+            "invoice_id",
+            "sort_order",
+            name="uq_payment_schedules_invoice_sort",
+        ),
+        Index(
+            "ix_payment_schedules_owner_invoice_sort",
+            "owner_user_id",
+            "invoice_id",
+            "sort_order",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    owner_user_id: Mapped[int] = mapped_column(
+        ForeignKey("user_accounts.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    invoice_id: Mapped[int] = mapped_column(
+        ForeignKey("invoices.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    sort_order: Mapped[int] = mapped_column(nullable=False)
+    label: Mapped[str] = mapped_column(String(80), nullable=False)
+    due_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    amount: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+
+    invoice: Mapped[Invoice] = relationship(back_populates="schedule")

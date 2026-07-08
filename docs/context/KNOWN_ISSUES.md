@@ -9,10 +9,15 @@ Relevant sources: `git status`, `git diff --stat`, `env UV_CACHE_DIR=/tmp/uv-cac
 
 ## Confirmed Open Issues
 
-- None currently confirmed in the Work Order or Invoice source implementation, automated verification path, or non-billable live proof path.
+- None currently confirmed in the Work Order, Invoice, or Payment Tracking source implementation, automated verification path, or non-billable live proof path.
+- Payment-schedule installment percentage split (Phase 3) is an explicitly flagged placeholder (owner-confirmed even default split) pending real business-rule confirmation — see `docs/context/BUSINESS_RULES.md` and `docs/context/CURRENT_STATE.md`'s Payment Tracking Slice section. Not a defect, but a known open decision.
 
 ## Historical Resolved Issues
 
+- Phase 3 (Payment Tracking) review items resolved on 2026-07-08:
+  - security review found the overpayment check was not race-safe under concurrent requests to the same invoice (no row lock); fixed same-day by adding a `SELECT ... FOR UPDATE` lock on the invoice row in `app/payment_store.py::record_payment` before the check-then-insert; full gates re-ran green after the fix
+  - independent review found two minor, accepted architecture-drift items (payment logic split into a new `app/payment_store.py` module; an added `le=1_000_000` bound on payment amount) — both documented in `docs/context/SESSION_HANDOFF.md`, neither required a code change
+  - a test-only typing issue (`SimpleNamespace` passed where `Invoice` was annotated) and a test-only VIN collision (three fixture vehicles created under one owner in a single test reusing the same hardcoded VIN) were both fixed in `tests/test_payments_api.py`
 - Phase 1 closure verification items are resolved:
   - non-billable live Work Order proof passed against the Docker stack
   - independent review findings around blocked transitions, uncached estimate reopening, and note-recency ordering were fixed

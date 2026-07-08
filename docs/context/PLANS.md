@@ -98,7 +98,7 @@ Required tests: invoice generated on completion; duplicate completion does not d
   - independent review follow-up also fixed full-fee aggregation, long-description schema safety, long/multiline PDF rendering, and invoice-list selection refresh
   - security review completed with no findings
   - independent re-review completed with no remaining findings
-- [ ] Commit/push the verified Phase 2 slice before starting Phase 3
+- [x] Commit/push the verified Phase 2 slice before starting Phase 3 (`85e9bce`, pushed to `origin/feat/invoices` on 2026-07-08)
 
 **Acceptance:** all 8 test categories pass; PDF text-extraction test asserts forbidden fields never appear; idempotent completion; restart persistence; reviews pass; docs updated.
 
@@ -107,13 +107,27 @@ Required tests: invoice generated on completion; duplicate completion does not d
 
 Branch: `feat/payment-tracking`.
 
-- Migration `009_payments`: `invoice_payments` (append-only — amount, method label, recorded_at, note, `voided_by_payment_id` for reversals; **no card/bank fields in the schema at all**, so there is nothing to leak), `payment_schedules` (installments for the two-month plan).
+- Migration `009_payments`: `invoice_payments` (append-only — amount, method label, recorded_at, note, `reversal_of_payment_id` for reversals; **no card/bank fields in the schema at all**, so there is nothing to leak), `payment_schedules` (installments for the two-month plan).
 - Balance = server-side Decimal sum over non-voided payments; invoice status derived server-side, never client-supplied.
 - Overdue computed against `due_at` with an injectable clock so tests don't sleep or fake system time.
 - Overpayment: reject by default (explicit, tested); corrections go through void + re-record, never delete.
 - Recording a deposit payment satisfies the linked work order's `deposit_received` prerequisite.
 
 Required tests: full payment; partial payment; deposit; installments; overpayment rejection; void/reversal; invoice status updates; overdue calculation; cross-user isolation; restart persistence. Plus Decimal-precision regression tests — no float arithmetic anywhere in money paths.
+
+- [x] Implemented in source: backend store (`app/payment_store.py`), models, Alembic migration `009_payments`, extended owner-facing invoice detail UI, and 16 targeted regression tests in `tests/test_payments_api.py`.
+- [x] Owner decision recorded 2026-07-08: this phase is an internal append-only ledger only — no Square/external payment processor, no live/billable calls, no change to Square/external scheduling or the Work Order status lifecycle. Square is deferred to its own future phase. Payment-schedule percentage split uses an explicitly flagged placeholder (even default split) pending real business-rule confirmation.
+- [x] Verified complete:
+  - all 16 required test categories covered, full suite green (165 passed)
+  - `ruff` / `pyright` green on the touched files and repo-wide
+  - Docker rebuild green; Alembic script head and live DB head both at `009_payments`; downgrade/upgrade rollback rehearsed cleanly
+  - non-billable live proof: deposit payment flips `deposit_received`, schedule generated once and sums exactly to `invoice_total` in Decimal, overpayment rejected, void recomputes balance/status without reverting `deposit_received`, double-void rejected, restart persistence confirmed, cross-user isolation returns `404` on both new routes
+  - independent review completed: no correctness bugs, no regressions, `app/work_order_store.py` confirmed untouched; two minor accepted deviations documented (payment logic in its own module; an added upper bound on payment amount)
+  - security review completed: one medium finding (overpayment check not race-safe) fixed same-day with a `SELECT ... FOR UPDATE` row lock; no other findings
+  - context docs updated to reflect the current local branch state
+- [ ] Commit/push the verified Phase 3 slice — **awaiting explicit commit/push approval**, not yet performed.
+
+**Acceptance:** all listed test categories pass; full suite stays green; ruff/pyright clean; Docker rebuild + migration `009_payments` applied with rollback rehearsed; non-billable live proof of deposit/overpayment/void/overdue/restart/cross-user behavior; reviews pass; docs updated. Met in full except the commit/push step, which requires explicit owner approval.
 
 ### Phase 4 — Full Local MVP Hardening
 **Goal:** prove the complete local flow end to end. Proof slice only — no new product features except fixes for what it finds.
