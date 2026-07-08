@@ -9,11 +9,16 @@ Relevant sources: `git status`, `git diff --stat`, `env UV_CACHE_DIR=/tmp/uv-cac
 
 ## Confirmed Open Issues
 
-- None currently confirmed in the Work Order, Invoice, or Payment Tracking source implementation, automated verification path, or non-billable live proof path.
+- None currently confirmed in the Work Order, Invoice, Payment Tracking, or Phase 4 hardening source implementation, automated verification path, or non-billable live proof path.
 - Payment-schedule installment percentage split (Phase 3) is an explicitly flagged placeholder (owner-confirmed even default split) pending real business-rule confirmation — see `docs/context/BUSINESS_RULES.md` and `docs/context/CURRENT_STATE.md`'s Payment Tracking Slice section. Not a defect, but a known open decision.
+- No permanent, repeatable, committed automated test exists yet for Phase 4's fresh-volume E2E flow or its three failure drills (Redis down, Postgres down, full restart) — only a one-time manual live-proof run on 2026-07-08. Not a defect, but an open scope decision: build a permanent version before Phase 5, or accept the one-time proof as sufficient.
 
 ## Historical Resolved Issues
 
+- Phase 4 (Full Local MVP Hardening) review items resolved on 2026-07-08:
+  - independent review found `scripts/scan_logs_for_secrets.py`'s credentialed-connection-URL pattern only matched `postgresql://`, missing a leaked `redis://user:pass@host` even though Redis is a default-scanned service; fixed by broadening the pattern to match any `scheme://user:pass@` URL, and added `bearer`/`client_secret`/`auth_token` to the generic secret-label pattern
+  - independent review found two new test docstrings (`tests/test_document_exposure_scan.py`, one test in `tests/test_idempotency_audit.py`) claimed Phase-4-deliverable status without acknowledging they substantially overlap existing per-slice tests; fixed by naming the overlapping test directly in each docstring and stating plainly they're kept for the roadmap's consolidated-scan requirement, not new logic coverage
+  - a suspected defect (unwrapped, unsanitized DB error path in `app/auth.py::get_current_auth_context` when Postgres is down) was investigated and ruled out — the function already wraps its DB access in `try/except SQLAlchemyError` returning a sanitized `503`; confirmed by code reading, a live Postgres-down drill, and independent + security review; no code change was needed
 - Phase 3 (Payment Tracking) review items resolved on 2026-07-08:
   - security review found the overpayment check was not race-safe under concurrent requests to the same invoice (no row lock); fixed same-day by adding a `SELECT ... FOR UPDATE` lock on the invoice row in `app/payment_store.py::record_payment` before the check-then-insert; full gates re-ran green after the fix
   - independent review found two minor, accepted architecture-drift items (payment logic split into a new `app/payment_store.py` module; an added `le=1_000_000` bound on payment amount) — both documented in `docs/context/SESSION_HANDOFF.md`, neither required a code change

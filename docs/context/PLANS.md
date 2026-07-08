@@ -142,6 +142,15 @@ Required tests: full payment; partial payment; deposit; installments; overpaymen
 
 **Exit criterion:** everything above green in a single clean run from `docker compose up` on a fresh volume.
 
+- [x] Second-owner isolation sweep: `tests/test_isolation_sweep.py` — one chain, one second-owner session, every record type; closes a real pre-existing gap (vehicle update/archive/list were never isolation-tested).
+- [x] Idempotency audit: `tests/test_idempotency_audit.py` — repeated status transition, repeated issue, repeated full-payment request all proven non-duplicating.
+- [x] Full-log secret scan script: `scripts/scan_logs_for_secrets.py` — reusable CLI, never prints matched text, covers OpenAI keys/generic secret labels/any credentialed connection URL/session-cookie value/approval-token-shaped strings.
+- [x] Customer-document exposure scan: `tests/test_document_exposure_scan.py` — invoice HTML/PDF and the public estimate-approval view checked against a shared forbidden-marker list.
+- [~] Fresh-volume E2E test + failure drills (Redis down, Postgres down, full restart): satisfied via a **one-time manual live proof** on 2026-07-08 against an isolated `optimus_e2e` Docker Compose project, not a permanent committed automated test. Evidence in `docs/context/SESSION_HANDOFF.md`. Decide before Phase 5 whether this is sufficient or a permanent automated version is needed.
+- [x] No live/billable OpenAI call made — seeded-estimate path used, as allowed.
+- Independent review and security review both completed 2026-07-08 on the four new files; two minor issues found and fixed same-day (secret-scan regex gap, docstring honesty about test overlap). No findings on the (ruled-out) suspected `app/auth.py` defect.
+- [ ] Commit/push the Phase 4 slice — **awaiting explicit commit/push approval**, not yet performed.
+
 ### Phase 5 — Private Staging
 **Blocked until Phase 4 passes.**
 
