@@ -63,6 +63,14 @@ class UserAccount(Base):
         back_populates="owner",
         cascade="all, delete-orphan",
     )
+    work_orders: Mapped[list[WorkOrder]] = relationship(
+        back_populates="owner",
+        cascade="all, delete-orphan",
+    )
+    invoices: Mapped[list[Invoice]] = relationship(
+        back_populates="owner",
+        cascade="all, delete-orphan",
+    )
 
 
 class AuthSession(Base):
@@ -354,6 +362,14 @@ class Estimate(Base):
         back_populates="estimate",
         cascade="all, delete-orphan",
     )
+    work_orders: Mapped[list[WorkOrder]] = relationship(
+        back_populates="estimate",
+        cascade="all, delete-orphan",
+    )
+    invoices: Mapped[list[Invoice]] = relationship(
+        back_populates="estimate",
+        cascade="all, delete-orphan",
+    )
 
 
 class EstimateRevision(Base):
@@ -398,6 +414,8 @@ class EstimateRevision(Base):
     )
 
     estimate: Mapped[Estimate] = relationship(back_populates="revisions")
+    work_orders: Mapped[list[WorkOrder]] = relationship(back_populates="revision")
+    invoices: Mapped[list[Invoice]] = relationship(back_populates="revision")
 
 
 class EstimateApprovalRequest(Base):
@@ -510,3 +528,291 @@ class EstimateApprovalEvent(Base):
 
     estimate: Mapped[Estimate] = relationship(back_populates="approval_events")
     revision: Mapped[EstimateRevision] = relationship()
+
+
+class WorkOrder(Base):
+    __tablename__ = "work_orders"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ("
+            "'pending_requirements', 'ready_to_schedule', 'scheduled', 'in_progress', "
+            "'waiting_for_parts', 'waiting_for_approval', 'completed', 'cancelled'"
+            ")",
+            name="ck_work_orders_status",
+        ),
+        Index("ix_work_orders_owner_status_updated", "owner_user_id", "status", "updated_at"),
+        Index(
+            "ix_work_orders_owner_customer_updated",
+            "owner_user_id",
+            "customer_id",
+            "updated_at",
+        ),
+        Index(
+            "ix_work_orders_owner_vehicle_updated",
+            "owner_user_id",
+            "vehicle_id",
+            "updated_at",
+        ),
+        UniqueConstraint(
+            "estimate_id",
+            "estimate_revision_id",
+            name="uq_work_orders_estimate_revision",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    owner_user_id: Mapped[int] = mapped_column(
+        ForeignKey("user_accounts.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    estimate_id: Mapped[int] = mapped_column(
+        ForeignKey("estimates.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    estimate_revision_id: Mapped[int] = mapped_column(
+        ForeignKey("estimate_revisions.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    customer_id: Mapped[int] = mapped_column(
+        ForeignKey("customers.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    vehicle_id: Mapped[int] = mapped_column(
+        ForeignKey("vehicles.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    estimate_number: Mapped[str] = mapped_column(String(40), nullable=False)
+    title: Mapped[str] = mapped_column(String(180), nullable=False)
+    complaint: Mapped[str] = mapped_column(Text, nullable=False)
+    diagnosis: Mapped[str | None] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(40), nullable=False)
+    estimate_total: Mapped[float | None] = mapped_column(nullable=True)
+    labor_hours_estimate: Mapped[float | None] = mapped_column(nullable=True)
+    payment_option_selected: Mapped[str | None] = mapped_column(String(40))
+    deposit_received: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=False,
+        server_default="false",
+    )
+    authorization_confirmed: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=False,
+        server_default="false",
+    )
+    scheduled_for: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    owner: Mapped[UserAccount] = relationship(back_populates="work_orders")
+    estimate: Mapped[Estimate] = relationship(back_populates="work_orders")
+    revision: Mapped[EstimateRevision] = relationship(back_populates="work_orders")
+    customer: Mapped[Customer] = relationship()
+    vehicle: Mapped[Vehicle] = relationship()
+    status_events: Mapped[list[WorkOrderStatusEvent]] = relationship(
+        back_populates="work_order",
+        cascade="all, delete-orphan",
+        order_by="WorkOrderStatusEvent.created_at",
+    )
+    notes: Mapped[list[WorkOrderNote]] = relationship(
+        back_populates="work_order",
+        cascade="all, delete-orphan",
+        order_by="WorkOrderNote.created_at",
+    )
+    invoice: Mapped[Invoice | None] = relationship(
+        back_populates="work_order",
+        cascade="all, delete-orphan",
+        uselist=False,
+    )
+
+
+class WorkOrderStatusEvent(Base):
+    __tablename__ = "work_order_status_events"
+    __table_args__ = (
+        CheckConstraint(
+            "from_status IS NULL OR from_status IN ("
+            "'pending_requirements', 'ready_to_schedule', 'scheduled', 'in_progress', "
+            "'waiting_for_parts', 'waiting_for_approval', 'completed', 'cancelled'"
+            ")",
+            name="ck_work_order_status_events_from_status",
+        ),
+        CheckConstraint(
+            "to_status IN ("
+            "'pending_requirements', 'ready_to_schedule', 'scheduled', 'in_progress', "
+            "'waiting_for_parts', 'waiting_for_approval', 'completed', 'cancelled'"
+            ")",
+            name="ck_work_order_status_events_to_status",
+        ),
+        Index(
+            "ix_work_order_status_events_work_order_created",
+            "work_order_id",
+            "created_at",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    work_order_id: Mapped[int] = mapped_column(
+        ForeignKey("work_orders.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    owner_user_id: Mapped[int] = mapped_column(
+        ForeignKey("user_accounts.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    from_status: Mapped[str | None] = mapped_column(String(40))
+    to_status: Mapped[str] = mapped_column(String(40), nullable=False)
+    reason: Mapped[str | None] = mapped_column(Text)
+    created_by_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("user_accounts.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+
+    work_order: Mapped[WorkOrder] = relationship(back_populates="status_events")
+
+
+class WorkOrderNote(Base):
+    __tablename__ = "work_order_notes"
+    __table_args__ = (
+        CheckConstraint(
+            "visibility IN ('internal', 'customer')",
+            name="ck_work_order_notes_visibility",
+        ),
+        Index("ix_work_order_notes_work_order_created", "work_order_id", "created_at"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    work_order_id: Mapped[int] = mapped_column(
+        ForeignKey("work_orders.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    owner_user_id: Mapped[int] = mapped_column(
+        ForeignKey("user_accounts.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    visibility: Mapped[str] = mapped_column(String(20), nullable=False)
+    note: Mapped[str] = mapped_column(Text, nullable=False)
+    created_by_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("user_accounts.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+
+    work_order: Mapped[WorkOrder] = relationship(back_populates="notes")
+
+
+class Invoice(Base):
+    __tablename__ = "invoices"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('draft', 'issued', 'partially_paid', 'paid', 'overdue', 'void')",
+            name="ck_invoices_status",
+        ),
+        Index("ix_invoices_owner_status_updated", "owner_user_id", "status", "updated_at"),
+        Index("ix_invoices_owner_work_order", "owner_user_id", "work_order_id"),
+        UniqueConstraint("work_order_id", name="uq_invoices_work_order"),
+        UniqueConstraint("invoice_number", name="uq_invoices_invoice_number"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    owner_user_id: Mapped[int] = mapped_column(
+        ForeignKey("user_accounts.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    work_order_id: Mapped[int] = mapped_column(
+        ForeignKey("work_orders.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    estimate_id: Mapped[int] = mapped_column(
+        ForeignKey("estimates.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    estimate_revision_id: Mapped[int] = mapped_column(
+        ForeignKey("estimate_revisions.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    customer_id: Mapped[int] = mapped_column(
+        ForeignKey("customers.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    vehicle_id: Mapped[int] = mapped_column(
+        ForeignKey("vehicles.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    invoice_number: Mapped[str] = mapped_column(String(40), nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False)
+    title: Mapped[str] = mapped_column(String(180), nullable=False)
+    complaint: Mapped[str] = mapped_column(Text, nullable=False)
+    payment_option_selected: Mapped[str | None] = mapped_column(String(40))
+    customer_snapshot: Mapped[dict] = mapped_column(JSON, nullable=False)
+    vehicle_snapshot: Mapped[dict] = mapped_column(JSON, nullable=False)
+    labor_total: Mapped[float] = mapped_column(nullable=False)
+    parts_total: Mapped[float] = mapped_column(nullable=False)
+    fees_total: Mapped[float] = mapped_column(nullable=False)
+    invoice_total: Mapped[float] = mapped_column(nullable=False)
+    issued_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    due_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    owner: Mapped[UserAccount] = relationship(back_populates="invoices")
+    work_order: Mapped[WorkOrder] = relationship(back_populates="invoice")
+    estimate: Mapped[Estimate] = relationship(back_populates="invoices")
+    revision: Mapped[EstimateRevision] = relationship(back_populates="invoices")
+    line_items: Mapped[list[InvoiceLineItem]] = relationship(
+        back_populates="invoice",
+        cascade="all, delete-orphan",
+        order_by="InvoiceLineItem.sort_order",
+    )
+
+
+class InvoiceLineItem(Base):
+    __tablename__ = "invoice_line_items"
+    __table_args__ = (
+        CheckConstraint(
+            "kind IN ('labor', 'part', 'fee')",
+            name="ck_invoice_line_items_kind",
+        ),
+        Index("ix_invoice_line_items_invoice_sort", "invoice_id", "sort_order"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    invoice_id: Mapped[int] = mapped_column(
+        ForeignKey("invoices.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    sort_order: Mapped[int] = mapped_column(nullable=False)
+    kind: Mapped[str] = mapped_column(String(20), nullable=False)
+    description: Mapped[str] = mapped_column(Text, nullable=False)
+    quantity: Mapped[float] = mapped_column(nullable=False)
+    unit_amount: Mapped[float] = mapped_column(nullable=False)
+    line_total: Mapped[float] = mapped_column(nullable=False)
+
+    invoice: Mapped[Invoice] = relationship(back_populates="line_items")

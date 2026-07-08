@@ -61,6 +61,15 @@ from app.estimate_store import (
     send_estimate_for_approval,
     update_estimate,
 )
+from app.invoice_store import (
+    InvoiceNotFoundError,
+    InvoiceStoreError,
+    get_invoice,
+    issue_invoice,
+    list_invoices,
+    render_invoice_html,
+    render_invoice_pdf,
+)
 from app.models import (
     AuthLoginRequest,
     AuthMeResponse,
@@ -94,6 +103,10 @@ from app.models import (
     EstimateSendForApprovalRequest,
     EstimateStatus,
     EstimateUpdate,
+    InvoiceIssueRequest,
+    InvoiceListResponse,
+    InvoiceRead,
+    InvoiceStatus,
     LocationInput,
     ResolvedLocation,
     VehicleArchiveResponse,
@@ -101,6 +114,12 @@ from app.models import (
     VehicleListResponse,
     VehicleRead,
     VehicleUpdate,
+    WorkOrderListResponse,
+    WorkOrderNoteCreate,
+    WorkOrderRead,
+    WorkOrderStatus,
+    WorkOrderStatusUpdate,
+    WorkOrderUpdate,
 )
 from app.orchestrator import OptimusResearchOrchestrator
 from app.rate_limit import RateLimitExceeded, SlidingWindowRateLimiter
@@ -115,6 +134,16 @@ from app.vehicle_store import (
     get_vehicle,
     list_vehicles,
     update_vehicle,
+)
+from app.work_order_store import (
+    WorkOrderNotFoundError,
+    WorkOrderStoreError,
+    add_work_order_note,
+    create_work_order_from_estimate,
+    get_work_order,
+    list_work_orders,
+    transition_work_order_status,
+    update_work_order,
 )
 
 logging.basicConfig(level=get_settings().log_level)
@@ -1058,4 +1087,283 @@ async def estimate_approval_history(
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Estimate storage is unavailable.",
+        ) from exc
+
+
+@app.post("/api/estimates/{estimate_id}/work-order", response_model=WorkOrderRead)
+async def create_work_order_record(
+    estimate_id: int,
+    db: DbSessionDep,
+    auth: AuthContextDep,
+) -> WorkOrderRead:
+    try:
+        return create_work_order_from_estimate(db=db, auth=auth, estimate_id=estimate_id)
+    except EstimateNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except (EstimateStoreError, WorkOrderStoreError) as exc:
+        detail = str(exc)
+        raise HTTPException(
+            status_code=409 if "not implemented" in detail.lower() else 422,
+            detail=detail,
+        ) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Work-order conversion failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Work-order storage is unavailable.",
+        ) from exc
+
+
+@app.get("/api/work-orders", response_model=WorkOrderListResponse)
+async def list_work_order_records(
+    db: DbSessionDep,
+    settings: SettingsDep,
+    auth: AuthContextDep,
+    page: int = Query(default=1),
+    page_size: int = Query(default=20),
+    status_filter: Annotated[WorkOrderStatus | None, Query(alias="status")] = None,
+    search: str | None = Query(default=None, max_length=120),
+    customer_id: int | None = Query(default=None, ge=1),
+    vehicle_id: int | None = Query(default=None, ge=1),
+) -> WorkOrderListResponse:
+    try:
+        return list_work_orders(
+            db=db,
+            auth=auth,
+            settings=settings,
+            page=page,
+            page_size=page_size,
+            status=status_filter,
+            search=search,
+            customer_id=customer_id,
+            vehicle_id=vehicle_id,
+        )
+    except WorkOrderStoreError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Work-order listing failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Work-order storage is unavailable.",
+        ) from exc
+
+
+@app.get("/api/work-orders/{work_order_id}", response_model=WorkOrderRead)
+async def get_work_order_record(
+    work_order_id: int,
+    db: DbSessionDep,
+    auth: AuthContextDep,
+) -> WorkOrderRead:
+    try:
+        return get_work_order(db=db, auth=auth, work_order_id=work_order_id)
+    except WorkOrderNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except WorkOrderStoreError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Work-order retrieval failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Work-order storage is unavailable.",
+        ) from exc
+
+
+@app.patch("/api/work-orders/{work_order_id}", response_model=WorkOrderRead)
+async def update_work_order_record(
+    work_order_id: int,
+    payload: WorkOrderUpdate,
+    db: DbSessionDep,
+    auth: AuthContextDep,
+) -> WorkOrderRead:
+    try:
+        return update_work_order(db=db, auth=auth, work_order_id=work_order_id, payload=payload)
+    except WorkOrderNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except WorkOrderStoreError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Work-order update failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Work-order storage is unavailable.",
+        ) from exc
+
+
+@app.post("/api/work-orders/{work_order_id}/status", response_model=WorkOrderRead)
+async def update_work_order_status_record(
+    work_order_id: int,
+    payload: WorkOrderStatusUpdate,
+    db: DbSessionDep,
+    auth: AuthContextDep,
+) -> WorkOrderRead:
+    try:
+        return transition_work_order_status(
+            db=db,
+            auth=auth,
+            work_order_id=work_order_id,
+            payload=payload,
+        )
+    except WorkOrderNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except WorkOrderStoreError as exc:
+        detail = str(exc)
+        raise HTTPException(
+            status_code=409 if "cannot transition" in detail.lower() else 422,
+            detail=detail,
+        ) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Work-order status update failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Work-order storage is unavailable.",
+        ) from exc
+
+
+@app.post("/api/work-orders/{work_order_id}/notes", response_model=WorkOrderRead)
+async def add_work_order_note_record(
+    work_order_id: int,
+    payload: WorkOrderNoteCreate,
+    db: DbSessionDep,
+    auth: AuthContextDep,
+) -> WorkOrderRead:
+    try:
+        return add_work_order_note(db=db, auth=auth, work_order_id=work_order_id, payload=payload)
+    except WorkOrderNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except WorkOrderStoreError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Work-order note creation failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Work-order storage is unavailable.",
+        ) from exc
+
+
+@app.get("/api/invoices", response_model=InvoiceListResponse)
+async def list_invoice_records(
+    db: DbSessionDep,
+    settings: SettingsDep,
+    auth: AuthContextDep,
+    page: int = Query(default=1),
+    page_size: int = Query(default=20),
+    status_filter: Annotated[InvoiceStatus | None, Query(alias="status")] = None,
+    search: str | None = Query(default=None, max_length=120),
+) -> InvoiceListResponse:
+    try:
+        return list_invoices(
+            db=db,
+            auth=auth,
+            settings=settings,
+            page=page,
+            page_size=page_size,
+            status=status_filter,
+            search=search,
+        )
+    except InvoiceStoreError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Invoice listing failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Invoice storage is unavailable.",
+        ) from exc
+
+
+@app.get("/api/invoices/{invoice_id}", response_model=InvoiceRead)
+async def get_invoice_record(
+    invoice_id: int,
+    db: DbSessionDep,
+    auth: AuthContextDep,
+) -> InvoiceRead:
+    try:
+        return get_invoice(db=db, auth=auth, invoice_id=invoice_id)
+    except InvoiceNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except InvoiceStoreError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Invoice retrieval failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Invoice storage is unavailable.",
+        ) from exc
+
+
+@app.post("/api/invoices/{invoice_id}/issue", response_model=InvoiceRead)
+async def issue_invoice_record(
+    invoice_id: int,
+    payload: InvoiceIssueRequest,
+    db: DbSessionDep,
+    settings: SettingsDep,
+    auth: AuthContextDep,
+) -> InvoiceRead:
+    try:
+        return issue_invoice(
+            db=db,
+            auth=auth,
+            settings=settings,
+            invoice_id=invoice_id,
+            payload=payload,
+        )
+    except InvoiceNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except InvoiceStoreError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Invoice issue failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Invoice storage is unavailable.",
+        ) from exc
+
+
+@app.get("/api/invoices/{invoice_id}/html")
+async def get_invoice_html(
+    invoice_id: int,
+    db: DbSessionDep,
+    settings: SettingsDep,
+    auth: AuthContextDep,
+) -> Response:
+    try:
+        invoice = get_invoice(db=db, auth=auth, invoice_id=invoice_id)
+        return Response(
+            content=render_invoice_html(invoice, business_name=settings.business_name),
+            media_type="text/html; charset=utf-8",
+        )
+    except InvoiceNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except InvoiceStoreError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Invoice HTML generation failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Invoice storage is unavailable.",
+        ) from exc
+
+
+@app.get("/api/invoices/{invoice_id}/pdf")
+async def get_invoice_pdf(
+    invoice_id: int,
+    db: DbSessionDep,
+    settings: SettingsDep,
+    auth: AuthContextDep,
+) -> Response:
+    try:
+        invoice = get_invoice(db=db, auth=auth, invoice_id=invoice_id)
+        pdf = render_invoice_pdf(invoice, business_name=settings.business_name)
+        headers = {
+            "Content-Disposition": f'inline; filename="{invoice.invoice_number}.pdf"'
+        }
+        return Response(content=pdf, media_type="application/pdf", headers=headers)
+    except InvoiceNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except InvoiceStoreError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Invoice PDF generation failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Invoice storage is unavailable.",
         ) from exc
