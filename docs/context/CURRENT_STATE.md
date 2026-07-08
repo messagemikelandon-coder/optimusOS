@@ -9,10 +9,10 @@ Relevant sources: `git status --short --branch`, `git rev-parse HEAD`, `env UV_C
 
 ## Operational Snapshot
 
-- Active development phase: **Phase 3 — Payment Tracking is implemented, gated, reviewed, and live-proofed; not yet committed.** Phase 2 remains committed and pushed as the prior baseline.
-- Current branch: `feat/payment-tracking`.
-- Current HEAD: `85e9bce9cf8575ce3b2d7b44fb1458bde9682749` (`feat: add invoice generation`) — Phase 3 changes are uncommitted in the working tree pending explicit commit/push approval.
-- Git working state: Phase 1 is committed and pushed to `origin/feat/work-orders`; Phase 2 is committed and pushed to `origin/feat/invoices`; Phase 3 payment-tracking source, migration, tests, and doc updates are complete in the working tree on `feat/payment-tracking` but not yet committed.
+- Active development phase: **Phase 3 — Payment Tracking is committed and pushed. Phase 4 — Full Local MVP Hardening is partially implemented, reviewed, and live-proofed; not yet committed.**
+- Current branch: `harden/local-mvp` (branched from Phase 3's pushed tip).
+- Current HEAD: `f72a6f8a91f878baae7addc72307f0110a777e6b` (`feat: add invoice payment tracking`) — Phase 4 changes are uncommitted in the working tree pending explicit commit/push approval.
+- Git working state: Phase 1 pushed to `origin/feat/work-orders`; Phase 2 pushed to `origin/feat/invoices`; Phase 3 pushed to `origin/feat/payment-tracking` (`f72a6f8`); Phase 4 test/script additions are complete in the working tree on `harden/local-mvp` but not yet committed. No production `app/*.py` source changed in Phase 4.
 - Auth baseline status: the owner-session, customer, vehicle, context, and estimate-approval slices remain in place and unchanged in scope.
 - Current verified functionality: owner login/logout/me, protected chat, protected location resolution, owner-scoped context CRUD, customer CRUD/list/search/archive, vehicle CRUD/list/search/archive, saved estimate CRUD/revisioning/approval, Work Order conversion/list/detail/update/status/note flows, invoice generation/list/detail/issue/html/pdf flows, and invoice payment recording/void/schedule/balance-derivation flows.
 
@@ -64,6 +64,15 @@ Relevant sources: `git status --short --branch`, `git rev-parse HEAD`, `env UV_C
   - `GET /api/invoices` / `GET /api/invoices/{id}` responses now also include `total_paid`, `balance_due`, `is_overdue`, `payments[]`, and `schedule[]`
 - Payment frontend status: the existing invoice detail panel (not a parallel billing surface) now shows balance/paid summary, an overdue badge, payment history with void controls, a read-only schedule list, and a record-payment form.
 - Explicitly out of scope for this slice (per owner decision 2026-07-08): any Square or other external payment processor, any live/billable payment API call, and any change to Square/external scheduling or the existing Work Order status lifecycle — Square integration is deferred to a distinct future phase with its own design/approval pass.
+
+## Hardening Slice (Phase 4)
+
+- Status: partially implemented, no production code changed. Four of the roadmap's six deliverables landed as permanent test/script files; two (fresh-volume E2E flow, failure drills) were satisfied via a one-time manual live proof this session rather than new permanent automated Docker/E2E infrastructure — no repeatable committed artifact exists yet for those two.
+- New files: `tests/test_isolation_sweep.py`, `tests/test_idempotency_audit.py`, `tests/test_document_exposure_scan.py`, `scripts/scan_logs_for_secrets.py`.
+- Investigated and ruled out a suspected defect in `app/auth.py::get_current_auth_context` (Postgres-down error handling): it already wraps its DB access in `try/except SQLAlchemyError` returning a sanitized `503`; confirmed by code reading, a live drill, and independent + security review. No code changed.
+- One-time live proof (2026-07-08) against an isolated `optimus_e2e` Docker Compose project (separate volumes/ports, same real hardened image): fresh-volume migration from empty to `009_payments (head)`; full Customer(seeded)→WorkOrder→Completion→Invoice→Payment→`paid` flow via real HTTP; clean secret-log scan; Redis-down/up and Postgres-down/up drills both showed sanitized responses and clean recovery with no backend restart; full-stack restart preserved all data; dev stack/volumes confirmed untouched throughout; clean teardown.
+- Out of scope, unchanged: Square/external payment or scheduling integration, live/billable OpenAI calls.
+- See `docs/context/SESSION_HANDOFF.md` for full evidence and the open question of whether this one-time proof is sufficient to call Phase 4 done, or whether a permanent automated version should be built before Phase 5.
 
 ## Verification Status
 
@@ -147,5 +156,6 @@ Relevant sources: `git status --short --branch`, `git rev-parse HEAD`, `env UV_C
 
 - Phase 1 is closed and pushed.
 - Phase 2 is closed and pushed.
-- Phase 3 is implemented, gated, reviewed, and live-proofed on `feat/payment-tracking`; **awaiting explicit commit/push approval** before closing.
-- Phase 4 — Full Local MVP Hardening is next once Phase 3 is committed/pushed.
+- Phase 3 is closed and pushed to `origin/feat/payment-tracking` (`f72a6f8`).
+- Phase 4 — Full Local MVP Hardening is implemented (4 of 6 deliverables as permanent files, 2 via one-time live proof), reviewed, and live-proofed on `harden/local-mvp`; **awaiting explicit commit/push approval** before closing, plus an open decision on whether the one-time proof suffices or a permanent automated version is needed first.
+- Phase 5 — Private Staging is next once Phase 4 is closed.
