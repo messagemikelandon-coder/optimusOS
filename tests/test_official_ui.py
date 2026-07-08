@@ -61,7 +61,9 @@ def test_ui_preserves_connected_workflows() -> None:
     assert "/api/context/estimates/selected-estimate?scope=session" in javascript
     assert 'apiFetch("/api/chat"' in javascript
     assert "/api/estimates" in javascript
+    assert 'apiFetch(`/api/estimates/${estimateId}`)' in javascript
     assert "/api/estimate-approval/view" in javascript
+    assert "async function openEstimateRecord" in javascript
     assert 'window.location.pathname === "/approval"' in javascript
     assert 'window.location.hash.replace(/^#/, "")' in javascript
     assert 'history.replaceState(null, "", "/approval" + window.location.hash)' in javascript

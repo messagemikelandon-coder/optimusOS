@@ -4,7 +4,7 @@ Purpose: durable phase checklist for OptimusOS from the verified Estimate Approv
 Information owner: repository maintainers (roadmap authored 2026-07-07).
 Read when: starting any new slice, or checking overall project sequencing.
 Update when: a phase's acceptance criteria are met, or the sequence changes.
-Last verified date: 2026-07-07.
+Last verified date: 2026-07-08.
 Relevant sources: `docs/context/CURRENT_STATE.md`, `docs/context/KNOWN_ISSUES.md`, `docs/context/SESSION_HANDOFF.md`, `AGENTS.md`, `CLAUDE.md`.
 
 ## Standing rules (apply to every phase below)
@@ -24,9 +24,9 @@ Relevant sources: `docs/context/CURRENT_STATE.md`, `docs/context/KNOWN_ISSUES.md
 - [x] Verified files committed (`ce39561` "verify: complete estimate approval live proof").
 - [x] Branch renamed `feat/vehicle-management` → `feat/estimate-approval`.
 - [x] Pushed to GitHub — `origin/feat/estimate-approval` confirmed at `ce39561`.
-- [ ] `AGENTS.md` / AI Coordination Pack: `AGENTS.md` itself committed (`c46d53f` "docs: update agent operating rules", by Codex) but **not yet pushed**, and the rest of the pack (`.claude/`, `.github/`, `CLAUDE.md`, `docs/context/AI_WORKFLOW.md`, `scripts/ai_context_snapshot.sh`, `scripts/check_ai_handoff.py`) remains **untracked**. Needs an explicit decision: commit the remainder as its own clearly-labeled commit, or leave untracked permanently.
-- [ ] Push `c46d53f` (or whatever HEAD is after the decision above) and reconfirm `origin` hash == local HEAD.
-- [ ] `SESSION_HANDOFF.md` reflects the pushed state.
+- [x] `AGENTS.md` / AI Coordination Pack committed locally on the Work Orders branch as `6d0c332` (`chore: add AI coordination pack`).
+- [x] The local `feat/work-orders` branch remained local-only until explicit push approval was granted in the current session.
+- [x] `SESSION_HANDOFF.md` now reflects the local branch reality instead of the stale estimate-approval branch.
 
 **Acceptance:** commit SHA recorded, GitHub backup confirmed (local HEAD == origin HEAD), `SESSION_HANDOFF.md` current, Work Orders not started before backup is confirmed.
 
@@ -50,6 +50,19 @@ API: `POST /api/estimates/{estimate_id}/work-order`, `GET /api/work-orders`, `GE
 Frontend: list page, detail page (status controls, notes, status history, blocked-transition explanation), "Create work order" action from an approved estimate.
 
 Required tests: unauthenticated rejection; approved-estimate conversion; draft/declined/awaiting-approval rejection; duplicate-conversion idempotency; approved revision preserved; labor/parts/totals copied correctly; cross-user isolation; valid status transitions; invalid status transitions; payment-plan prerequisite blocking; notes visibility separation; cancellation; restart persistence; sanitized dependency failures.
+
+- [x] Implemented in source: backend store/routes/models, Alembic migration `007_work_orders`, static frontend list/detail/status/notes flow, and targeted regression tests.
+- [x] Verified complete:
+  - all 14 roadmap test categories covered in `tests/test_work_orders_api.py`
+  - full suite green
+  - `ruff` / `pyright` green
+  - Docker rebuild green
+  - Alembic script head and live DB head both at `007_work_orders`
+  - non-billable live browser/API proof of convert → status walk → notes → restart persistence
+  - explicit live cross-user isolation proof
+  - independent review completed and follow-up fixes applied
+  - security review completed with no findings
+  - context docs updated to the current local branch state
 
 **Acceptance:** all endpoints live; all 14 test categories pass; full suite stays green; ruff/pyright clean; Docker rebuild + migration `007_work_orders` applied; non-billable browser proof of convert → status walk → notes → restart persistence; cross-user isolation proven at the API level; independent review + security review pass; docs + handoff updated. No live OpenAI call needed for this slice.
 

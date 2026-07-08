@@ -39,6 +39,10 @@
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 6h14l2 6v6h-2a2 2 0 0 1-4 0H9a2 2 0 0 1-4 0H3v-6l2-6Zm2.44 2L6.1 12h11.8L16.56 8H7.44ZM7 13a2 2 0 1 0 0 4 2 2 0 0 0 0-4Zm10 0a2 2 0 1 0-.001 4.001A2 2 0 0 0 17 13Z"/></svg>
           <span>Vehicles</span>
         </button>
+        <button class="nav-item" type="button" data-view="work-orders">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h12v3h2v15H4V6h2V3Zm2 3h8V5H8v1Zm0 4h8V8H8v2Zm0 4h5v-2H8v2Zm7.2 6-3.6-3.6 1.4-1.4 2.2 2.2 4.4-4.4L21 15l-5.8 5Z"/></svg>
+          <span>Work orders</span>
+        </button>
         <button class="nav-item" type="button" data-view="chat">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5h14v10H8.5L5 18.5V5Zm3 4v2h8V9H8Z"/></svg>
           <span>Talk to Optimus</span>
@@ -514,6 +518,145 @@
           </div>
         </section>
 
+        <section class="app-view" id="view-work-orders" data-view-panel="work-orders" hidden>
+          <div class="customers-layout">
+            <section class="panel customers-list-panel">
+              <div class="panel-heading">
+                <div><span class="section-kicker"><i></i> Repair execution</span><h2>Work orders</h2><p>Approved estimates convert into owner-scoped work orders with append-only status history and notes.</p></div>
+                <button class="secondary-button compact" type="button" id="work-orders-create">From selected estimate</button>
+              </div>
+
+              <div class="vehicles-toolbar">
+                <label class="field full">
+                  Search
+                  <input id="work-orders-search" placeholder="Search estimate number or repair title">
+                </label>
+                <label class="field">
+                  Status filter
+                  <select id="work-orders-status-filter">
+                    <option value="">All statuses</option>
+                    <option value="pending_requirements">Pending requirements</option>
+                    <option value="ready_to_schedule">Ready to schedule</option>
+                    <option value="scheduled">Scheduled</option>
+                    <option value="in_progress">In progress</option>
+                    <option value="waiting_for_parts">Waiting for parts</option>
+                    <option value="completed">Completed</option>
+                    <option value="cancelled">Cancelled</option>
+                  </select>
+                </label>
+                <button class="secondary-button compact" type="button" id="work-orders-refresh">Refresh</button>
+              </div>
+
+              <div id="work-orders-list" class="customers-list" aria-live="polite"></div>
+
+              <div class="customers-pagination">
+                <button class="secondary-button compact" type="button" id="work-orders-prev">Previous</button>
+                <span id="work-orders-page-status">Page 1</span>
+                <button class="secondary-button compact" type="button" id="work-orders-next">Next</button>
+              </div>
+            </section>
+
+            <section class="customers-detail-stack">
+              <section class="panel" id="work-order-detail-panel">
+                <div class="panel-heading">
+                  <div><span class="section-kicker"><i></i> Detail view</span><h3>Selected work order</h3></div>
+                  <div class="customers-form-actions">
+                    <button class="text-button" type="button" id="work-order-open-estimate">Open estimate</button>
+                    <button class="text-button" type="button" id="work-order-open-vehicle">Open vehicle</button>
+                  </div>
+                </div>
+                <div id="work-order-detail" class="customer-detail-card">
+                  <p>Select a work order from the list or convert an approved estimate.</p>
+                </div>
+              </section>
+
+              <form class="panel estimate-form-panel" id="work-order-update-form">
+                <div class="panel-heading">
+                  <div><span class="section-kicker"><i></i> Execution controls</span><h3>Update work order</h3></div>
+                  <span class="estimate-number" id="work-order-form-mode">DETAIL</span>
+                </div>
+                <input id="work-order-id" type="hidden">
+
+                <fieldset>
+                  <legend><span>01</span> Readiness</legend>
+                  <div class="form-grid two">
+                    <label class="toggle-field">
+                      <input id="work-order-deposit-received" type="checkbox">
+                      <span>Deposit received</span>
+                    </label>
+                    <label class="toggle-field">
+                      <input id="work-order-authorization-confirmed" type="checkbox">
+                      <span>Authorization confirmed</span>
+                    </label>
+                  </div>
+                  <label class="field full">Scheduled for <input id="work-order-scheduled-for" type="datetime-local"></label>
+                </fieldset>
+
+                <fieldset>
+                  <legend><span>02</span> Diagnosis</legend>
+                  <label class="field full">Notes <textarea id="work-order-diagnosis" maxlength="10000" placeholder="Owner diagnosis, findings, or execution notes."></textarea></label>
+                </fieldset>
+
+                <div class="estimate-submit-row">
+                  <div><strong>Prerequisite controls</strong><span id="work-order-form-status-detail">Select a work order to update deposit, authorization, scheduling, and diagnosis details.</span></div>
+                  <div class="customers-form-actions">
+                    <button class="primary-button compact" type="submit" id="work-order-save">Save work order</button>
+                  </div>
+                </div>
+              </form>
+
+              <form class="panel estimate-form-panel" id="work-order-status-form">
+                <div class="panel-heading">
+                  <div><span class="section-kicker"><i></i> Status flow</span><h3>Transition status</h3></div>
+                </div>
+                <fieldset>
+                  <legend><span>03</span> Transition</legend>
+                  <div class="form-grid two">
+                    <label class="field">Next status
+                      <select id="work-order-next-status">
+                        <option value="">Select a status</option>
+                      </select>
+                    </label>
+                    <label class="field">Reason <input id="work-order-status-reason" maxlength="1000" placeholder="Optional transition note"></label>
+                  </div>
+                  <div id="work-order-blocked-status" class="empty-card"><strong>No blockers</strong><p>Select a work order to see blocked transitions and prerequisites.</p></div>
+                </fieldset>
+                <div class="estimate-submit-row">
+                  <div><strong>Append-only history</strong><span>Every status transition is recorded and cannot be edited in place.</span></div>
+                  <div class="customers-form-actions">
+                    <button class="primary-button compact" type="submit" id="work-order-status-save">Update status</button>
+                  </div>
+                </div>
+              </form>
+
+              <form class="panel estimate-form-panel" id="work-order-note-form">
+                <div class="panel-heading">
+                  <div><span class="section-kicker"><i></i> Notes</span><h3>Add work order note</h3></div>
+                </div>
+                <fieldset>
+                  <legend><span>04</span> Note entry</legend>
+                  <div class="form-grid two">
+                    <label class="field">Visibility
+                      <select id="work-order-note-visibility">
+                        <option value="internal">Internal</option>
+                        <option value="customer">Customer-facing</option>
+                      </select>
+                    </label>
+                    <div class="empty-card"><strong>Visibility separation</strong><p>Customer-facing notes stay labeled separately from internal execution notes.</p></div>
+                  </div>
+                  <label class="field full">Note <textarea id="work-order-note" maxlength="4000" placeholder="Add a timestamped note for this work order."></textarea></label>
+                </fieldset>
+                <div class="estimate-submit-row">
+                  <div><strong>Owner note stream</strong><span>Notes are append-only and kept with the work order history.</span></div>
+                  <div class="customers-form-actions">
+                    <button class="primary-button compact" type="submit" id="work-order-note-save">Add note</button>
+                  </div>
+                </div>
+              </form>
+            </section>
+          </div>
+        </section>
+
         <section class="app-view" id="view-estimate" data-view-panel="estimate" hidden>
           <div class="estimate-layout">
             <form id="estimate-form" class="panel estimate-form-panel">
@@ -686,6 +829,7 @@
     <button class="is-active" type="button" data-view="dashboard"><span>⌂</span>Deck</button>
     <button type="button" data-view="customers"><span>▣</span>Customers</button>
     <button type="button" data-view="vehicles"><span>◈</span>Vehicles</button>
+    <button type="button" data-view="work-orders"><span>✓</span>Work</button>
     <button type="button" data-view="chat"><span>◉</span>Optimus</button>
     <button type="button" data-view="system"><span>⚙</span>System</button>
   </nav>

@@ -881,45 +881,108 @@ class EstimateApprovalAuditResponse(BaseModel):
     events: list[EstimateApprovalEventRead]
 
 
-class WorkOrderBase(BaseModel):
-    customer_id: int | None = None
-    vehicle_id: int | None = None
-    status: str = Field(default="open", max_length=40)
-    title: NonBlank = Field(max_length=180)
-    complaint: NonBlank = Field(max_length=10_000)
-    diagnosis: str | None = Field(default=None, max_length=10_000)
-    estimate_total: float | None = Field(default=None, ge=0, le=1_000_000)
-    labor_hours_estimate: float | None = Field(default=None, ge=0, le=500)
-    notes: str | None = Field(default=None, max_length=10_000)
-    internal_notes: str | None = Field(default=None, max_length=10_000)
+class WorkOrderStatus(StrEnum):
+    PENDING_REQUIREMENTS = "pending_requirements"
+    READY_TO_SCHEDULE = "ready_to_schedule"
+    SCHEDULED = "scheduled"
+    IN_PROGRESS = "in_progress"
+    WAITING_FOR_PARTS = "waiting_for_parts"
+    WAITING_FOR_APPROVAL = "waiting_for_approval"
+    COMPLETED = "completed"
+    CANCELLED = "cancelled"
 
 
-class WorkOrderCreate(WorkOrderBase):
-    pass
+class WorkOrderNoteVisibility(StrEnum):
+    INTERNAL = "internal"
+    CUSTOMER = "customer"
 
 
 class WorkOrderUpdate(BaseModel):
-    customer_id: int | None = None
-    vehicle_id: int | None = None
-    status: str | None = Field(default=None, max_length=40)
-    title: str | None = Field(default=None, max_length=180)
-    complaint: str | None = Field(default=None, max_length=10_000)
     diagnosis: str | None = Field(default=None, max_length=10_000)
-    estimate_total: float | None = Field(default=None, ge=0, le=1_000_000)
-    labor_hours_estimate: float | None = Field(default=None, ge=0, le=500)
-    notes: str | None = Field(default=None, max_length=10_000)
-    internal_notes: str | None = Field(default=None, max_length=10_000)
+    scheduled_for: datetime | None = None
+    deposit_received: bool | None = None
+    authorization_confirmed: bool | None = None
+
+    @field_validator("diagnosis", mode="before")
+    @classmethod
+    def strip_work_order_diagnosis(cls, value: object) -> object:
+        if isinstance(value, str):
+            stripped = value.strip()
+            return stripped or None
+        return value
 
 
-class WorkOrderRead(WorkOrderBase):
-    model_config = ConfigDict(from_attributes=True)
+class WorkOrderStatusUpdate(BaseModel):
+    status: WorkOrderStatus
+    reason: str | None = Field(default=None, max_length=1000)
 
+    @field_validator("reason", mode="before")
+    @classmethod
+    def strip_work_order_status_reason(cls, value: object) -> object:
+        if isinstance(value, str):
+            stripped = value.strip()
+            return stripped or None
+        return value
+
+
+class WorkOrderNoteCreate(BaseModel):
+    note: NonBlank = Field(max_length=4000)
+    visibility: WorkOrderNoteVisibility = WorkOrderNoteVisibility.INTERNAL
+
+
+class WorkOrderStatusEventRead(BaseModel):
     id: int
+    from_status: WorkOrderStatus | None = None
+    to_status: WorkOrderStatus
+    reason: str | None = None
+    created_by_user_id: int | None = None
+    created_by_display_name: str | None = None
+    created_at: datetime
+
+
+class WorkOrderNoteRead(BaseModel):
+    id: int
+    visibility: WorkOrderNoteVisibility
+    note: str
+    created_by_user_id: int | None = None
+    created_by_display_name: str | None = None
+    created_at: datetime
+
+
+class WorkOrderRead(BaseModel):
+    id: int
+    estimate_id: int
+    estimate_revision_id: int
+    estimate_number: str
+    customer_id: int
+    vehicle_id: int
+    customer_display_name: str
+    vehicle_display_name: str
+    title: str
+    complaint: str
+    diagnosis: str | None = None
+    status: WorkOrderStatus
+    estimate_total: float | None = None
+    labor_hours_estimate: float | None = None
+    payment_option_selected: str | None = None
+    deposit_received: bool
+    authorization_confirmed: bool
+    scheduled_for: datetime | None = None
+    allowed_next_statuses: list[WorkOrderStatus] = Field(default_factory=list)
+    blocked_transitions: dict[str, str] = Field(default_factory=dict)
+    source_revision: EstimateRevisionRead
+    status_history: list[WorkOrderStatusEventRead] = Field(default_factory=list)
+    notes: list[WorkOrderNoteRead] = Field(default_factory=list)
     created_at: datetime
     updated_at: datetime
-    customer_name: str | None = None
-    vehicle_name: str | None = None
-    approval_status: str | None = None
+
+
+class WorkOrderListResponse(BaseModel):
+    items: list[WorkOrderRead]
+    page: int
+    page_size: int
+    total: int
+    has_more: bool
 
 
 class ApprovalBase(BaseModel):

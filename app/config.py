@@ -49,6 +49,8 @@ class Settings(BaseSettings):
     customers_max_page_size: int = Field(default=100, ge=1, le=200)
     vehicles_default_page_size: int = Field(default=20, ge=1, le=100)
     vehicles_max_page_size: int = Field(default=100, ge=1, le=200)
+    work_orders_default_page_size: int = Field(default=20, ge=1, le=100)
+    work_orders_max_page_size: int = Field(default=100, ge=1, le=200)
     app_env: str = "production"
     database_url: str = Field(
         default="postgresql+psycopg://optimus:optimus_local@postgres:5432/optimus_os",

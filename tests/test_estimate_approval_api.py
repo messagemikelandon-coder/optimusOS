@@ -4,6 +4,7 @@ import json
 import logging
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import Unpack
 
 import pytest
 from fastapi import HTTPException
@@ -47,7 +48,7 @@ from app.models import (
 from app.orchestrator import OptimusResearchOrchestrator
 from tests.test_api import request_for
 from tests.test_context_api import auth_context, create_user, login_as, raw_cookie_from_response
-from tests.test_vehicles_api import create_customer_for_auth, vehicle_payload
+from tests.test_vehicles_api import VehiclePayload, create_customer_for_auth, vehicle_payload
 
 
 def fixture_estimate_response() -> EstimateResponse:
@@ -305,9 +306,19 @@ def estimate_create_payload(customer_id: int, vehicle_id: int) -> EstimateCreate
     )
 
 
-async def create_estimate_for_auth(settings: Settings, db_session: Session, auth):  # type: ignore[no-untyped-def]
+async def create_estimate_for_auth(
+    settings: Settings,
+    db_session: Session,
+    auth,
+    **vehicle_overrides: Unpack[VehiclePayload],
+):  # type: ignore[no-untyped-def]
     customer_id = await create_customer_for_auth(settings, db_session, auth)
-    vehicle = await main.create_vehicle_record(customer_id, vehicle_payload(), db_session, auth)
+    vehicle = await main.create_vehicle_record(
+        customer_id,
+        vehicle_payload(**vehicle_overrides),
+        db_session,
+        auth,
+    )
     estimate = await main.create_estimate_record(
         estimate_create_payload(customer_id, vehicle.id),
         db_session,
