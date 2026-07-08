@@ -105,6 +105,8 @@ from app.models import (
     EstimateUpdate,
     InvoiceIssueRequest,
     InvoiceListResponse,
+    InvoicePaymentCreate,
+    InvoicePaymentVoidRequest,
     InvoiceRead,
     InvoiceStatus,
     LocationInput,
@@ -122,6 +124,7 @@ from app.models import (
     WorkOrderUpdate,
 )
 from app.orchestrator import OptimusResearchOrchestrator
+from app.payment_store import PaymentNotFoundError, record_payment, void_payment
 from app.rate_limit import RateLimitExceeded, SlidingWindowRateLimiter
 from app.services.http import SafeHttpClient
 from app.services.location import LocationService
@@ -1353,9 +1356,7 @@ async def get_invoice_pdf(
     try:
         invoice = get_invoice(db=db, auth=auth, invoice_id=invoice_id)
         pdf = render_invoice_pdf(invoice, business_name=settings.business_name)
-        headers = {
-            "Content-Disposition": f'inline; filename="{invoice.invoice_number}.pdf"'
-        }
+        headers = {"Content-Disposition": f'inline; filename="{invoice.invoice_number}.pdf"'}
         return Response(content=pdf, media_type="application/pdf", headers=headers)
     except InvoiceNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -1363,6 +1364,55 @@ async def get_invoice_pdf(
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except SQLAlchemyError as exc:
         logger.warning("Invoice PDF generation failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Invoice storage is unavailable.",
+        ) from exc
+
+
+@app.post("/api/invoices/{invoice_id}/payments", response_model=InvoiceRead)
+async def record_invoice_payment(
+    invoice_id: int,
+    payload: InvoicePaymentCreate,
+    db: DbSessionDep,
+    auth: AuthContextDep,
+) -> InvoiceRead:
+    try:
+        return record_payment(db=db, auth=auth, invoice_id=invoice_id, payload=payload)
+    except InvoiceNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except InvoiceStoreError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Invoice payment recording failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Invoice storage is unavailable.",
+        ) from exc
+
+
+@app.post("/api/invoices/{invoice_id}/payments/{payment_id}/void", response_model=InvoiceRead)
+async def void_invoice_payment(
+    invoice_id: int,
+    payment_id: int,
+    payload: InvoicePaymentVoidRequest,
+    db: DbSessionDep,
+    auth: AuthContextDep,
+) -> InvoiceRead:
+    try:
+        return void_payment(
+            db=db,
+            auth=auth,
+            invoice_id=invoice_id,
+            payment_id=payment_id,
+            payload=payload,
+        )
+    except (InvoiceNotFoundError, PaymentNotFoundError) as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except InvoiceStoreError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Invoice payment void failed due to storage error.")
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Invoice storage is unavailable.",

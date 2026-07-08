@@ -2247,6 +2247,10 @@ function invoiceStatusLabel(status) {
   return String(status || "").replaceAll("_", " ");
 }
 
+function invoicePaymentAppliesToLabel(appliesTo) {
+  return String(appliesTo || "").replaceAll("_", " ");
+}
+
 function renderInvoiceDetail(invoice = null) {
   const detail = $("invoice-detail");
   if (!invoice) {
@@ -2258,15 +2262,40 @@ function renderInvoiceDetail(invoice = null) {
     $("invoice-open-html").disabled = true;
     $("invoice-open-pdf").disabled = true;
     $("invoice-issue-save").disabled = true;
+    $("invoice-payment-save").disabled = true;
     return;
   }
   const lineItems = invoice.line_items.map((item) => `
     <li><strong>${escapeHtml(item.kind.replaceAll("_", " "))}</strong> · ${escapeHtml(item.description)} · ${escapeHtml(String(item.quantity))} × ${money(item.unit_amount)} = ${money(item.line_total)}</li>
   `).join("") || "<li>No line items.</li>";
+
+  const reversedIds = new Set(
+    invoice.payments.filter((payment) => payment.reversal_of_payment_id !== null).map((payment) => payment.reversal_of_payment_id)
+  );
+  const paymentRows = invoice.payments.map((payment) => {
+    const isVoided = reversedIds.has(payment.id);
+    const tags = [];
+    if (payment.is_reversal) tags.push("Void");
+    if (isVoided) tags.push("Voided");
+    const canVoid = !payment.is_reversal && !isVoided;
+    return `
+    <li>
+      <strong>${money(payment.amount)}</strong> · ${escapeHtml(invoicePaymentAppliesToLabel(payment.applies_to))} · ${escapeHtml(payment.method_label)}
+      · ${escapeHtml(new Date(payment.recorded_at).toLocaleString())}
+      ${tags.length ? `<span class="estimate-number">${tags.map((tag) => escapeHtml(tag)).join(" ")}</span>` : ""}
+      ${payment.note ? `<br><small>${escapeHtml(payment.note)}</small>` : ""}
+      ${canVoid ? `<button type="button" class="text-button" data-void-payment-id="${payment.id}">Void</button>` : ""}
+    </li>`;
+  }).join("") || "<li>No payments recorded yet.</li>";
+
+  const scheduleRows = invoice.schedule.map((entry) => `
+    <li><strong>${escapeHtml(entry.label)}</strong> · ${escapeHtml(entry.due_at ? new Date(entry.due_at).toLocaleDateString() : "No due date")} · ${money(entry.amount)}</li>
+  `).join("");
+
   detail.innerHTML = `
     <div class="customer-detail-header">
       <strong>${escapeHtml(invoice.invoice_number)} · ${escapeHtml(invoice.title)}</strong>
-      <span>${escapeHtml(invoiceStatusLabel(invoice.status))}</span>
+      <span>${escapeHtml(invoiceStatusLabel(invoice.status))}${invoice.is_overdue ? ' <span class="badge">Overdue</span>' : ""}</span>
     </div>
     <p>${escapeHtml(invoice.complaint)}</p>
     <div class="customer-detail-grid">
@@ -2278,15 +2307,25 @@ function renderInvoiceDetail(invoice = null) {
       <div><span>Parts total</span><strong>${money(invoice.parts_total)}</strong></div>
       <div><span>Fees total</span><strong>${money(invoice.fees_total)}</strong></div>
       <div><span>Invoice total</span><strong>${money(invoice.invoice_total)}</strong></div>
+      <div><span>Total paid</span><strong>${money(invoice.total_paid)}</strong></div>
+      <div><span>Balance due</span><strong>${money(invoice.balance_due)}</strong></div>
     </div>
     <section class="result-section"><h3>Line items</h3><ul>${lineItems}</ul></section>
+    <section class="result-section"><h3>Payment history</h3><ul>${paymentRows}</ul></section>
+    ${invoice.schedule.length ? `<section class="result-section"><h3>Payment schedule</h3><ul>${scheduleRows}</ul></section>` : ""}
   `;
+  $$("[data-void-payment-id]", detail).forEach((button) => {
+    button.addEventListener("click", () => {
+      void voidPayment(Number(button.dataset.voidPaymentId));
+    });
+  });
   $("invoice-id").value = String(invoice.id);
   $("invoice-form-mode").textContent = invoice.status.toUpperCase();
   $("invoice-open-work-order").disabled = false;
   $("invoice-open-html").disabled = false;
   $("invoice-open-pdf").disabled = false;
   $("invoice-issue-save").disabled = invoice.status !== "draft";
+  $("invoice-payment-save").disabled = invoice.status === "draft" || invoice.status === "void";
 }
 
 function renderInvoiceList() {
@@ -2389,6 +2428,67 @@ async function submitInvoiceIssue(event) {
   }
 }
 
+async function submitRecordPayment(event) {
+  event.preventDefault();
+  const invoiceId = $("invoice-id").value.trim();
+  const amount = Number($("invoice-payment-amount").value || "0");
+  const methodLabel = $("invoice-payment-method").value.trim();
+  if (!invoiceId || !amount || amount <= 0 || !methodLabel) {
+    showToast("Select an invoice and enter an amount and method before recording a payment.", "error");
+    return;
+  }
+  const recordedAtValue = $("invoice-payment-recorded-at").value;
+  try {
+    const response = await apiFetch(`/api/invoices/${invoiceId}/payments`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        amount,
+        method_label: methodLabel,
+        applies_to: $("invoice-payment-applies-to").value,
+        note: $("invoice-payment-note").value.trim() || null,
+        recorded_at: recordedAtValue ? new Date(recordedAtValue).toISOString() : null,
+      }),
+    });
+    const data = await readApiPayload(response);
+    if (!response.ok || !data) throw apiError(response, data, "Payment recording failed");
+    state.invoices.selectedInvoice = data;
+    state.invoices.selectedInvoiceId = data.id;
+    $("invoice-payment-amount").value = "";
+    $("invoice-payment-method").value = "";
+    $("invoice-payment-note").value = "";
+    $("invoice-payment-recorded-at").value = "";
+    $("invoice-payment-applies-to").value = "other";
+    renderInvoiceDetail(data);
+    void loadInvoices();
+    showToast("Payment recorded.", "success");
+  } catch (error) {
+    showToast(`Payment recording failed: ${error.message}`, "error");
+  }
+}
+
+async function voidPayment(paymentId) {
+  const invoiceId = state.invoices.selectedInvoice?.id;
+  if (!invoiceId || !paymentId) return;
+  if (!window.confirm("Void this payment? This cannot be undone and creates a reversal entry.")) return;
+  try {
+    const response = await apiFetch(`/api/invoices/${invoiceId}/payments/${paymentId}/void`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ reason: null }),
+    });
+    const data = await readApiPayload(response);
+    if (!response.ok || !data) throw apiError(response, data, "Payment void failed");
+    state.invoices.selectedInvoice = data;
+    state.invoices.selectedInvoiceId = data.id;
+    renderInvoiceDetail(data);
+    void loadInvoices();
+    showToast("Payment voided.", "success");
+  } catch (error) {
+    showToast(`Payment void failed: ${error.message}`, "error");
+  }
+}
+
 async function openWorkOrderForSelectedInvoice() {
   const workOrderId = state.invoices.selectedInvoice?.work_order_id;
   if (!workOrderId) return;
@@ -2427,6 +2527,9 @@ function initializeInvoices() {
   });
   $("invoice-issue-form").addEventListener("submit", (event) => {
     void submitInvoiceIssue(event);
+  });
+  $("invoice-payment-form").addEventListener("submit", (event) => {
+    void submitRecordPayment(event);
   });
   $("invoice-open-work-order").addEventListener("click", () => {
     void openWorkOrderForSelectedInvoice();

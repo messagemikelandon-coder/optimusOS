@@ -9,12 +9,12 @@ Relevant sources: `git status --short --branch`, `git rev-parse HEAD`, `env UV_C
 
 ## Operational Snapshot
 
-- Active development phase: **Phase 2 — Work Completion and Invoice PDF is implemented, independently reviewed, live-proofed, and ready for commit/push before Phase 3 starts.**
-- Current branch: `feat/invoices`.
-- Current HEAD: `f6dd75d774e99bd2da7c0c7aa96443f0c2497a34` (`feat: complete work order phase`).
-- Git working state: Phase 1 is committed and pushed to `origin/feat/work-orders`; Phase 2 invoice implementation, tests, UI, migration, and context updates are staged on `feat/invoices` for commit/push.
+- Active development phase: **Phase 3 — Payment Tracking is implemented, gated, reviewed, and live-proofed; not yet committed.** Phase 2 remains committed and pushed as the prior baseline.
+- Current branch: `feat/payment-tracking`.
+- Current HEAD: `85e9bce9cf8575ce3b2d7b44fb1458bde9682749` (`feat: add invoice generation`) — Phase 3 changes are uncommitted in the working tree pending explicit commit/push approval.
+- Git working state: Phase 1 is committed and pushed to `origin/feat/work-orders`; Phase 2 is committed and pushed to `origin/feat/invoices`; Phase 3 payment-tracking source, migration, tests, and doc updates are complete in the working tree on `feat/payment-tracking` but not yet committed.
 - Auth baseline status: the owner-session, customer, vehicle, context, and estimate-approval slices remain in place and unchanged in scope.
-- Current verified functionality: owner login/logout/me, protected chat, protected location resolution, owner-scoped context CRUD, customer CRUD/list/search/archive, vehicle CRUD/list/search/archive, saved estimate CRUD/revisioning/approval, Work Order conversion/list/detail/update/status/note flows, and invoice generation/list/detail/issue/html/pdf flows.
+- Current verified functionality: owner login/logout/me, protected chat, protected location resolution, owner-scoped context CRUD, customer CRUD/list/search/archive, vehicle CRUD/list/search/archive, saved estimate CRUD/revisioning/approval, Work Order conversion/list/detail/update/status/note flows, invoice generation/list/detail/issue/html/pdf flows, and invoice payment recording/void/schedule/balance-derivation flows.
 
 ## Work Order Slice
 
@@ -47,6 +47,23 @@ Relevant sources: `git status --short --branch`, `git rev-parse HEAD`, `env UV_C
   - `GET /api/invoices/{id}/html`
   - `GET /api/invoices/{id}/pdf`
 - Invoice frontend status: static frontend now includes an `Invoices` navigation view with list/search/status filter, detail rendering, issue controls, HTML/PDF document actions, and a bridge from completed work orders into their generated invoice.
+
+## Payment Tracking Slice (Phase 3)
+
+- Payment backend status: implemented with canonical PostgreSQL persistence in `invoice_payments` and `payment_schedules`, added by Alembic migration `009_payments`, in a new `app/payment_store.py` module (an intentional, reviewed deviation from the plan's original file layout — `record_payment`/`void_payment` live separately from `app/invoice_store.py` and import its shared helpers read-only).
+- Append-only ledger rule: `invoice_payments` rows are never updated or deleted. Voiding inserts a negative-amount reversal row (`reversal_of_payment_id` set); a DB-level `UniqueConstraint` on `reversal_of_payment_id` blocks double-voiding even under a request race, and a `CheckConstraint` enforces the amount-sign/reversal invariant.
+- Derived-field rule: `invoice.status`, `total_paid`, `balance_due`, and `is_overdue` are always recomputed server-side from non-voided payments plus `due_at`, fresh at every read (`_to_read`); the physical `invoices.status` column is only a best-effort cache updated on payment-write paths. Client-supplied financial status is never accepted.
+- Money-math rule: all payment/balance arithmetic uses `Decimal` (`_money()`, `ROUND_HALF_UP`, quantized to `0.01`); float conversion happens only at the Pydantic response boundary.
+- Overpayment rule: rejected with `422`, no tolerance; corrections are void + re-record only. The overpayment check locks the invoice row (`SELECT ... FOR UPDATE`, Postgres-only — a no-op under SQLite tests) for the duration of `record_payment` so concurrent submissions against the same invoice serialize instead of both passing a stale balance check.
+- Deposit rule: a payment with `applies_to=deposit` on a payment-plan work order (`split_payment`/`two_month_plan`) flips `deposit_received` to `true` in the same transaction if not already set; voiding that payment does **not** auto-revert it (documented limitation — the owner can flip it back via the existing `PATCH /api/work-orders/{id}`).
+- Payment schedule rule: generated exactly once on `issue`, using an explicitly-flagged **placeholder default even split** (100% for `pay_in_full`; 50/50 for `split_payment`; roughly-thirds deposit/30-day/60-day for `two_month_plan`), with any rounding remainder absorbed into the final row so amounts always sum exactly to `invoice_total`. The real deposit/installment percentage split is still unconfirmed business policy — see `docs/context/BUSINESS_RULES.md`.
+- No card/bank/payment-authorization fields exist anywhere in the new schema — `method_label` is free text only, by design, so there is nothing to leak.
+- Payment API surface:
+  - `POST /api/invoices/{id}/payments`
+  - `POST /api/invoices/{id}/payments/{payment_id}/void`
+  - `GET /api/invoices` / `GET /api/invoices/{id}` responses now also include `total_paid`, `balance_due`, `is_overdue`, `payments[]`, and `schedule[]`
+- Payment frontend status: the existing invoice detail panel (not a parallel billing surface) now shows balance/paid summary, an overdue badge, payment history with void controls, a read-only schedule list, and a record-payment form.
+- Explicitly out of scope for this slice (per owner decision 2026-07-08): any Square or other external payment processor, any live/billable payment API call, and any change to Square/external scheduling or the existing Work Order status lifecycle — Square integration is deferred to a distinct future phase with its own design/approval pass.
 
 ## Verification Status
 
@@ -88,7 +105,7 @@ Relevant sources: `git status --short --branch`, `git rev-parse HEAD`, `env UV_C
   - work-order completion and invoice creation now succeed or roll back atomically in the same transaction
   - invoice HTML now uses the shipped `/static/invoice.css` asset so the rendered document remains styled under the app's existing `style-src 'self'` CSP
   - invoice `fees_total` now derives from all approved fee items instead of assuming only the three canonical fee codes
-  - invoice line-item descriptions now use `Text` in the uncommitted `008_invoices` schema/model instead of a narrower `String(240)` cap
+  - invoice line-item descriptions now use `Text` in the committed `008_invoices` schema/model instead of a narrower `String(240)` cap
   - PDF rendering now wraps long/multiline customer-visible content instead of truncating raw lines
   - invoice selection now re-renders the list so the active-row highlight stays in sync with the selected invoice
 - Non-billable live invoice proof passed on 2026-07-08 against the rebuilt Docker stack:
@@ -104,13 +121,31 @@ Relevant sources: `git status --short --branch`, `git rev-parse HEAD`, `env UV_C
   - Reviewed surfaces: completion-triggered invoice creation, owner scoping on list/detail/document routes, HTML escaping, PDF field narrowing, invoice snapshot contents, and invoice document exposure boundaries
   - Result: no auth bypass, no cross-user leak, no internal-research leak in document output, and no new unsafe HTML rendering path
 - Phase 2 independent re-review completed on 2026-07-08 with no remaining findings after the fixes.
-
-## Remaining Work Before Phase 2 Can Be Closed
-
-- No engineering or verification gates remain open for the Phase 2 slice.
-- Commit and push still require explicit owner approval before execution.
+- Phase 3 automated verification passed on 2026-07-08:
+  - `env UV_CACHE_DIR=/tmp/uv-cache uv run ruff format --check app/db_models.py app/invoice_store.py app/main.py app/models.py app/payment_store.py alembic/versions/009_payments.py tests/test_payments_api.py` → clean (repo-wide `ruff format --check .` flags 4 pre-existing files unrelated to this diff — confirmed via `git stash` that the drift predates this session)
+  - `env UV_CACHE_DIR=/tmp/uv-cache uv run ruff check .` → all checks passed
+  - `env UV_CACHE_DIR=/tmp/uv-cache uv run pyright` → 0 errors
+  - `env UV_CACHE_DIR=/tmp/uv-cache uv run pytest -q` → 165 passed (16 new in `tests/test_payments_api.py`, all Phase 1/2 tests still green)
+  - `node --check app/static/app.js` → OK
+- Phase 3 Docker/migration verification passed on 2026-07-08:
+  - `docker compose config -q`
+  - `docker compose build backend worker`
+  - `docker compose up -d backend worker frontend`
+  - `docker compose exec -T backend alembic heads` → `009_payments (head)`
+  - `docker compose exec -T backend alembic upgrade head`
+  - `docker compose exec -T backend alembic current` → `009_payments (head)`
+  - rollback rehearsal: `alembic downgrade 008_invoices` then `alembic upgrade head` → clean round-trip, back at `009_payments (head)`
+- Phase 3 independent review completed on 2026-07-08: no correctness bugs, no regressions (`app/work_order_store.py` confirmed untouched), all 16 planned test cases present, cross-user isolation confirmed on both new routes. Two minor, accepted architecture-drift notes: payment logic landed in a new `app/payment_store.py` module rather than inside `invoice_store.py`, and `InvoicePaymentCreate.amount` has an added `le=1_000_000` upper bound not in the original plan text — both harmless and reflected in this doc.
+- Phase 3 security review completed on 2026-07-08: no critical/high findings. One medium finding (overpayment check not race-safe against concurrent requests on the same invoice) was fixed same-day by adding a `SELECT ... FOR UPDATE` row lock in `record_payment`; full gates re-ran green after the fix.
+- Non-billable live proof passed on 2026-07-08 against the rebuilt Docker stack (fixture-seeded estimate, no OpenAI call, owner/session constructed directly against the real DB without touching `.env`):
+  - two-month-plan estimate → work order conversion → blocked premature scheduling (prereqs unmet) → deposit payment recorded → `deposit_received` flipped by the payment itself → invoice issued with a 3-row schedule (`Deposit`/`Installment 1`/`Installment 2`, summing exactly to `invoice_total` in Decimal) → status `partially_paid` → overpayment rejected → balance paid in full → status `paid`, balance `0` → deposit payment voided → status recomputed back to `partially_paid`, balance `186.31`, `deposit_received` unchanged (`true`) → double-void rejected
+  - restarted `backend`/`worker` and confirmed identical state after restart: `invoice_status=partially_paid`, `total_paid=372.62`, `balance_due=186.31`, `payment_count=3`, `schedule_count=3`, `work_order_status=completed`, `deposit_received=true`
+  - proved live cross-user isolation with a second synthetic owner: `GET /api/invoices/{id}`, `POST /api/invoices/{id}/payments`, and `POST /api/invoices/{id}/payments/{payment_id}/void` all returned `404`
+  - proof result summary: `estimate_id=71`, `work_order_id=8`, `invoice_id=6`, `owner_user_id=12`
 
 ## Next Approved Implementation Phase
 
 - Phase 1 is closed and pushed.
-- Phase 2 should be committed and pushed before Phase 3 starts so the roadmap remains phase-gated and the handoff baseline stays clean.
+- Phase 2 is closed and pushed.
+- Phase 3 is implemented, gated, reviewed, and live-proofed on `feat/payment-tracking`; **awaiting explicit commit/push approval** before closing.
+- Phase 4 — Full Local MVP Hardening is next once Phase 3 is committed/pushed.

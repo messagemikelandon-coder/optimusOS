@@ -724,7 +724,7 @@
                   <legend><span>01</span> Due date</legend>
                   <div class="form-grid two">
                     <label class="field">Due in days <input id="invoice-due-days" type="number" min="1" max="180" value="30"></label>
-                    <div class="empty-card"><strong>Issue action</strong><p>Issuing a draft stamps the issue time and due date. Payment tracking remains a later slice.</p></div>
+                    <div class="empty-card"><strong>Issue action</strong><p>Issuing a draft stamps the issue time and due date, and generates a starting payment schedule the owner can override later.</p></div>
                   </div>
                 </fieldset>
 
@@ -732,6 +732,36 @@
                   <div><strong>Customer-safe document</strong><span>HTML and PDF document views stay limited to invoice-safe fields only.</span></div>
                   <div class="customers-form-actions">
                     <button class="primary-button compact" type="submit" id="invoice-issue-save">Issue invoice</button>
+                  </div>
+                </div>
+              </form>
+
+              <form class="panel estimate-form-panel" id="invoice-payment-form">
+                <div class="panel-heading">
+                  <div><span class="section-kicker"><i></i> Record payment</span><h3>Log a payment</h3></div>
+                </div>
+                <fieldset>
+                  <legend><span>02</span> Payment details</legend>
+                  <div class="form-grid two">
+                    <label class="field">Amount <input id="invoice-payment-amount" type="number" min="0.01" step="0.01" placeholder="0.00"></label>
+                    <label class="field">Method <input id="invoice-payment-method" maxlength="60" placeholder="Cash, check #1042, etc."></label>
+                    <label class="field">Applies to
+                      <select id="invoice-payment-applies-to">
+                        <option value="other">Other</option>
+                        <option value="deposit">Deposit</option>
+                        <option value="installment">Installment</option>
+                        <option value="balance">Balance</option>
+                        <option value="full">Full payment</option>
+                      </select>
+                    </label>
+                    <label class="field">Recorded on (optional backdate) <input id="invoice-payment-recorded-at" type="datetime-local"></label>
+                  </div>
+                  <label class="field full">Note <textarea id="invoice-payment-note" maxlength="2000" placeholder="Optional note for this payment."></textarea></label>
+                </fieldset>
+                <div class="estimate-submit-row">
+                  <div><strong>Append-only ledger</strong><span>Corrections are void + re-record only; payments are never edited or deleted in place.</span></div>
+                  <div class="customers-form-actions">
+                    <button class="primary-button compact" type="submit" id="invoice-payment-save">Record payment</button>
                   </div>
                 </div>
               </form>
