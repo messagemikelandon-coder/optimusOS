@@ -45,9 +45,7 @@ def extract_pdf_text(pdf_bytes: bytes) -> str:
 async def stub_estimate_with_extra_fee(self, request):  # type: ignore[no-untyped-def]
     del self, request
     response = fixture_estimate_response_with_sensitive_research().model_copy(deep=True)
-    response.fee_items.append(
-        EstimateFeeItem(code="hazmat", label="Hazmat disposal", amount=8.3)
-    )
+    response.fee_items.append(EstimateFeeItem(code="hazmat", label="Hazmat disposal", amount=8.3))
     response.totals.estimated_total += 8.3
     return response
 
@@ -197,9 +195,7 @@ async def test_invoice_fee_total_includes_noncanonical_fee_items(
 
 
 @pytest.mark.anyio
-async def test_invoice_issue_sets_status_and_due_date(
-    monkeypatch, settings, db_session
-) -> None:  # type: ignore[no-untyped-def]
+async def test_invoice_issue_sets_status_and_due_date(monkeypatch, settings, db_session) -> None:  # type: ignore[no-untyped-def]
     _, response = await login_as(settings, db_session)
     auth = auth_context(settings, db_session, raw_cookie_from_response(response))
 
@@ -387,9 +383,7 @@ async def test_invoice_persists_across_session_restart(
 
 
 @pytest.mark.anyio
-async def test_invoice_storage_failures_are_sanitized(
-    monkeypatch, settings, db_session
-) -> None:  # type: ignore[no-untyped-def]
+async def test_invoice_storage_failures_are_sanitized(monkeypatch, settings, db_session) -> None:  # type: ignore[no-untyped-def]
     _, response = await login_as(settings, db_session)
     auth = auth_context(settings, db_session, raw_cookie_from_response(response))
 

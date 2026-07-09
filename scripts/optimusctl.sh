@@ -32,6 +32,20 @@ env_value() {
   echo "${value:-$default_value}"
 }
 
+# Optional compose override, opted into via .env (e.g. the staging droplet sets
+# COMPOSE_OVERRIDE_FILE=ops/docker-compose.staging.yml so every subcommand keeps
+# the staging port binding instead of silently dropping back to the dev-only
+# 127.0.0.1 default). Absent key = local dev, behavior unchanged.
+OVERRIDE_FILE="$(env_value COMPOSE_OVERRIDE_FILE "")"
+if [[ -n "$OVERRIDE_FILE" ]]; then
+  [[ "$OVERRIDE_FILE" = /* ]] || OVERRIDE_FILE="$ROOT/$OVERRIDE_FILE"
+  if [[ ! -f "$OVERRIDE_FILE" ]]; then
+    echo "COMPOSE_OVERRIDE_FILE points at a missing file: $OVERRIDE_FILE"
+    exit 1
+  fi
+  COMPOSE+=(-f "$OVERRIDE_FILE")
+fi
+
 compose() {
   require_env
   "${COMPOSE[@]}" "$@"

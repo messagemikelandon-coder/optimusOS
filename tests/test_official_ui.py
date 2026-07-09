@@ -66,10 +66,10 @@ def test_ui_preserves_connected_workflows() -> None:
     assert 'apiFetch("/api/chat"' in javascript
     assert "/api/estimates" in javascript
     assert "/api/invoices" in javascript
-    assert 'apiFetch(`/api/invoices/${invoiceId}/issue`' in javascript
-    assert 'window.open(`/api/invoices/${invoiceId}/${kind}`' in javascript
+    assert "apiFetch(`/api/invoices/${invoiceId}/issue`" in javascript
+    assert "window.open(`/api/invoices/${invoiceId}/${kind}`" in javascript
     assert "renderInvoiceList();" in javascript
-    assert 'apiFetch(`/api/estimates/${estimateId}`)' in javascript
+    assert "apiFetch(`/api/estimates/${estimateId}`)" in javascript
     assert "/api/estimate-approval/view" in javascript
     assert "async function openEstimateRecord" in javascript
     assert "async function openInvoiceForSelectedWorkOrder" in javascript
