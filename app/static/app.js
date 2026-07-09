@@ -60,6 +60,7 @@ const state = {
     items: [],
     selectedInvoiceId: null,
     selectedInvoice: null,
+    selectionVersion: 0,
     page: 1,
     pageSize: 20,
     total: 0,
@@ -2351,10 +2352,12 @@ function renderInvoiceList() {
 }
 
 async function selectInvoice(invoiceId) {
+  const version = ++state.invoices.selectionVersion;
   try {
     const response = await apiFetch(`/api/invoices/${invoiceId}`);
     const data = await readApiPayload(response);
     if (!response.ok || !data) throw apiError(response, data, "Invoice load failed");
+    if (version !== state.invoices.selectionVersion) return;
     state.invoices.selectedInvoiceId = data.id;
     state.invoices.selectedInvoice = data;
     renderInvoiceList();
@@ -2365,6 +2368,7 @@ async function selectInvoice(invoiceId) {
 }
 
 async function loadInvoices() {
+  const version = state.invoices.selectionVersion;
   const list = $("invoices-list");
   list.innerHTML = '<div class="loading-panel"><span class="loading-spinner"></span><div><strong>Loading invoices</strong><br><small>Reading completed-work-order billing records.</small></div></div>';
   const searchParams = new URLSearchParams({
@@ -2384,7 +2388,11 @@ async function loadInvoices() {
       const selected = data.items.find((item) => item.id === state.invoices.selectedInvoiceId);
       if (selected) {
         state.invoices.selectedInvoice = selected;
-      } else {
+      } else if (version === state.invoices.selectionVersion) {
+        // Only clear the selection if no newer selectInvoice() call has
+        // started since this list fetch began -- otherwise this slower,
+        // now-stale response would clobber a more recent selection (e.g.
+        // opening an invoice from a work order races this list refresh).
         state.invoices.selectedInvoiceId = null;
         state.invoices.selectedInvoice = null;
       }
