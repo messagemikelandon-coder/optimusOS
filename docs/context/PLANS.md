@@ -146,13 +146,15 @@ Required tests: full payment; partial payment; deposit; installments; overpaymen
 - [x] Idempotency audit: `tests/test_idempotency_audit.py` — repeated status transition, repeated issue, repeated full-payment request all proven non-duplicating.
 - [x] Full-log secret scan script: `scripts/scan_logs_for_secrets.py` — reusable CLI, never prints matched text, covers OpenAI keys/generic secret labels/any credentialed connection URL/session-cookie value/approval-token-shaped strings.
 - [x] Customer-document exposure scan: `tests/test_document_exposure_scan.py` — invoice HTML/PDF and the public estimate-approval view checked against a shared forbidden-marker list.
-- [~] Fresh-volume E2E test + failure drills (Redis down, Postgres down, full restart): satisfied via a **one-time manual live proof** on 2026-07-08 against an isolated `optimus_e2e` Docker Compose project, not a permanent committed automated test. Evidence in `docs/context/SESSION_HANDOFF.md`. Decide before Phase 5 whether this is sufficient or a permanent automated version is needed.
+- [x] Fresh-volume E2E test + failure drills (Redis down, Postgres down, full restart): satisfied via a **one-time manual live proof** on 2026-07-08 against an isolated `optimus_e2e` Docker Compose project, not a permanent committed automated test. Evidence in `docs/context/SESSION_HANDOFF.md`. **Owner accepted this as sufficient on 2026-07-09** — a permanent automated version is not planned unless separately requested.
 - [x] No live/billable OpenAI call made — seeded-estimate path used, as allowed.
 - Independent review and security review both completed 2026-07-08 on the four new files; two minor issues found and fixed same-day (secret-scan regex gap, docstring honesty about test overlap). No findings on the (ruled-out) suspected `app/auth.py` defect.
-- [ ] Commit/push the Phase 4 slice — **awaiting explicit commit/push approval**, not yet performed.
+- [x] Committed and merged to `main` via PR #8 (`c920891`) on 2026-07-09.
+
+**Phase 4 is closed.**
 
 ### Phase 5 — Private Staging
-**Blocked until Phase 4 passes.**
+Branch: `ops/staging`, from `main` at `c920891`.
 
 - Separate host/environment; separate PostgreSQL + Redis with distinct credentials; synthetic data only, no real customers.
 - Private domain + HTTPS, HSTS, secure cookies flipped on (currently `false` locally — verify it's env-driven).
@@ -162,6 +164,18 @@ Required tests: full payment; partial payment; deposit; installments; overpaymen
 - Monitoring on `/health` + `/ready`, error-log alerting, disk-space alerting.
 - Rollback rehearsed once (previous image tag retained).
 - Decide *where* staging will live during Phases 1–3, so Phase 5 doesn't stall on unmade infrastructure decisions.
+
+**Progress (2026-07-09):**
+
+- [x] Secure cookies confirmed already env-driven: `settings.frontend_origin.lower().startswith("https://")` in `app/auth.py` — no code change needed, just confirmed by reading the code.
+- [x] HSTS header added to `app/main.py`'s `security_headers` middleware, same env-gating pattern as the Secure cookie flag; regression tests in `tests/test_security_headers.py`.
+- [x] Migration downgrade formalized as an explicit deploy step: `scripts/optimusctl.sh migrate-down <revision>`, rehearsed once against the dev stack (`009_payments` → `008_invoices` → back to head).
+- [x] Backup/restore rehearsed: `scripts/optimusctl.sh restore <dump-file> [target-db]` added (restores into a scratch database only, with an identifier-shape check, a live-database-name guard read from `.env` — not the ambient shell — and a PostgreSQL reserved-name denylist). Rehearsed once: `backup` → `restore` into `optimus_os_restore_check`, row counts confirmed matching the live DB across `user_accounts`/`customers`/`invoices`/`invoice_payments`.
+- [x] Rollback mechanism added and rehearsed once: `scripts/optimusctl.sh rollback` (retags `:previous` back to `:latest`, sudo-aware). Rehearsed by deliberately breaking the backend (retagged to a dummy image), confirming `/health` failed, then running `rollback` and confirming full recovery.
+- [x] Independent review + security review completed on all of the above; findings (sudo-docker regression risk, live-db-guard env-source bug, missing reserved-db-name denylist, a doc PR/phase mislabeling) all fixed and re-verified. See `docs/context/KNOWN_ISSUES.md`.
+- [x] Infrastructure decision made (ADR-011, `docs/context/DECISIONS.md`): staging will run on a DigitalOcean droplet, domain registered through Cloudflare (also solves HTTPS termination via Cloudflare's proxy).
+- [ ] **Owner action required, not yet done:** create the DigitalOcean account/droplet and register the domain through Cloudflare. No agent can perform this (real credentials, payment, cloud provider action).
+- [ ] Not started: actual droplet provisioning, DNS/Cloudflare configuration, secrets-on-host setup, separate staging PostgreSQL/Redis with distinct credentials, `/health`+`/ready` external monitoring/alerting, disk-space alerting.
 
 ### Phase 6 — Production Readiness
 - Threat model (approval links, session cookies, owner auth, public endpoints, PDF generation).

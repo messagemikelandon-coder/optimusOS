@@ -9,10 +9,10 @@ Relevant sources: `git status --short --branch`, `git rev-parse HEAD`, `env UV_C
 
 ## Operational Snapshot
 
-- Active development phase: **Phase 3 — Payment Tracking is committed and pushed. Phase 4 — Full Local MVP Hardening is partially implemented, reviewed, and live-proofed; not yet committed.**
-- Current branch: `harden/local-mvp` (branched from Phase 3's pushed tip).
-- Current HEAD: `f72a6f8a91f878baae7addc72307f0110a777e6b` (`feat: add invoice payment tracking`) — Phase 4 changes are uncommitted in the working tree pending explicit commit/push approval.
-- Git working state: Phase 1 pushed to `origin/feat/work-orders`; Phase 2 pushed to `origin/feat/invoices`; Phase 3 pushed to `origin/feat/payment-tracking` (`f72a6f8`); Phase 4 test/script additions are complete in the working tree on `harden/local-mvp` but not yet committed. No production `app/*.py` source changed in Phase 4.
+- Active development phase: **Phase 3 and Phase 4 are both merged to `main`. Phase 5 — Private Staging: local-prep code work is done, reviewed, and rehearsed; blocked on owner-performed infrastructure setup (DigitalOcean + Cloudflare, ADR-011).**
+- Current branch: `ops/staging` (branched from `main` at `c920891`).
+- Current HEAD: `c920891` (`Merge pull request #8 from messagemikelandon-coder/harden/local-mvp`) plus uncommitted Phase 5 local-prep work, not yet committed.
+- Git working state: Phase 1 pushed to `origin/feat/work-orders`; Phase 2 merged to `main` via PR #6 (`8be1dba`); Phase 3 merged to `main` via PR #7 (`423192b`); Phase 4 merged to `main` via PR #8 (`c920891`) (Phases 3-4 merged directly on GitHub, 2026-07-09). `main` and `ops/staging` are both at `c920891` plus this session's Phase 5 work in progress.
 - Auth baseline status: the owner-session, customer, vehicle, context, and estimate-approval slices remain in place and unchanged in scope.
 - Current verified functionality: owner login/logout/me, protected chat, protected location resolution, owner-scoped context CRUD, customer CRUD/list/search/archive, vehicle CRUD/list/search/archive, saved estimate CRUD/revisioning/approval, Work Order conversion/list/detail/update/status/note flows, invoice generation/list/detail/issue/html/pdf flows, and invoice payment recording/void/schedule/balance-derivation flows.
 
@@ -67,12 +67,20 @@ Relevant sources: `git status --short --branch`, `git rev-parse HEAD`, `env UV_C
 
 ## Hardening Slice (Phase 4)
 
-- Status: partially implemented, no production code changed. Four of the roadmap's six deliverables landed as permanent test/script files; two (fresh-volume E2E flow, failure drills) were satisfied via a one-time manual live proof this session rather than new permanent automated Docker/E2E infrastructure — no repeatable committed artifact exists yet for those two.
+- Status: **Closed** (owner decision, 2026-07-09). Four of the roadmap's six deliverables landed as permanent test/script files; two (fresh-volume E2E flow, failure drills) were satisfied via a one-time manual live proof rather than new permanent automated Docker/E2E infrastructure. The owner has explicitly accepted the one-time proof as sufficient to close Phase 4 — a permanent automated fresh-volume E2E/failure-drill artifact remains unbuilt and is not planned unless separately requested.
 - New files: `tests/test_isolation_sweep.py`, `tests/test_idempotency_audit.py`, `tests/test_document_exposure_scan.py`, `scripts/scan_logs_for_secrets.py`.
 - Investigated and ruled out a suspected defect in `app/auth.py::get_current_auth_context` (Postgres-down error handling): it already wraps its DB access in `try/except SQLAlchemyError` returning a sanitized `503`; confirmed by code reading, a live drill, and independent + security review. No code changed.
 - One-time live proof (2026-07-08) against an isolated `optimus_e2e` Docker Compose project (separate volumes/ports, same real hardened image): fresh-volume migration from empty to `009_payments (head)`; full Customer(seeded)→WorkOrder→Completion→Invoice→Payment→`paid` flow via real HTTP; clean secret-log scan; Redis-down/up and Postgres-down/up drills both showed sanitized responses and clean recovery with no backend restart; full-stack restart preserved all data; dev stack/volumes confirmed untouched throughout; clean teardown.
 - Out of scope, unchanged: Square/external payment or scheduling integration, live/billable OpenAI calls.
-- See `docs/context/SESSION_HANDOFF.md` for full evidence and the open question of whether this one-time proof is sufficient to call Phase 4 done, or whether a permanent automated version should be built before Phase 5.
+- Merged to `main` via PR #7 (Phase 3, commit `423192b`) and PR #8 (Phase 4, commit `c920891`) on 2026-07-09.
+
+## Staging Prep (Phase 5, in progress)
+
+- Status: local-only code/process prep is done, reviewed, and rehearsed; **blocked on owner-performed infrastructure setup** before any real deployment work can happen.
+- Infrastructure decision (ADR-011, `docs/context/DECISIONS.md`): staging will run on a DigitalOcean droplet; domain registered through Cloudflare (also solves HTTPS termination via Cloudflare's edge proxy). Owner still needs to create the DigitalOcean account/droplet and register the domain — no agent can do this (real credentials, payment, cloud provider action).
+- Code/process changes made and rehearsed against the local dev stack: HSTS header added to `app/main.py` (env-gated on `frontend_origin` being https, same pattern as the existing Secure-cookie check); `scripts/optimusctl.sh` gained `restore` (scratch-database-only, with a live-db-name guard sourced from `.env`, a reserved-system-db denylist, and an identifier-shape check), `rollback` (image-tag-based, sudo-aware), and `migrate-down` subcommands.
+- Independent review + security review completed; four real findings fixed same-day: a sudo-docker regression risk in the new rollback code, a live-database-guard reading the wrong environment source, a missing PostgreSQL reserved-name denylist, and a doc PR/phase mislabeling. See `docs/context/KNOWN_ISSUES.md` for detail.
+- Not yet started: actual droplet provisioning, DNS/Cloudflare configuration, separate staging PostgreSQL/Redis with distinct credentials, secrets-on-host handling, external `/health`+`/ready` monitoring/alerting, disk-space alerting.
 
 ## Verification Status
 
@@ -154,8 +162,8 @@ Relevant sources: `git status --short --branch`, `git rev-parse HEAD`, `env UV_C
 
 ## Next Approved Implementation Phase
 
-- Phase 1 is closed and pushed.
-- Phase 2 is closed and pushed.
-- Phase 3 is closed and pushed to `origin/feat/payment-tracking` (`f72a6f8`).
-- Phase 4 — Full Local MVP Hardening is implemented (4 of 6 deliverables as permanent files, 2 via one-time live proof), reviewed, and live-proofed on `harden/local-mvp`; **awaiting explicit commit/push approval** before closing, plus an open decision on whether the one-time proof suffices or a permanent automated version is needed first.
-- Phase 5 — Private Staging is next once Phase 4 is closed.
+- Phase 1 is closed and merged to `main`.
+- Phase 2 is closed and merged to `main`.
+- Phase 3 is closed and merged to `main` (PR #7, `423192b`).
+- Phase 4 is closed and merged to `main` (PR #8, `c920891`) — owner accepted the one-time live proof as sufficient for the fresh-volume E2E/failure-drill deliverables; no permanent automated version is planned unless separately requested.
+- Phase 5 — Private Staging is the active phase on `ops/staging`. Real deployment actions (host/provider selection, DNS, TLS, secrets store, alerting) require an explicit owner decision before proceeding — see `docs/context/SESSION_HANDOFF.md`.

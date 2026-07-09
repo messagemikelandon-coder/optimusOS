@@ -210,6 +210,18 @@ async def security_headers(request: Request, call_next):  # type: ignore[no-unty
         "img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; "
         "form-action 'self'"
     )
+    # Only advertise HSTS when the deployed origin is actually HTTPS -- sending
+    # it over plain local HTTP would tell browsers to demand HTTPS on a host
+    # that can't serve it, matching the same frontend_origin check already
+    # used for the Secure cookie flag in app/auth.py. This deliberately does
+    # NOT trust a client-supplied X-Forwarded-Proto header instead, since
+    # nothing in front of this app today is confirmed to strip/overwrite that
+    # header from untrusted clients -- an attacker reaching the app directly
+    # could otherwise force a spoofed HSTS response. Revisit once staging's
+    # actual TLS-terminating reverse-proxy topology is chosen and confirmed
+    # to control that header.
+    if get_settings().frontend_origin.lower().startswith("https://"):
+        response.headers["Strict-Transport-Security"] = "max-age=63072000; includeSubDomains"
     return response
 
 
