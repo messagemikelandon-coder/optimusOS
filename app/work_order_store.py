@@ -121,15 +121,10 @@ def _ready_requirements_met(work_order: WorkOrder) -> bool:
 
 def _allowed_next_statuses(work_order: WorkOrder) -> list[WorkOrderStatus]:
     statuses = list(TRANSITIONS[WorkOrderStatus(work_order.status)])
-    if (
-        WorkOrderStatus(work_order.status) == WorkOrderStatus.PENDING_REQUIREMENTS
-        and not _ready_requirements_met(work_order)
-    ):
-        return [
-            status
-            for status in statuses
-            if status != WorkOrderStatus.READY_TO_SCHEDULE
-        ]
+    if WorkOrderStatus(
+        work_order.status
+    ) == WorkOrderStatus.PENDING_REQUIREMENTS and not _ready_requirements_met(work_order):
+        return [status for status in statuses if status != WorkOrderStatus.READY_TO_SCHEDULE]
     return statuses
 
 

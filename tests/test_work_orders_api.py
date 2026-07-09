@@ -328,9 +328,7 @@ async def test_work_order_notes_preserve_visibility_separation(
 
 
 @pytest.mark.anyio
-async def test_work_order_note_updates_list_recency(
-    monkeypatch, settings, db_session
-) -> None:  # type: ignore[no-untyped-def]
+async def test_work_order_note_updates_list_recency(monkeypatch, settings, db_session) -> None:  # type: ignore[no-untyped-def]
     _, response = await login_as(settings, db_session)
     auth = auth_context(settings, db_session, raw_cookie_from_response(response))
     _, first_estimate = await create_approved_estimate_for_auth(
@@ -360,7 +358,10 @@ async def test_work_order_note_updates_list_recency(
         customer_id=None,
         vehicle_id=None,
     )
-    assert [item.id for item in listed_before.items][:2] == [second_work_order.id, first_work_order.id]
+    assert [item.id for item in listed_before.items][:2] == [
+        second_work_order.id,
+        first_work_order.id,
+    ]
 
     await main.add_work_order_note_record(
         first_work_order.id,
@@ -383,7 +384,10 @@ async def test_work_order_note_updates_list_recency(
         customer_id=None,
         vehicle_id=None,
     )
-    assert [item.id for item in listed_after.items][:2] == [first_work_order.id, second_work_order.id]
+    assert [item.id for item in listed_after.items][:2] == [
+        first_work_order.id,
+        second_work_order.id,
+    ]
 
 
 @pytest.mark.anyio
