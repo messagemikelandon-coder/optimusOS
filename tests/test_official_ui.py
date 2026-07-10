@@ -56,6 +56,10 @@ def test_ui_preserves_connected_workflows() -> None:
         "notifications-unread-filter",
         "invoice-square-push",
         "invoice-square-refresh",
+        "view-square",
+        "square-status-banner",
+        "square-invoices-list",
+        "square-refresh-all",
         "estimate-form",
         "estimate-selected-customer",
         "estimate-selected-vehicle",
@@ -85,6 +89,7 @@ def test_ui_preserves_connected_workflows() -> None:
     assert 'apiFetch("/api/notifications/read-all"' in javascript
     assert "apiFetch(`/api/invoices/${invoice.id}/square/push`" in javascript
     assert "apiFetch(`/api/invoices/${invoice.id}/square/refresh`" in javascript
+    assert "async function loadSquareDashboard" in javascript
     assert "/api/estimate-approval/view" in javascript
     assert "async function openEstimateRecord" in javascript
     assert "async function openInvoiceForSelectedWorkOrder" in javascript

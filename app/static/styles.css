@@ -385,6 +385,14 @@ button[disabled] { cursor: wait; opacity: .6; transform: none !important; }
   transform: translateY(-1px);
 }
 
+.square-invoice-row {
+  cursor: default;
+}
+
+.square-invoice-row .customers-form-actions {
+  margin-top: 4px;
+}
+
 .customer-list-item.is-active {
   background: linear-gradient(180deg, rgba(18, 63, 101, .65), rgba(12, 32, 49, .92));
 }

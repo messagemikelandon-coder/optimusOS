@@ -77,6 +77,10 @@ const state = {
     unreadOnly: false,
     unreadCount: 0,
   },
+  square: {
+    items: [],
+    loading: false,
+  },
   currentView: "dashboard",
   health: null,
   lastEstimate: null,
@@ -90,6 +94,7 @@ const viewMeta = {
   "work-orders": { eyebrow: "Repair execution", title: "Work orders" },
   invoices: { eyebrow: "Customer billing", title: "Invoices" },
   notifications: { eyebrow: "Owner alerts", title: "Notifications" },
+  square: { eyebrow: "Payment integration", title: "Square" },
   chat: { eyebrow: "Owner channel", title: "Talk to Optimus" },
   estimate: { eyebrow: "Pricing workflow", title: "Job estimator" },
   approval: { eyebrow: "Customer authorization", title: "Estimate approval" },
@@ -292,6 +297,7 @@ function navigate(view) {
   if (view === "work-orders" && state.auth.authenticated) void loadWorkOrders();
   if (view === "invoices" && state.auth.authenticated) void loadInvoices();
   if (view === "notifications" && state.auth.authenticated) void loadNotifications();
+  if (view === "square" && state.auth.authenticated) void loadSquareDashboard();
   if (view === "chat") window.setTimeout(() => $("chat-message").focus(), 180);
   if (view === "login") window.setTimeout(() => $("login-username").focus(), 180);
 }
@@ -715,6 +721,7 @@ function renderEstimate(data) {
       <button class="secondary-button compact" type="button" id="print-estimate">Print estimate</button>
       <button class="secondary-button compact" type="button" id="send-estimate-approval"${data.status === "approved" ? " disabled" : ""}>Send for approval</button>
       <button class="secondary-button compact" type="button" id="create-work-order"${canCreateWorkOrder ? "" : " disabled"}>Create work order</button>
+      <button class="text-button" type="button" id="refresh-estimate-record" title="Reload this estimate's current status from the server">Refresh status</button>
       <button class="text-button" type="button" id="new-estimate">Start another</button>
     </div>
     <div class="money-grid">
@@ -761,6 +768,11 @@ function renderEstimate(data) {
   });
   $("create-work-order").addEventListener("click", () => {
     void createWorkOrderFromSelectedEstimate();
+  });
+  $("refresh-estimate-record").addEventListener("click", () => {
+    void openEstimateRecord(data.id).then(() => {
+      showToast("Estimate status refreshed.", "info");
+    });
   });
   $("new-estimate").addEventListener("click", () => {
     result.hidden = true;
@@ -2834,6 +2846,110 @@ function initializeNotifications() {
   });
 }
 
+function renderSquareStatusBanner() {
+  const banner = $("square-status-banner");
+  const configured = Boolean(state.health?.square_configured);
+  const environment = state.health?.square_environment || "sandbox";
+  if (configured) {
+    banner.innerHTML = `<strong>Square is connected (${escapeHtml(environment)}).</strong><p>Issued invoices can be sent to Square for online card payment below.</p>`;
+  } else {
+    banner.innerHTML = `<strong>Square is not configured yet.</strong><p>Add <code>SQUARE_ACCESS_TOKEN</code> and <code>SQUARE_LOCATION_ID</code> to this server's environment and restart the backend to enable sending invoices to Square. Until then, invoices stay local-only.</p>`;
+  }
+}
+
+function squareRowStatusLabel(item) {
+  if (!item.square_invoice_id) return "Not sent to Square";
+  return `Square: ${item.square_status || "unknown"}`;
+}
+
+function renderSquareInvoicesList() {
+  const list = $("square-invoices-list");
+  const configured = Boolean(state.health?.square_configured);
+  const items = state.square.items;
+  if (!items.length) {
+    list.innerHTML = "<p>No issued invoices yet. Invoices become eligible for Square once they're issued.</p>";
+    return;
+  }
+  list.innerHTML = items.map((item) => {
+    const pushable = configured && !item.square_invoice_id && item.status !== "draft" && item.status !== "void";
+    const refreshable = configured && Boolean(item.square_invoice_id);
+    return `
+    <div class="customer-list-item square-invoice-row" data-square-invoice-id="${item.id}">
+      <strong>${escapeHtml(item.invoice_number)} · ${escapeHtml(item.customer.display_name)}</strong>
+      <span>${escapeHtml(invoiceStatusLabel(item.status))} · ${money(item.invoice_total)} · ${escapeHtml(squareRowStatusLabel(item))}</span>
+      ${item.square_payment_url ? `<span><a href="${escapeHtml(item.square_payment_url)}" target="_blank" rel="noopener">Open Square pay link</a></span>` : ""}
+      <div class="customers-form-actions">
+        <button type="button" class="secondary-button compact" data-square-push="${item.id}"${pushable ? "" : " disabled"}>Send with Square</button>
+        <button type="button" class="secondary-button compact" data-square-refresh="${item.id}"${refreshable ? "" : " disabled"}>Refresh status</button>
+      </div>
+    </div>`;
+  }).join("");
+  $$("[data-square-push]", list).forEach((button) => {
+    button.addEventListener("click", () => {
+      void pushInvoiceToSquareFromDashboard(Number(button.dataset.squarePush));
+    });
+  });
+  $$("[data-square-refresh]", list).forEach((button) => {
+    button.addEventListener("click", () => {
+      void refreshSquareInvoiceFromDashboard(Number(button.dataset.squareRefresh));
+    });
+  });
+}
+
+async function loadSquareDashboard() {
+  if (!await requireAuthenticated("login")) return;
+  renderSquareStatusBanner();
+  const list = $("square-invoices-list");
+  list.innerHTML = '<div class="loading-panel"><span class="loading-spinner"></span><div><strong>Loading invoices</strong><br><small>Reading issued invoices and Square status.</small></div></div>';
+  try {
+    const response = await apiFetch("/api/invoices?page=1&page_size=50");
+    const data = await readApiPayload(response);
+    if (!response.ok || !data) throw apiError(response, data, "Invoice list failed");
+    state.square.items = data.items.filter((item) => item.status !== "draft");
+    renderSquareInvoicesList();
+  } catch (error) {
+    state.square.items = [];
+    list.innerHTML = `<div class="error-card"><strong>Square dashboard failed</strong><p>${escapeHtml(error.message)}</p></div>`;
+  }
+}
+
+async function pushInvoiceToSquareFromDashboard(invoiceId) {
+  const item = state.square.items.find((entry) => entry.id === invoiceId);
+  if (!item) return;
+  if (!window.confirm(`Send invoice ${item.invoice_number} to the customer through Square?`)) return;
+  try {
+    const response = await apiFetch(`/api/invoices/${invoiceId}/square/push`, { method: "POST" });
+    const data = await readApiPayload(response);
+    if (!response.ok || !data) throw apiError(response, data, "Square send failed");
+    const index = state.square.items.findIndex((entry) => entry.id === invoiceId);
+    if (index !== -1) state.square.items[index] = data;
+    renderSquareInvoicesList();
+    showToast("Invoice sent through Square.", "success");
+  } catch (error) {
+    showToast(`Square send failed: ${error.message}`, "error");
+  }
+}
+
+async function refreshSquareInvoiceFromDashboard(invoiceId) {
+  try {
+    const response = await apiFetch(`/api/invoices/${invoiceId}/square/refresh`, { method: "POST" });
+    const data = await readApiPayload(response);
+    if (!response.ok || !data) throw apiError(response, data, "Square refresh failed");
+    const index = state.square.items.findIndex((entry) => entry.id === invoiceId);
+    if (index !== -1) state.square.items[index] = data;
+    renderSquareInvoicesList();
+    showToast(`Square status: ${data.square_status || "unknown"}.`, "info");
+  } catch (error) {
+    showToast(`Square refresh failed: ${error.message}`, "error");
+  }
+}
+
+function initializeSquareDashboard() {
+  $("square-refresh-all").addEventListener("click", () => {
+    void loadSquareDashboard();
+  });
+}
+
 function setStatus(id, text, online = null) {
   $(id).textContent = text;
   const dot = $(`${id}-dot`);
@@ -2902,6 +3018,7 @@ function initializeApp() {
   initializeWorkOrders();
   initializeInvoices();
   initializeNotifications();
+  initializeSquareDashboard();
   initializeEstimate();
   initializeSystem();
   initializeAuth();
