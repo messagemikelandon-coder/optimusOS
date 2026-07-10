@@ -180,9 +180,9 @@ Branch: `ops/staging`, from `main` at `c920891`.
 - [ ] **Owner action still pending**: one full browser login on staging with the rotated password, and the manual invoice-button repro click-through (browser-only checks, not agent-performable).
 - [ ] Not started: separate staging PostgreSQL/Redis with distinct credentials, secrets-on-host beyond `.env`, `/health`+`/ready` external monitoring/alerting, disk-space alerting.
 
-### Phase 5.5 — Feature slice: estimate cleanup, customer history, notifications, Square sandbox (ACTIVE)
+### Phase 5.5 — Feature slice: estimate cleanup, customer history, notifications, Square sandbox — SHIPPED
 
-Owner-approved 2026-07-09. Implemented by **Claude** on branch `agent/claude/notify-history-square` off `ops/staging` (`15481c6`) on 2026-07-10 (the owner's /goal directive required same-session delivery; the original plan had assigned Codex — Codex's role shifts to independent review of the committed diff). Full spec in `docs/context/SESSION_HANDOFF.md`.
+Owner-approved 2026-07-09. Implemented by **Claude** on branch `agent/claude/notify-history-square` on 2026-07-10 (the owner's /goal directive required same-session delivery). Merged into `main` via PR #12 + #13 on GitHub (branch deleted after merge, same pattern as prior staging PRs). Deployed to the staging droplet and verified live on `https://staging.optimus-os.com` same day. Full spec in `docs/context/SESSION_HANDOFF.md`.
 
 - [x] Slice 1 — retired transient `POST /api/estimate` (every estimate the UI creates is persisted with approve/decline tracking); 3 tests ported.
 - [x] Slice 2 — `GET /api/customers/{id}/history` aggregator + customer-detail history panel (estimates with approved/declined status, work orders, invoices with live balance/overdue).
@@ -190,9 +190,10 @@ Owner-approved 2026-07-09. Implemented by **Claude** on branch `agent/claude/not
 - [x] Slice 4 — Square Invoices sandbox integration (config-gated `square_configured`; production structurally unreachable; Square never writes the local payment ledger).
 - [x] Gates: ruff/pyright/pytest (200 passed) /node clean; alembic 009↔010 round-trip rehearsed on the compose Postgres; live curl proofs (auth gates, served assets, real schema).
 - [x] Independent review completed (no CRITICAL; three IMPORTANT findings fixed/documented — client-leak fix, pre-existing transaction gap recorded in KNOWN_ISSUES, coverage gap carried; unique Square-id index added). Gates re-run green.
-- [x] Committed and pushed with owner approval: `3228597` (feature slice) + `ac7b4d2` (docs) on `origin/agent/claude/notify-history-square`.
-- [ ] Codex/owner review of the committed diff; decide PR vs. direct merge into `ops/staging`.
-- [ ] Owner-run Square sandbox smoke test (needs owner-created sandbox credentials in local `.env` — never in chat, never committed).
+- [x] Committed, pushed, and merged into `main` (PRs #12/#13 on GitHub).
+- [x] **Local Square sandbox smoke test completed 2026-07-10** with real owner-created sandbox credentials, against the real Square sandbox API (no stubs): built a full customer→estimate→approved→completed-work-order→issued-invoice chain via direct store calls (non-billable — no OpenAI call), pushed it to Square, got back a real Square invoice id + live pay link, confirmed refresh works, and confirmed the local payment ledger stays untouched (Square reported the invoice UNPAID; local `total_paid`/`balance_due`/payment-row-count all correct and independent of Square's state). Found and the owner fixed one real config bug: `SQUARE_LOCATION_ID` had been set to the Square **Application ID** by mistake — corrected to the real sandbox location id from `GET /v2/locations`. Two minor non-blocking findings also surfaced: Square's live validator rejects `.test`-TLD emails (our own fixture-seeding convention, not a real-customer risk) and requires E.164 phone format (our customer records store free-text phone) — both would currently surface as a generic 502, not a defect, just an opportunity for friendlier error messages later.
+- [x] **Deployed to the staging droplet and verified externally 2026-07-10**: `git pull --ff-only origin main` (clean fast-forward), `scripts/optimusctl.sh update` (rebuild+restart, port binding held at `0.0.0.0:80`), `scripts/optimusctl.sh migrate` (alembic 009→010 applied, confirmed via `alembic current`). External curl checks from outside the droplet confirmed `/health` now reports `square_configured`/`square_environment`, the served `app.js` contains all three new feature markers, and `index.html` contains the Notifications tab. Staging's own `.env` has no Square credentials, so `square_configured: false` there — expected; Square is proven working only against the local dev stack so far.
+- [ ] Optional: add Square sandbox credentials to the staging droplet's `.env` + restart if the owner wants Square live on staging too (separate step, not yet done).
 - Out of scope: Square live/production, webhooks, email/SMS channels, background jobs.
 
 ### Phase 6 — Production Readiness

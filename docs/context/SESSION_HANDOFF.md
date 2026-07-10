@@ -5,16 +5,16 @@ Information owner: the active session author.
 Read when: starting or resuming work.
 Update when: a substantial task completes or context needs to be handed forward.
 Last verified date: 2026-07-10.
-Relevant sources: `docs/context/CURRENT_STATE.md`, `docs/context/PLANS.md`, `docs/context/KNOWN_ISSUES.md`, `git status`/`git log`, full local gate runs on 2026-07-10, live checks against the local compose stack and `https://staging.optimus-os.com` (post-redeploy).
+Relevant sources: `docs/context/CURRENT_STATE.md`, `docs/context/PLANS.md`, `docs/context/KNOWN_ISSUES.md`, `git status`/`git log`, full local gate runs on 2026-07-10, a real Square sandbox smoke test, live checks against the local compose stack and `https://staging.optimus-os.com` (post-deploy).
 
 ## Identity
 
-- Updated UTC: 2026-07-10T05:15Z
-- Agent: Claude (implementer this session; independent review by a separate read-only reviewer agent completed in-session; Codex/owner review of the committed diff still recommended)
-- Branch: `agent/claude/notify-history-square`, HEAD `ac7b4d2`, pushed to `origin/agent/claude/notify-history-square`. Not yet merged into `ops/staging` or `main` — owner decides PR vs. merge.
+- Updated UTC: 2026-07-10T06:30Z
+- Agent: Claude (implementer; independent review by a separate read-only reviewer agent completed in-session)
+- Branch: `main`, HEAD `147bf97` (local and `origin/main` both current). `agent/claude/notify-history-square` merged into `main` via PR #12 + #13 on GitHub and deleted (same pattern as the prior `ops/staging` PRs). `ops/staging` currently does not exist as a remote branch.
 - Worktree: primary (`/home/dejake/optimus-server`); untracked stray `optimusOS/` clone still present (owner's accidental clone — leave alone)
 
-## Active task — Phase 5.5 four-feature slice: IMPLEMENTED AND COMMITTED
+## Active task — Phase 5.5 four-feature slice: SHIPPED (built, reviewed, merged, deployed, smoke-tested)
 
 Owner goal (2026-07-09 /goal): every estimate saved with approved/declined tracking + automatic customer history; notification on estimate approve/decline; a Notifications tab covering estimate/invoice/work-order status; Square integration for invoicing/scheduled payments (sandbox-only this phase). Owner confirmed: customer-first estimate flow, in-app notifications + badge, Square Invoices API sandbox-first.
 
@@ -43,41 +43,44 @@ Originally handed to Codex; the owner's /goal stop-condition required same-sessi
   3. Coverage note: only the injected-stub Square path is unit-tested; the real httpx path and the `asyncio.to_thread` routes under a live ASGI request are exercised only by the owner sandbox smoke test — carried as an explicit gap, not a defect.
   - Reviewer's suggested hardening also applied: DB-level unique index `uq_invoices_square_invoice_id` added to model + migration (NULLs don't collide; one Square invoice can never map to two local invoices).
   - All gates re-run green after the fixes.
-- **Committed and pushed 2026-07-10** with owner approval: `3228597` (feature slice) + `ac7b4d2` (docs) on `origin/agent/claude/notify-history-square`. Codex/owner review of the committed diff is the recommended next pass.
+- **Merged into `main`**: PR #12 (through `ac7b4d2`) then PR #13 (final docs commit `5b1d1e2`) on GitHub — `origin/main` HEAD `147bf97` has the full feature set. Remote feature branch deleted after merge (established pattern for this repo).
 
-## Staging droplet redeploy — DONE 2026-07-10
+## Square sandbox smoke test — DONE 2026-07-10, real network, no stubs
 
-Discovery during the deploy: `ops/staging` had already been merged into `main` via PR #11 (`b38a811`, GitHub-side, between sessions) and the remote branch deleted — same pattern as PR #10. So the droplet only needed a fast-forward pull of `main`, no branch switch.
+Owner created real Square sandbox credentials and set them in the local `.env`; backend recreated to pick them up (`docker compose up -d --force-recreate backend worker`) — `/health` confirmed `square_configured: true`.
 
-Executed (owner explicitly authorized direct SSH execution after initially asking to review the plan first):
-1. `git fetch origin` on droplet → `git pull --ff-only origin main`: clean fast-forward `36b861b..b38a811`, no conflicts. Droplet now has the invoice-button fix (`1139499`), the optimusctl `COMPOSE_OVERRIDE_FILE` fix (`7d665c8`), and the ruff-drift cleanup (`15481c6`).
-2. Added `COMPOSE_OVERRIDE_FILE=ops/docker-compose.staging.yml` to the droplet's `.env` (single-line append, not present before).
-3. `scripts/optimusctl.sh update` → rebuilt backend/worker images, restarted. `status` confirmed frontend at `0.0.0.0:80->80/tcp` (the override took effect — no regression to `127.0.0.1:5173`). `health` returned 200 locally on the droplet.
-4. **Verified externally from this machine**: `https://staging.optimus-os.com/static/app.js?cb=<ts>` contains `selectionVersion` (5 occurrences) — the invoice-button fix is confirmed live through Cloudflare. `/health` 200, HSTS header present.
+Built the full chain via direct store-function calls inside the backend container (non-billable — no OpenAI call, using `scripts/seed_estimate_approval_fixture.py`'s pattern for a synthetic estimate, same non-billable-proof convention as earlier phases): customer → estimate → sent for approval → approved via the public token path → work order → walked to `completed` (auto-created draft invoice) → issued → pushed to **the real Square sandbox API** (no test stub).
 
-Note: the Phase 5.5 branch (`agent/claude/notify-history-square`, migration head `010`) is NOT yet on the droplet — only `main` up to `15481c6` is deployed. When Phase 5.5 merges, the droplet needs `alembic upgrade head` as an explicit step (head will move `009`→`010`).
+Result: real Square invoice created (`inv:0-ChBfLZwZtNkWasJjYtJacNpvEJgN`), status `UNPAID`, real pay link returned (`https://app.squareupsandbox.com/pay-invoice/...`). Refresh re-fetched from Square and updated local status correctly. **Local ledger stayed completely untouched** — `total_paid: 0`, `balance_due` unchanged, zero payment rows, confirming the "Square never writes the local ledger" design guarantee under a real (not mocked) Square response.
 
-**Remaining from the original droplet checklist**: owner still needs to do one full browser login on staging and the manual invoice-button repro click-through (open a work order → "Open invoice" → confirm the three buttons stay enabled). Not yet confirmed this session — purely a browser action, not something an agent can perform.
+Three real findings from the live test:
+1. **Fixed by owner**: `SQUARE_LOCATION_ID` had been set to the Square **Application ID** by mistake (both are shown on similar-looking dashboard pages) — corrected to the real sandbox location id, found via a live `GET /v2/locations` call with the owner's own token.
+2. **Non-blocking**: Square's live validator rejects `.test`-TLD emails (RFC-2606-reserved, syntactically valid, but Square's own validator refuses them) — this is our own fixture-seeding convention (`scripts/seed_estimate_approval_fixture.py` uses `@example.test`), not a real-customer risk; a real customer's real email won't hit this.
+3. **Non-blocking**: Square requires E.164 phone format (`+1...`); our customer records store free-text phone (e.g. `555-0112`). If a real customer's phone isn't E.164, the push fails with a generic 502 rather than a clear "fix this phone number" message. No money-safety or security issue — the push simply doesn't persist anything, exactly as designed. Worth a future small hardening pass (phone normalization + a friendlier error) but not requested/blocking.
 
-## Next steps
+## Staging droplet deploy — DONE 2026-07-10 (both the invoice-button fix AND the Phase 5.5 slice)
 
-1. **Codex/owner review** of the committed Phase 5.5 diff (`3228597`, `ac7b4d2`) — recommended second-pass review before merging into `ops/staging`/`main`.
-2. **Owner: decide PR vs. direct merge** for `agent/claude/notify-history-square` → `ops/staging`.
-3. **Owner: Square sandbox smoke test** — still blocked on credentials. Create a Square developer sandbox (developer.squareup.com), put the sandbox access token + location id in the local `.env` only (never chat/commits), restart backend (`--force-recreate` — env is fixed at container start), then push a real issued invoice via the UI button and confirm the email/pay-link on Square's sandbox dashboard. `.env` currently has neither `SQUARE_ACCESS_TOKEN` nor `SQUARE_LOCATION_ID` set (checked by presence only, not value).
-4. **Owner: staging browser checks** — full login with the rotated password, and the invoice-button manual repro (see above).
-5. When Phase 5.5 deploys to the droplet: remember the `alembic upgrade head` step (009→010) is not automatic.
+Deployed in two passes as `main` advanced on GitHub:
+1. First pass: droplet fast-forwarded `36b861b`→`b38a811` (invoice-button fix `1139499`, optimusctl `COMPOSE_OVERRIDE_FILE` fix `7d665c8`, drift cleanup `15481c6`). `COMPOSE_OVERRIDE_FILE=ops/docker-compose.staging.yml` added to droplet `.env` (wasn't present before). `scripts/optimusctl.sh update` rebuilt/restarted; `status` confirmed frontend held at `0.0.0.0:80->80/tcp`. Verified externally: `selectionVersion` present in the served `app.js` through Cloudflare.
+2. Second pass (after Phase 5.5 merged to `main`): droplet fast-forwarded again to `147bf97`. `scripts/optimusctl.sh update` rebuilt/restarted (port binding still held). `scripts/optimusctl.sh migrate` applied `alembic upgrade head` — confirmed `alembic current` = `010_notifications_square (head)` on the droplet's real database.
+
+**Verified externally from this machine (not just the droplet) after both passes**: `https://staging.optimus-os.com/health` now returns `square_configured`/`square_environment` fields; the served `app.js` contains all three new-feature markers (`loadNotifications`, `customer-history`, `square/push`); `index.html` serves the Notifications tab; `/ready` healthy. **Staging's own `square_configured` is `false`** — its `.env` has no Square credentials (only the local dev stack does); Square is proven working against the real sandbox only from local, not yet from staging. Adding staging Square credentials is a small separate step if the owner wants it.
+
+Both SSH deploy passes were executed directly by Claude over root SSH after the owner explicitly authorized it mid-session (the original plan had said "owner runs droplet commands, Claude prepares them" — a permission-boundary question from the owner was clarified and the owner then explicitly said to proceed).
+
+**Still outstanding, browser-only, not agent-performable**: one full login on staging with the rotated password, and the manual invoice-button repro click-through (open a work order → "Open invoice" → confirm the three buttons stay enabled).
 
 ## Verified baseline (carried forward, still true)
 
-- Staging live and now on the latest `main`: `https://staging.optimus-os.com/health` + `/ready` 200; **HSTS confirmed live**; **staging owner password rotation confirmed by owner**; **invoice-button fix confirmed live** (all closed this session or 2026-07-09).
-- PR #10 and PR #11 both merged `ops/staging`→`main` on GitHub between sessions with the remote branch deleted each time — if a future session pushes another `ops/staging`, expect the same pattern.
+- Staging live on latest `main` (`147bf97`) with all Phase 5.5 features: `https://staging.optimus-os.com/health` + `/ready` 200; **HSTS confirmed live**; **staging owner password rotation confirmed by owner**; **invoice-button fix confirmed live**; **customer history / notifications / Square (config-gated, unconfigured on staging) all confirmed live**.
+- PR #10, #11, #12, #13 all merged a working branch into `main` on GitHub between/during sessions with the remote branch deleted each time — expect the same pattern for any future feature branch.
 
 ## Blockers and risks
 
-- Phase 5.5 diff is committed/pushed but not yet merged into `ops/staging`/`main` or deployed anywhere — still needs the review/merge decision above.
-- Local alembic head (`010`) is ahead of the droplet (`009`) until Phase 5.5 merges and deploys — track the `alembic upgrade head` step when that happens.
-- Carried over: payment-schedule installment split remains an owner-confirmed placeholder (`docs/context/BUSINESS_RULES.md`); no rate limiter on `POST /api/estimates` (pre-existing, documented in Slice 1).
+- Carried over: payment-schedule installment split remains an owner-confirmed placeholder (`docs/context/BUSINESS_RULES.md`); no rate limiter on `POST /api/estimates` (pre-existing, documented in Slice 1); pre-existing work-order-completion race documented in `KNOWN_ISSUES.md`.
+- Email-TLD and phone-format Square validation gaps (see smoke test section) — non-blocking, no fix requested yet.
+- Staging does not have Square credentials configured — only local dev has been proven against the real Square sandbox.
 
 ## Exact next task
 
-Get Codex or owner review of the committed Phase 5.5 diff, then decide how it merges into `ops/staging`. Separately, whenever the owner is ready: Square sandbox credentials for the smoke test, and the two remaining staging browser checks (full login, invoice-button repro).
+No blocking work remains from this session. Optional follow-ups if the owner wants them: staging browser checks (login + invoice-button repro), Square credentials on staging, or the phone/email validation hardening noted above.
