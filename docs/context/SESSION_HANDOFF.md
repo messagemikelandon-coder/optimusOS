@@ -5,16 +5,16 @@ Information owner: the active session author.
 Read when: starting or resuming work.
 Update when: a substantial task completes or context needs to be handed forward.
 Last verified date: 2026-07-10.
-Relevant sources: `docs/context/CURRENT_STATE.md`, `docs/context/PLANS.md`, `docs/context/KNOWN_ISSUES.md`, `git status`, full local gate runs on 2026-07-10, live checks against the local compose stack and `https://staging.optimus-os.com`.
+Relevant sources: `docs/context/CURRENT_STATE.md`, `docs/context/PLANS.md`, `docs/context/KNOWN_ISSUES.md`, `git status`/`git log`, full local gate runs on 2026-07-10, live checks against the local compose stack and `https://staging.optimus-os.com` (post-redeploy).
 
 ## Identity
 
-- Updated UTC: 2026-07-10T04:00Z
+- Updated UTC: 2026-07-10T05:15Z
 - Agent: Claude (implementer this session; independent review by a separate read-only reviewer agent completed in-session; Codex/owner review of the committed diff still recommended)
-- Branch: `agent/claude/notify-history-square`, created from `ops/staging` (`15481c6`); **all Phase 5.5 work is uncommitted in this worktree**, awaiting owner commit approval
-- Worktree: primary (`/home/dejake/optimus-server`); untracked stray `optimusOS/` clone still present (owner's accidental clone — leave alone; contains 4 formatting-dirty files from an earlier accidental `ruff format .`; owner can `git checkout -- .` inside it or delete it)
+- Branch: `agent/claude/notify-history-square`, HEAD `ac7b4d2`, pushed to `origin/agent/claude/notify-history-square`. Not yet merged into `ops/staging` or `main` — owner decides PR vs. merge.
+- Worktree: primary (`/home/dejake/optimus-server`); untracked stray `optimusOS/` clone still present (owner's accidental clone — leave alone)
 
-## Active task — Phase 5.5 four-feature slice: IMPLEMENTED, uncommitted
+## Active task — Phase 5.5 four-feature slice: IMPLEMENTED AND COMMITTED
 
 Owner goal (2026-07-09 /goal): every estimate saved with approved/declined tracking + automatic customer history; notification on estimate approve/decline; a Notifications tab covering estimate/invoice/work-order status; Square integration for invoicing/scheduled payments (sandbox-only this phase). Owner confirmed: customer-first estimate flow, in-app notifications + badge, Square Invoices API sandbox-first.
 
@@ -42,37 +42,42 @@ Originally handed to Codex; the owner's /goal stop-condition required same-sessi
   2. Pre-existing commit-boundary gap in `ensure_draft_invoice_for_work_order`'s early-return/IntegrityError branches (the new notification inherits it in a concurrent double-completion race) → accepted as documented pre-existing risk, now recorded in `docs/context/KNOWN_ISSUES.md`.
   3. Coverage note: only the injected-stub Square path is unit-tested; the real httpx path and the `asyncio.to_thread` routes under a live ASGI request are exercised only by the owner sandbox smoke test — carried as an explicit gap, not a defect.
   - Reviewer's suggested hardening also applied: DB-level unique index `uq_invoices_square_invoice_id` added to model + migration (NULLs don't collide; one Square invoice can never map to two local invoices).
-  - All gates re-run green after the fixes. Codex/owner review of the committed diff still recommended as the second pass.
+  - All gates re-run green after the fixes.
+- **Committed and pushed 2026-07-10** with owner approval: `3228597` (feature slice) + `ac7b4d2` (docs) on `origin/agent/claude/notify-history-square`. Codex/owner review of the committed diff is the recommended next pass.
 
-## Next steps (exact)
+## Staging droplet redeploy — DONE 2026-07-10
 
-1. **Owner: approve commit.** Suggested shape: one commit per slice (or a single squashed feature commit — owner's call) on `agent/claude/notify-history-square`, then push and open a PR into `ops/staging` (or straight merge — owner's call).
-2. **Owner: Square sandbox smoke test** (optional until wanted): create a Square developer sandbox (developer.squareup.com), put the sandbox access token + location id in the local `.env` only (never chat/commits), restart backend (`--force-recreate` — env is fixed at container start), then push a real issued invoice via the UI button and confirm the email/pay-link on Square's sandbox dashboard.
-3. **Owner action still pending from Phase 5**: droplet redeploy one-liners (unchanged, below), then post-deploy verification.
+Discovery during the deploy: `ops/staging` had already been merged into `main` via PR #11 (`b38a811`, GitHub-side, between sessions) and the remote branch deleted — same pattern as PR #10. So the droplet only needed a fast-forward pull of `main`, no branch switch.
 
-## Owner action items (pending)
+Executed (owner explicitly authorized direct SSH execution after initially asking to review the plan first):
+1. `git fetch origin` on droplet → `git pull --ff-only origin main`: clean fast-forward `36b861b..b38a811`, no conflicts. Droplet now has the invoice-button fix (`1139499`), the optimusctl `COMPOSE_OVERRIDE_FILE` fix (`7d665c8`), and the ruff-drift cleanup (`15481c6`).
+2. Added `COMPOSE_OVERRIDE_FILE=ops/docker-compose.staging.yml` to the droplet's `.env` (single-line append, not present before).
+3. `scripts/optimusctl.sh update` → rebuilt backend/worker images, restarted. `status` confirmed frontend at `0.0.0.0:80->80/tcp` (the override took effect — no regression to `127.0.0.1:5173`). `health` returned 200 locally on the droplet.
+4. **Verified externally from this machine**: `https://staging.optimus-os.com/static/app.js?cb=<ts>` contains `selectionVersion` (5 occurrences) — the invoice-button fix is confirmed live through Cloudflare. `/health` 200, HSTS header present.
 
-1. **Droplet deploy** (invoice fix + optimusctl fix are NOT yet on the droplet — it still runs `36b861b`). One line at a time (console mangles multi-line pastes):
-   `cd /opt/optimus-server && git fetch origin`
-   `git checkout ops/staging`
-   `git pull --ff-only origin ops/staging`
-   `grep COMPOSE_OVERRIDE_FILE .env` → if empty: `echo 'COMPOSE_OVERRIDE_FILE=ops/docker-compose.staging.yml' >> .env`
-   `scripts/optimusctl.sh update` then `status` (frontend MUST show `0.0.0.0:80->80/tcp`) then `health`
-   Then an agent verifies `selectionVersion` in `https://staging.optimus-os.com/static/app.js` (cache-buster; Cloudflare may cache) and the owner does the browser repro check + one full login.
-2. **Square sandbox credentials** for the smoke test (see Next steps 2).
+Note: the Phase 5.5 branch (`agent/claude/notify-history-square`, migration head `010`) is NOT yet on the droplet — only `main` up to `15481c6` is deployed. When Phase 5.5 merges, the droplet needs `alembic upgrade head` as an explicit step (head will move `009`→`010`).
+
+**Remaining from the original droplet checklist**: owner still needs to do one full browser login on staging and the manual invoice-button repro click-through (open a work order → "Open invoice" → confirm the three buttons stay enabled). Not yet confirmed this session — purely a browser action, not something an agent can perform.
+
+## Next steps
+
+1. **Codex/owner review** of the committed Phase 5.5 diff (`3228597`, `ac7b4d2`) — recommended second-pass review before merging into `ops/staging`/`main`.
+2. **Owner: decide PR vs. direct merge** for `agent/claude/notify-history-square` → `ops/staging`.
+3. **Owner: Square sandbox smoke test** — still blocked on credentials. Create a Square developer sandbox (developer.squareup.com), put the sandbox access token + location id in the local `.env` only (never chat/commits), restart backend (`--force-recreate` — env is fixed at container start), then push a real issued invoice via the UI button and confirm the email/pay-link on Square's sandbox dashboard. `.env` currently has neither `SQUARE_ACCESS_TOKEN` nor `SQUARE_LOCATION_ID` set (checked by presence only, not value).
+4. **Owner: staging browser checks** — full login with the rotated password, and the invoice-button manual repro (see above).
+5. When Phase 5.5 deploys to the droplet: remember the `alembic upgrade head` step (009→010) is not automatic.
 
 ## Verified baseline (carried forward, still true)
 
-- Staging live: `https://staging.optimus-os.com/health` + `/ready` 200; **HSTS confirmed live**; **staging owner password rotation confirmed by owner** (both closed 2026-07-09).
-- `scripts/optimusctl.sh` honors `COMPOSE_OVERRIDE_FILE` (commit `7d665c8`); format-drift files fixed (`15481c6`); both pushed to `origin/ops/staging`.
-- PR #10 discovery: remote `main` (`a1b84ff`) already contains invoice fix `1139499`; old remote feature branches deleted; `origin/ops/staging` recreated by the 2026-07-09 push.
+- Staging live and now on the latest `main`: `https://staging.optimus-os.com/health` + `/ready` 200; **HSTS confirmed live**; **staging owner password rotation confirmed by owner**; **invoice-button fix confirmed live** (all closed this session or 2026-07-09).
+- PR #10 and PR #11 both merged `ops/staging`→`main` on GitHub between sessions with the remote branch deleted each time — if a future session pushes another `ops/staging`, expect the same pattern.
 
 ## Blockers and risks
 
-- Commit/push/PR/merge all need explicit owner approval (repo rule) — the whole Phase 5.5 diff is sitting uncommitted until then.
-- Local alembic head (010) is now ahead of the droplet (009) — the droplet deploy above only takes `ops/staging`, which does NOT include this branch; when Phase 5.5 merges and deploys, run `alembic upgrade head` on the droplet as an explicit step.
+- Phase 5.5 diff is committed/pushed but not yet merged into `ops/staging`/`main` or deployed anywhere — still needs the review/merge decision above.
+- Local alembic head (`010`) is ahead of the droplet (`009`) until Phase 5.5 merges and deploys — track the `alembic upgrade head` step when that happens.
 - Carried over: payment-schedule installment split remains an owner-confirmed placeholder (`docs/context/BUSINESS_RULES.md`); no rate limiter on `POST /api/estimates` (pre-existing, documented in Slice 1).
 
 ## Exact next task
 
-Get owner approval to commit the Phase 5.5 diff (per-slice or squashed), push `agent/claude/notify-history-square`, and decide PR-vs-merge into `ops/staging`. Then resume the pending droplet redeploy (Owner action item 1).
+Get Codex or owner review of the committed Phase 5.5 diff, then decide how it merges into `ops/staging`. Separately, whenever the owner is ready: Square sandbox credentials for the smoke test, and the two remaining staging browser checks (full login, invoice-button repro).
