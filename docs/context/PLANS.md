@@ -174,8 +174,24 @@ Branch: `ops/staging`, from `main` at `c920891`.
 - [x] Rollback mechanism added and rehearsed once: `scripts/optimusctl.sh rollback` (retags `:previous` back to `:latest`, sudo-aware). Rehearsed by deliberately breaking the backend (retagged to a dummy image), confirming `/health` failed, then running `rollback` and confirming full recovery.
 - [x] Independent review + security review completed on all of the above; findings (sudo-docker regression risk, live-db-guard env-source bug, missing reserved-db-name denylist, a doc PR/phase mislabeling) all fixed and re-verified. See `docs/context/KNOWN_ISSUES.md`.
 - [x] Infrastructure decision made (ADR-011, `docs/context/DECISIONS.md`): staging will run on a DigitalOcean droplet, domain registered through Cloudflare (also solves HTTPS termination via Cloudflare's proxy).
-- [ ] **Owner action required, not yet done:** create the DigitalOcean account/droplet and register the domain through Cloudflare. No agent can perform this (real credentials, payment, cloud provider action).
-- [ ] Not started: actual droplet provisioning, DNS/Cloudflare configuration, secrets-on-host setup, separate staging PostgreSQL/Redis with distinct credentials, `/health`+`/ready` external monitoring/alerting, disk-space alerting.
+- [x] Owner created the DigitalOcean droplet (`137.184.102.247`) and registered `optimus-os.com` through Cloudflare; stack deployed at `/opt/optimus-server`; `https://staging.optimus-os.com/health` + `/ready` verified reachable end to end (2026-07-09). HSTS confirmed live on the public domain.
+- [x] `scripts/optimusctl.sh` `COMPOSE_OVERRIDE_FILE` support added (`7d665c8`) so droplet operations keep the staging port binding.
+- [ ] **Owner action pending:** redeploy the droplet to `ops/staging` (exact one-liners in `SESSION_HANDOFF.md` Owner action items), then verify the invoice fix live + one full browser login.
+- [ ] Not started: separate staging PostgreSQL/Redis with distinct credentials, secrets-on-host beyond `.env`, `/health`+`/ready` external monitoring/alerting, disk-space alerting.
+
+### Phase 5.5 — Feature slice: estimate cleanup, customer history, notifications, Square sandbox (ACTIVE)
+
+Owner-approved 2026-07-09. Implemented by **Claude** on branch `agent/claude/notify-history-square` off `ops/staging` (`15481c6`) on 2026-07-10 (the owner's /goal directive required same-session delivery; the original plan had assigned Codex — Codex's role shifts to independent review of the committed diff). Full spec in `docs/context/SESSION_HANDOFF.md`.
+
+- [x] Slice 1 — retired transient `POST /api/estimate` (every estimate the UI creates is persisted with approve/decline tracking); 3 tests ported.
+- [x] Slice 2 — `GET /api/customers/{id}/history` aggregator + customer-detail history panel (estimates with approved/declined status, work orders, invoices with live balance/overdue).
+- [x] Slice 3 — `notifications` table (migration `010_notifications_square`, includes Square invoice columns) + owner feed API + Notifications tab with unread badge and 60s poll; in-transaction hooks at all seven status-change producers.
+- [x] Slice 4 — Square Invoices sandbox integration (config-gated `square_configured`; production structurally unreachable; Square never writes the local payment ledger).
+- [x] Gates: ruff/pyright/pytest (200 passed) /node clean; alembic 009↔010 round-trip rehearsed on the compose Postgres; live curl proofs (auth gates, served assets, real schema).
+- [x] Independent review completed (no CRITICAL; three IMPORTANT findings fixed/documented — client-leak fix, pre-existing transaction gap recorded in KNOWN_ISSUES, coverage gap carried; unique Square-id index added). Gates re-run green.
+- [ ] Owner commit approval, then Codex/owner review of the committed diff.
+- [ ] Owner-run Square sandbox smoke test (needs owner-created sandbox credentials in local `.env` — never in chat, never committed).
+- Out of scope: Square live/production, webhooks, email/SMS channels, background jobs.
 
 ### Phase 6 — Production Readiness
 - Threat model (approval links, session cookies, owner auth, public endpoints, PDF generation).
