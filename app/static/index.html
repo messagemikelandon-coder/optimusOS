@@ -47,6 +47,11 @@
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 2h9l5 5v15H6V2Zm8 1.5V8h4.5L14 3.5ZM8 11h10v2H8v-2Zm0 4h10v2H8v-2Zm0-8h4v2H8V7Z"/></svg>
           <span>Invoices</span>
         </button>
+        <button class="nav-item" type="button" data-view="notifications">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 22a2.2 2.2 0 0 0 2.2-2.2H9.8A2.2 2.2 0 0 0 12 22Zm7-5v-1l-1.6-1.6V9.9A5.6 5.6 0 0 0 13 4.4V3a1 1 0 1 0-2 0v1.4a5.6 5.6 0 0 0-4.4 5.5v4.5L5 16v1h14Z"/></svg>
+          <span>Notifications</span>
+          <span class="nav-badge" id="nav-notifications-badge" hidden>0</span>
+        </button>
         <button class="nav-item" type="button" data-view="chat">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5h14v10H8.5L5 18.5V5Zm3 4v2h8V9H8Z"/></svg>
           <span>Talk to Optimus</span>
@@ -295,6 +300,26 @@
                 </div>
                 <div id="customer-vehicles-list" class="vehicles-preview-list" aria-live="polite">
                   <p>Select a customer to load active vehicles.</p>
+                </div>
+              </section>
+
+              <section class="panel" id="customer-history">
+                <div class="panel-heading">
+                  <div><span class="section-kicker"><i></i> Customer history</span><h3>Estimates, work orders &amp; invoices</h3><p>Every saved record linked to the selected customer, including approval outcomes.</p></div>
+                </div>
+                <div id="customer-history-content" aria-live="polite">
+                  <div class="customer-history-section">
+                    <h4>Estimates</h4>
+                    <div id="customer-history-estimates"><p>Select a customer to load history.</p></div>
+                  </div>
+                  <div class="customer-history-section">
+                    <h4>Work orders</h4>
+                    <div id="customer-history-work-orders"><p>No customer selected.</p></div>
+                  </div>
+                  <div class="customer-history-section">
+                    <h4>Invoices</h4>
+                    <div id="customer-history-invoices"><p>No customer selected.</p></div>
+                  </div>
                 </div>
               </section>
 
@@ -706,6 +731,8 @@
                     <button class="text-button" type="button" id="invoice-open-work-order">Open work order</button>
                     <button class="text-button" type="button" id="invoice-open-html">Open HTML</button>
                     <button class="text-button" type="button" id="invoice-open-pdf">Open PDF</button>
+                    <button class="text-button" type="button" id="invoice-square-push" hidden>Send with Square</button>
+                    <button class="text-button" type="button" id="invoice-square-refresh" hidden>Refresh Square status</button>
                   </div>
                 </div>
                 <div id="invoice-detail" class="customer-detail-card">
@@ -765,6 +792,36 @@
                   </div>
                 </div>
               </form>
+            </section>
+          </div>
+        </section>
+
+        <section class="app-view" id="view-notifications" data-view-panel="notifications" hidden>
+          <div class="customers-layout">
+            <section class="panel customers-list-panel">
+              <div class="panel-heading">
+                <div><span class="section-kicker"><i></i> Owner alerts</span><h2>Notifications</h2><p>Estimate approvals and declines, invoice activity, and work-order status changes.</p></div>
+                <div class="customers-form-actions">
+                  <button class="secondary-button compact" type="button" id="notifications-refresh">Refresh</button>
+                  <button class="secondary-button compact" type="button" id="notifications-mark-all">Mark all read</button>
+                </div>
+              </div>
+
+              <div class="vehicles-toolbar">
+                <label class="field">
+                  <input type="checkbox" id="notifications-unread-filter"> Unread only
+                </label>
+              </div>
+
+              <div id="notifications-list" class="customers-list" aria-live="polite">
+                <p>No notifications yet.</p>
+              </div>
+
+              <div class="customers-pagination">
+                <button class="secondary-button compact" type="button" id="notifications-prev">Previous</button>
+                <span id="notifications-page-status">Page 1</span>
+                <button class="secondary-button compact" type="button" id="notifications-next">Next</button>
+              </div>
             </section>
           </div>
         </section>

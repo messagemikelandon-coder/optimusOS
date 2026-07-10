@@ -732,6 +732,7 @@ class Invoice(Base):
         Index("ix_invoices_owner_work_order", "owner_user_id", "work_order_id"),
         UniqueConstraint("work_order_id", name="uq_invoices_work_order"),
         UniqueConstraint("invoice_number", name="uq_invoices_invoice_number"),
+        Index("uq_invoices_square_invoice_id", "square_invoice_id", unique=True),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
@@ -772,6 +773,9 @@ class Invoice(Base):
     invoice_total: Mapped[float] = mapped_column(nullable=False)
     issued_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     due_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    square_invoice_id: Mapped[str | None] = mapped_column(String(64))
+    square_status: Mapped[str | None] = mapped_column(String(40))
+    square_payment_url: Mapped[str | None] = mapped_column(String(500))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
@@ -937,3 +941,44 @@ class PaymentSchedule(Base):
     )
 
     invoice: Mapped[Invoice] = relationship(back_populates="schedule")
+
+
+class Notification(Base):
+    __tablename__ = "notifications"
+    __table_args__ = (
+        CheckConstraint(
+            "entity_type IN ('estimate', 'work_order', 'invoice')",
+            name="ck_notifications_entity_type",
+        ),
+        CheckConstraint(
+            "event IN ("
+            "'estimate_sent', 'estimate_approved', 'estimate_declined', "
+            "'work_order_status_changed', 'invoice_issued', 'payment_recorded', "
+            "'payment_voided'"
+            ")",
+            name="ck_notifications_event",
+        ),
+        Index("ix_notifications_owner_read_created", "owner_user_id", "read_at", "created_at"),
+        Index("ix_notifications_owner_created", "owner_user_id", "created_at"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    owner_user_id: Mapped[int] = mapped_column(
+        ForeignKey("user_accounts.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    # Polymorphic pointer; deliberately no FK so notifications outlive their
+    # entity type's lifecycle rules and never block entity deletion.
+    entity_type: Mapped[str] = mapped_column(String(20), nullable=False)
+    entity_id: Mapped[int] = mapped_column(nullable=False)
+    event: Mapped[str] = mapped_column(String(40), nullable=False)
+    title: Mapped[str] = mapped_column(String(200), nullable=False)
+    body: Mapped[str | None] = mapped_column(Text)
+    # The one deliberately mutable column: null = unread. UI state, not
+    # business data -- everything else on this table is append-only.
+    read_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )

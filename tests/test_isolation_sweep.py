@@ -79,6 +79,9 @@ async def test_second_owner_isolation_sweep_across_full_record_chain(
         )
     )
     await assert_cross_user_404(main.archive_customer_record(customer_id, db_session, other_auth))
+    await assert_cross_user_404(
+        main.get_customer_history_record(customer_id, db_session, other_auth, limit=20)
+    )
 
     # Vehicles -- closes the pre-existing gap: only GET was ever isolation-tested before.
     vehicle_listed = await main.list_vehicle_records(

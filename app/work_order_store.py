@@ -17,6 +17,8 @@ from app.models import (
     EstimateRevisionRead,
     EstimateStatus,
     InvoiceStatus,
+    NotificationEntityType,
+    NotificationEvent,
     WorkOrderListResponse,
     WorkOrderNoteCreate,
     WorkOrderNoteRead,
@@ -27,6 +29,7 @@ from app.models import (
     WorkOrderStatusUpdate,
     WorkOrderUpdate,
 )
+from app.notification_store import record_notification
 from app.vehicle_store import vehicle_display_name
 
 PAYMENT_PLAN_OPTIONS = {
@@ -401,6 +404,21 @@ def transition_work_order_status(
         to_status=target_status,
         reason=payload.reason,
         auth=auth,
+    )
+    # Staged before the COMPLETED branch below so it rides (and rolls back
+    # with) the same transaction that ensure_draft_invoice_for_work_order
+    # commits internally.
+    record_notification(
+        db=db,
+        owner_user_id=work_order.owner_user_id,
+        entity_type=NotificationEntityType.WORK_ORDER,
+        entity_id=work_order.id,
+        event=NotificationEvent.WORK_ORDER_STATUS_CHANGED,
+        title=(
+            f"Work order {work_order.estimate_number}: "
+            f"{current_status.value} → {target_status.value}"
+        ),
+        body=payload.reason,
     )
     try:
         if target_status is WorkOrderStatus.COMPLETED:

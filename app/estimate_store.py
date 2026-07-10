@@ -46,8 +46,11 @@ from app.models import (
     EstimateStatus,
     EstimateUpdate,
     EstimateVehicleSummary,
+    NotificationEntityType,
+    NotificationEvent,
     VehicleInput,
 )
+from app.notification_store import record_notification
 from app.orchestrator import OptimusResearchOrchestrator
 from app.vehicle_store import get_vehicle_model, vehicle_display_name
 
@@ -793,6 +796,15 @@ def send_estimate_for_approval(
         approval_request_id=approval_request.id,
         actor_user_id=auth.user.id,
     )
+    record_notification(
+        db=db,
+        owner_user_id=estimate.owner_user_id,
+        entity_type=NotificationEntityType.ESTIMATE,
+        entity_id=estimate.id,
+        event=NotificationEvent.ESTIMATE_SENT,
+        title=f"Estimate {estimate.estimate_number} sent for approval",
+        body=f"Revision {revision.revision_number} awaiting customer response.",
+    )
     db.commit()
     return EstimateApprovalSendResponse(
         estimate_id=estimate.id,
@@ -900,6 +912,17 @@ def approve_estimate(
     db.add(estimate)
     db.add(revision)
     db.add(approval_request)
+    # No AuthContext on this public token path -- the owner is derived from
+    # the estimate row itself.
+    record_notification(
+        db=db,
+        owner_user_id=estimate.owner_user_id,
+        entity_type=NotificationEntityType.ESTIMATE,
+        entity_id=estimate.id,
+        event=NotificationEvent.ESTIMATE_APPROVED,
+        title=f"Estimate {estimate.estimate_number} approved by {payload.approving_name}",
+        body=f"Payment option: {payload.payment_option.value}.",
+    )
     db.commit()
     used_at = approval_request.used_at
     if used_at is None:
@@ -949,6 +972,15 @@ def decline_estimate(
     db.add(estimate)
     db.add(revision)
     db.add(approval_request)
+    record_notification(
+        db=db,
+        owner_user_id=estimate.owner_user_id,
+        entity_type=NotificationEntityType.ESTIMATE,
+        entity_id=estimate.id,
+        event=NotificationEvent.ESTIMATE_DECLINED,
+        title=f"Estimate {estimate.estimate_number} declined by {payload.declining_name}",
+        body=payload.reason,
+    )
     db.commit()
     used_at = approval_request.used_at
     if used_at is None:

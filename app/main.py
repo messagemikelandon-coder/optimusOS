@@ -34,6 +34,7 @@ from app.context_store import (
     list_entries,
     upsert_entry,
 )
+from app.customer_history_store import get_customer_history
 from app.customer_store import (
     CustomerNotFoundError,
     CustomerStoreError,
@@ -84,6 +85,7 @@ from app.models import (
     ContextScope,
     CustomerArchiveResponse,
     CustomerCreate,
+    CustomerHistoryResponse,
     CustomerListResponse,
     CustomerRead,
     CustomerUpdate,
@@ -97,8 +99,6 @@ from app.models import (
     EstimateDeclineActionRequest,
     EstimateListResponse,
     EstimateRead,
-    EstimateRequest,
-    EstimateResponse,
     EstimateRevisionCreate,
     EstimateSendForApprovalRequest,
     EstimateStatus,
@@ -110,6 +110,8 @@ from app.models import (
     InvoiceRead,
     InvoiceStatus,
     LocationInput,
+    NotificationListResponse,
+    NotificationMarkReadResponse,
     ResolvedLocation,
     VehicleArchiveResponse,
     VehicleCreate,
@@ -123,12 +125,26 @@ from app.models import (
     WorkOrderStatusUpdate,
     WorkOrderUpdate,
 )
+from app.notification_store import (
+    NotificationNotFoundError,
+    NotificationStoreError,
+    list_notifications,
+    mark_all_notifications_read,
+    mark_notification_read,
+)
 from app.orchestrator import OptimusResearchOrchestrator
 from app.payment_store import PaymentNotFoundError, record_payment, void_payment
 from app.rate_limit import RateLimitExceeded, SlidingWindowRateLimiter
 from app.services.http import SafeHttpClient
 from app.services.location import LocationService
 from app.services.optimus_chat import OptimusChatService
+from app.services.square import SquareApiError, SquareInvoiceClient
+from app.square_store import (
+    SquareAlreadyPushedError,
+    SquareStoreError,
+    push_invoice_to_square,
+    refresh_square_invoice,
+)
 from app.vehicle_store import (
     VehicleNotFoundError,
     VehicleStoreError,
@@ -256,6 +272,8 @@ async def health(settings: SettingsDep) -> dict[str, str | bool]:
         "auth_configured": bool(
             settings.optimus_owner_username and settings.optimus_owner_password
         ),
+        "square_configured": settings.square_configured,
+        "square_environment": settings.square_environment,
     }
 
 
@@ -520,6 +538,27 @@ async def list_customer_vehicle_records(
         ) from exc
 
 
+@app.get("/api/customers/{customer_id}/history", response_model=CustomerHistoryResponse)
+async def get_customer_history_record(
+    customer_id: int,
+    db: DbSessionDep,
+    auth: AuthContextDep,
+    limit: int = Query(default=20, ge=1, le=50),
+) -> CustomerHistoryResponse:
+    try:
+        return get_customer_history(db=db, auth=auth, customer_id=customer_id, limit=limit)
+    except CustomerNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except CustomerStoreError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Customer history lookup failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Customer history storage is unavailable.",
+        ) from exc
+
+
 @app.get("/api/vehicles", response_model=VehicleListResponse)
 async def list_vehicle_records(
     db: DbSessionDep,
@@ -760,53 +799,6 @@ async def chat(
     except Exception as exc:
         logger.exception("Unexpected Optimus chat failure")
         raise HTTPException(status_code=502, detail="Optimus chat failed.") from exc
-
-
-@app.post(
-    "/api/estimate",
-    response_model=EstimateResponse,
-)
-async def estimate(
-    request: EstimateRequest,
-    request_context: Request,
-    settings: SettingsDep,
-    current_user: CurrentUserDep,
-) -> EstimateResponse:
-    del current_user
-    await enforce_rate_limit(request_context, settings)
-
-    if len(request.job) > settings.max_job_text_length:
-        raise HTTPException(status_code=422, detail="Job description is too long.")
-    if not settings.openai_api_key:
-        raise HTTPException(status_code=503, detail="OPENAI_API_KEY is not configured.")
-
-    try:
-        orchestrator = OptimusResearchOrchestrator(settings)
-        return await orchestrator.estimate_job(request)
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-    except EstimatorResearchError as exc:
-        logger.warning(
-            "Estimate research failed request_id=%s stage=%s code=%s",
-            exc.request_id,
-            exc.stage,
-            exc.code,
-        )
-        raise HTTPException(status_code=exc.http_status, detail=exc.as_detail()) from exc
-    except RuntimeError as exc:
-        logger.warning("Estimate research failed: %s", exc)
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
-    except Exception as exc:
-        logger.exception("Unexpected estimate failure")
-        raise HTTPException(
-            status_code=502,
-            detail={
-                "code": "unexpected_estimator_failure",
-                "message": "The estimator failed unexpectedly. Run DIAGNOSE_ESTIMATOR.bat.",
-                "stage": "estimate_pipeline",
-                "request_id": "not-available",
-            },
-        ) from exc
 
 
 @app.post("/api/estimates", response_model=EstimateRead)
@@ -1428,4 +1420,150 @@ async def void_invoice_payment(
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Invoice storage is unavailable.",
+        ) from exc
+
+
+@app.post("/api/invoices/{invoice_id}/square/push", response_model=InvoiceRead)
+async def push_invoice_to_square_record(
+    invoice_id: int,
+    db: DbSessionDep,
+    settings: SettingsDep,
+    auth: AuthContextDep,
+) -> InvoiceRead:
+    if not settings.square_configured:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Square is not configured (sandbox only in this phase).",
+        )
+    client = SquareInvoiceClient(settings)
+    try:
+        return await asyncio.to_thread(
+            lambda: push_invoice_to_square(
+                db=db,
+                auth=auth,
+                invoice_id=invoice_id,
+                client=client,
+                location_id=settings.square_location_id,
+            )
+        )
+    except InvoiceNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except SquareAlreadyPushedError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except (SquareStoreError, InvoiceStoreError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except SquareApiError as exc:
+        logger.warning("Square push failed: %s", exc)
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Square push failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Invoice storage is unavailable.",
+        ) from exc
+    finally:
+        client.close()
+
+
+@app.post("/api/invoices/{invoice_id}/square/refresh", response_model=InvoiceRead)
+async def refresh_square_invoice_record(
+    invoice_id: int,
+    db: DbSessionDep,
+    settings: SettingsDep,
+    auth: AuthContextDep,
+) -> InvoiceRead:
+    if not settings.square_configured:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Square is not configured (sandbox only in this phase).",
+        )
+    client = SquareInvoiceClient(settings)
+    try:
+        return await asyncio.to_thread(
+            lambda: refresh_square_invoice(
+                db=db,
+                auth=auth,
+                invoice_id=invoice_id,
+                client=client,
+            )
+        )
+    except InvoiceNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except SquareStoreError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except SquareApiError as exc:
+        logger.warning("Square refresh failed: %s", exc)
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Square refresh failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Invoice storage is unavailable.",
+        ) from exc
+    finally:
+        client.close()
+
+
+@app.get("/api/notifications", response_model=NotificationListResponse)
+async def list_notification_records(
+    db: DbSessionDep,
+    settings: SettingsDep,
+    auth: AuthContextDep,
+    page: int = Query(default=1),
+    page_size: int = Query(default=20),
+    unread: bool = Query(default=False),
+) -> NotificationListResponse:
+    try:
+        return list_notifications(
+            db=db,
+            auth=auth,
+            settings=settings,
+            page=page,
+            page_size=page_size,
+            unread_only=unread,
+        )
+    except NotificationStoreError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Notification listing failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Notification storage is unavailable.",
+        ) from exc
+
+
+@app.post("/api/notifications/{notification_id}/read", response_model=NotificationMarkReadResponse)
+async def mark_notification_read_record(
+    notification_id: int,
+    db: DbSessionDep,
+    auth: AuthContextDep,
+) -> NotificationMarkReadResponse:
+    try:
+        return mark_notification_read(db=db, auth=auth, notification_id=notification_id)
+    except NotificationNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except NotificationStoreError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Notification mark-read failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Notification storage is unavailable.",
+        ) from exc
+
+
+@app.post("/api/notifications/read-all", response_model=NotificationMarkReadResponse)
+async def mark_all_notifications_read_record(
+    db: DbSessionDep,
+    auth: AuthContextDep,
+) -> NotificationMarkReadResponse:
+    try:
+        return mark_all_notifications_read(db=db, auth=auth)
+    except NotificationStoreError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Notification mark-all-read failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Notification storage is unavailable.",
         ) from exc

@@ -1107,6 +1107,9 @@ class InvoiceRead(BaseModel):
     total_paid: float
     balance_due: float
     is_overdue: bool
+    square_invoice_id: str | None = None
+    square_status: str | None = None
+    square_payment_url: str | None = None
     line_items: list[InvoiceLineItemRead] = Field(default_factory=list)
     payments: list[InvoicePaymentRead] = Field(default_factory=list)
     schedule: list[PaymentScheduleEntryRead] = Field(default_factory=list)
@@ -1158,3 +1161,97 @@ class ApprovalRead(ApprovalBase):
 
 class ApprovalDecisionRequest(BaseModel):
     reason: str | None = Field(default=None, max_length=4000)
+
+
+class CustomerHistoryEstimateItem(BaseModel):
+    id: int
+    estimate_number: str
+    status: EstimateStatus
+    vehicle_display_name: str
+    estimate_total: float | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class CustomerHistoryWorkOrderItem(BaseModel):
+    id: int
+    estimate_number: str
+    title: str
+    status: WorkOrderStatus
+    invoice_id: int | None = None
+    updated_at: datetime
+
+
+class CustomerHistoryInvoiceItem(BaseModel):
+    id: int
+    invoice_number: str
+    status: InvoiceStatus
+    invoice_total: float
+    balance_due: float
+    is_overdue: bool
+    issued_at: datetime | None = None
+    due_at: datetime | None = None
+
+
+class CustomerHistoryEstimateSection(BaseModel):
+    items: list[CustomerHistoryEstimateItem]
+    total: int
+
+
+class CustomerHistoryWorkOrderSection(BaseModel):
+    items: list[CustomerHistoryWorkOrderItem]
+    total: int
+
+
+class CustomerHistoryInvoiceSection(BaseModel):
+    items: list[CustomerHistoryInvoiceItem]
+    total: int
+
+
+class CustomerHistoryResponse(BaseModel):
+    customer_id: int
+    customer_display_name: str
+    estimates: CustomerHistoryEstimateSection
+    work_orders: CustomerHistoryWorkOrderSection
+    invoices: CustomerHistoryInvoiceSection
+
+
+class NotificationEntityType(StrEnum):
+    ESTIMATE = "estimate"
+    WORK_ORDER = "work_order"
+    INVOICE = "invoice"
+
+
+class NotificationEvent(StrEnum):
+    ESTIMATE_SENT = "estimate_sent"
+    ESTIMATE_APPROVED = "estimate_approved"
+    ESTIMATE_DECLINED = "estimate_declined"
+    WORK_ORDER_STATUS_CHANGED = "work_order_status_changed"
+    INVOICE_ISSUED = "invoice_issued"
+    PAYMENT_RECORDED = "payment_recorded"
+    PAYMENT_VOIDED = "payment_voided"
+
+
+class NotificationRead(BaseModel):
+    id: int
+    entity_type: NotificationEntityType
+    entity_id: int
+    event: NotificationEvent
+    title: str
+    body: str | None = None
+    read_at: datetime | None = None
+    created_at: datetime
+
+
+class NotificationListResponse(BaseModel):
+    items: list[NotificationRead]
+    page: int
+    page_size: int
+    total: int
+    unread_count: int
+    has_more: bool
+
+
+class NotificationMarkReadResponse(BaseModel):
+    ok: bool
+    unread_count: int

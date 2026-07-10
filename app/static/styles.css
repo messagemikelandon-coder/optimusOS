@@ -316,6 +316,47 @@ button[disabled] { cursor: wait; opacity: .6; transform: none !important; }
   gap: 10px;
 }
 
+.nav-badge {
+  margin-left: auto;
+  min-width: 20px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: #e0475b;
+  color: #fff;
+  font-size: .7rem;
+  font-weight: 700;
+  text-align: center;
+}
+
+.notification-item.is-unread {
+  border-color: rgba(82, 185, 255, .45);
+}
+
+.customer-history-section {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.customer-history-section h4 {
+  margin: 0;
+  font-size: .8rem;
+  text-transform: uppercase;
+  letter-spacing: .08em;
+  color: var(--muted);
+}
+
+.customer-history-section > div {
+  display: grid;
+  gap: 8px;
+}
+
+.history-more {
+  color: var(--muted);
+  font-size: .75rem;
+  margin: 2px 0 0;
+}
+
 .customer-list-item {
   width: 100%;
   display: grid;
