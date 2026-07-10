@@ -176,7 +176,8 @@ Branch: `ops/staging`, from `main` at `c920891`.
 - [x] Infrastructure decision made (ADR-011, `docs/context/DECISIONS.md`): staging will run on a DigitalOcean droplet, domain registered through Cloudflare (also solves HTTPS termination via Cloudflare's proxy).
 - [x] Owner created the DigitalOcean droplet (`137.184.102.247`) and registered `optimus-os.com` through Cloudflare; stack deployed at `/opt/optimus-server`; `https://staging.optimus-os.com/health` + `/ready` verified reachable end to end (2026-07-09). HSTS confirmed live on the public domain.
 - [x] `scripts/optimusctl.sh` `COMPOSE_OVERRIDE_FILE` support added (`7d665c8`) so droplet operations keep the staging port binding.
-- [ ] **Owner action pending:** redeploy the droplet to `ops/staging` (exact one-liners in `SESSION_HANDOFF.md` Owner action items), then verify the invoice fix live + one full browser login.
+- [x] **Droplet redeployed 2026-07-10** (owner-authorized direct SSH execution): `ops/staging` had already merged into `main` via PR #11 on GitHub (branch deleted after merge, same pattern as PR #10), so the droplet fast-forwarded `main` `36b861b`→`b38a811` (clean, no conflicts) instead of switching branches. `COMPOSE_OVERRIDE_FILE` set in droplet `.env`; `scripts/optimusctl.sh update` rebuilt and restarted; `status` confirmed frontend at `0.0.0.0:80->80/tcp` (override held); external curl from this machine confirmed `selectionVersion` present in the served `app.js` through Cloudflare — invoice-button fix is live on `https://staging.optimus-os.com`.
+- [ ] **Owner action still pending**: one full browser login on staging with the rotated password, and the manual invoice-button repro click-through (browser-only checks, not agent-performable).
 - [ ] Not started: separate staging PostgreSQL/Redis with distinct credentials, secrets-on-host beyond `.env`, `/health`+`/ready` external monitoring/alerting, disk-space alerting.
 
 ### Phase 5.5 — Feature slice: estimate cleanup, customer history, notifications, Square sandbox (ACTIVE)
@@ -189,7 +190,8 @@ Owner-approved 2026-07-09. Implemented by **Claude** on branch `agent/claude/not
 - [x] Slice 4 — Square Invoices sandbox integration (config-gated `square_configured`; production structurally unreachable; Square never writes the local payment ledger).
 - [x] Gates: ruff/pyright/pytest (200 passed) /node clean; alembic 009↔010 round-trip rehearsed on the compose Postgres; live curl proofs (auth gates, served assets, real schema).
 - [x] Independent review completed (no CRITICAL; three IMPORTANT findings fixed/documented — client-leak fix, pre-existing transaction gap recorded in KNOWN_ISSUES, coverage gap carried; unique Square-id index added). Gates re-run green.
-- [ ] Owner commit approval, then Codex/owner review of the committed diff.
+- [x] Committed and pushed with owner approval: `3228597` (feature slice) + `ac7b4d2` (docs) on `origin/agent/claude/notify-history-square`.
+- [ ] Codex/owner review of the committed diff; decide PR vs. direct merge into `ops/staging`.
 - [ ] Owner-run Square sandbox smoke test (needs owner-created sandbox credentials in local `.env` — never in chat, never committed).
 - Out of scope: Square live/production, webhooks, email/SMS channels, background jobs.
 
