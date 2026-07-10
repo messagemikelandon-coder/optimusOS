@@ -68,6 +68,15 @@ const state = {
     search: "",
     statusFilter: "",
   },
+  notifications: {
+    items: [],
+    page: 1,
+    pageSize: 20,
+    total: 0,
+    hasMore: false,
+    unreadOnly: false,
+    unreadCount: 0,
+  },
   currentView: "dashboard",
   health: null,
   lastEstimate: null,
@@ -80,6 +89,7 @@ const viewMeta = {
   vehicles: { eyebrow: "Fleet", title: "Vehicles" },
   "work-orders": { eyebrow: "Repair execution", title: "Work orders" },
   invoices: { eyebrow: "Customer billing", title: "Invoices" },
+  notifications: { eyebrow: "Owner alerts", title: "Notifications" },
   chat: { eyebrow: "Owner channel", title: "Talk to Optimus" },
   estimate: { eyebrow: "Pricing workflow", title: "Job estimator" },
   approval: { eyebrow: "Customer authorization", title: "Estimate approval" },
@@ -138,7 +148,9 @@ function apiError(response, data, fallback) {
 }
 
 function setAuthState(authenticated, user = null, expiresAt = null) {
+  const wasAuthenticated = state.auth.authenticated;
   state.auth = { authenticated, user, expiresAt };
+  if (authenticated && !wasAuthenticated) void refreshNotificationsBadge();
   $("topbar-login-link").hidden = authenticated;
   $("topbar-logout").hidden = !authenticated;
   $("system-login-link").hidden = authenticated;
@@ -240,6 +252,9 @@ async function performLogout() {
     state.vehicles.customerFilterId = null;
     state.workOrders.selectedWorkOrderId = null;
     state.workOrders.selectedWorkOrder = null;
+    state.notifications.items = [];
+    state.notifications.unreadCount = 0;
+    updateNotificationsBadge(0);
     navigate("login");
   }
 }
@@ -276,6 +291,7 @@ function navigate(view) {
   if (view === "vehicles" && state.auth.authenticated) void loadVehicles();
   if (view === "work-orders" && state.auth.authenticated) void loadWorkOrders();
   if (view === "invoices" && state.auth.authenticated) void loadInvoices();
+  if (view === "notifications" && state.auth.authenticated) void loadNotifications();
   if (view === "chat") window.setTimeout(() => $("chat-message").focus(), 180);
   if (view === "login") window.setTimeout(() => $("login-username").focus(), 180);
 }
@@ -1073,6 +1089,73 @@ async function loadCustomerVehiclePreview(customerId) {
   }
 }
 
+function historyStatusLabel(status) {
+  return String(status || "").replace(/_/g, " ");
+}
+
+function renderCustomerHistory(data) {
+  const estimatesEl = $("customer-history-estimates");
+  const workOrdersEl = $("customer-history-work-orders");
+  const invoicesEl = $("customer-history-invoices");
+  if (!estimatesEl || !workOrdersEl || !invoicesEl) return;
+
+  estimatesEl.innerHTML = data.estimates.items.length
+    ? data.estimates.items.map((item) => `
+      <button type="button" class="vehicle-preview-item" data-history-estimate-id="${item.id}">
+        <strong>${escapeHtml(item.estimate_number)} · ${escapeHtml(historyStatusLabel(item.status))}</strong>
+        <span>${escapeHtml(item.vehicle_display_name)}${item.estimate_total != null ? ` · $${item.estimate_total.toFixed(2)}` : ""} · ${new Date(item.updated_at).toLocaleString()}</span>
+      </button>`).join("") + (data.estimates.total > data.estimates.items.length ? `<p class="history-more">Showing ${data.estimates.items.length} of ${data.estimates.total}.</p>` : "")
+    : "<p>No estimates recorded for this customer yet.</p>";
+
+  workOrdersEl.innerHTML = data.work_orders.items.length
+    ? data.work_orders.items.map((item) => `
+      <button type="button" class="vehicle-preview-item" data-history-work-order-id="${item.id}">
+        <strong>${escapeHtml(item.estimate_number)} · ${escapeHtml(historyStatusLabel(item.status))}</strong>
+        <span>${escapeHtml(item.title)} · ${new Date(item.updated_at).toLocaleString()}</span>
+      </button>`).join("") + (data.work_orders.total > data.work_orders.items.length ? `<p class="history-more">Showing ${data.work_orders.items.length} of ${data.work_orders.total}.</p>` : "")
+    : "<p>No work orders for this customer yet.</p>";
+
+  invoicesEl.innerHTML = data.invoices.items.length
+    ? data.invoices.items.map((item) => `
+      <button type="button" class="vehicle-preview-item" data-history-invoice-id="${item.id}">
+        <strong>${escapeHtml(item.invoice_number)} · ${escapeHtml(historyStatusLabel(item.status))}${item.is_overdue ? " · OVERDUE" : ""}</strong>
+        <span>Total $${item.invoice_total.toFixed(2)} · Balance $${item.balance_due.toFixed(2)}${item.due_at ? ` · Due ${new Date(item.due_at).toLocaleDateString()}` : ""}</span>
+      </button>`).join("") + (data.invoices.total > data.invoices.items.length ? `<p class="history-more">Showing ${data.invoices.items.length} of ${data.invoices.total}.</p>` : "")
+    : "<p>No invoices for this customer yet.</p>";
+
+  $$("[data-history-estimate-id]", estimatesEl).forEach((button) => {
+    button.addEventListener("click", () => {
+      void openEstimateRecord(Number(button.dataset.historyEstimateId));
+    });
+  });
+  $$("[data-history-work-order-id]", workOrdersEl).forEach((button) => {
+    button.addEventListener("click", () => {
+      navigate("work-orders");
+      void selectWorkOrder(Number(button.dataset.historyWorkOrderId));
+    });
+  });
+  $$("[data-history-invoice-id]", invoicesEl).forEach((button) => {
+    button.addEventListener("click", () => {
+      navigate("invoices");
+      void selectInvoice(Number(button.dataset.historyInvoiceId));
+    });
+  });
+}
+
+async function loadCustomerHistory(customerId) {
+  const estimatesEl = $("customer-history-estimates");
+  if (!estimatesEl) return;
+  estimatesEl.innerHTML = '<div class="loading-panel"><span class="loading-spinner"></span><div><strong>Loading history</strong><br><small>Reading linked estimates, work orders, and invoices.</small></div></div>';
+  try {
+    const response = await apiFetch(`/api/customers/${customerId}/history?limit=20`);
+    const data = await readApiPayload(response);
+    if (!response.ok || !data) throw apiError(response, data, "Customer history failed");
+    renderCustomerHistory(data);
+  } catch (error) {
+    estimatesEl.innerHTML = `<div class="error-card"><strong>Customer history failed</strong><p>${escapeHtml(error.message)}</p></div>`;
+  }
+}
+
 async function selectCustomer(customerId, options = {}) {
   const { remember = true, refreshVehicles = true, suppressErrors = false } = options;
   try {
@@ -1086,6 +1169,7 @@ async function selectCustomer(customerId, options = {}) {
     renderCustomersList();
     syncEstimateRecordSummary();
     if (refreshVehicles) void loadCustomerVehiclePreview(data.id);
+    void loadCustomerHistory(data.id);
     if (remember) void rememberSelectedCustomer(data);
     return data;
   } catch (error) {
@@ -2264,6 +2348,8 @@ function renderInvoiceDetail(invoice = null) {
     $("invoice-open-pdf").disabled = true;
     $("invoice-issue-save").disabled = true;
     $("invoice-payment-save").disabled = true;
+    $("invoice-square-push").hidden = true;
+    $("invoice-square-refresh").hidden = true;
     return;
   }
   const lineItems = invoice.line_items.map((item) => `
@@ -2310,6 +2396,8 @@ function renderInvoiceDetail(invoice = null) {
       <div><span>Invoice total</span><strong>${money(invoice.invoice_total)}</strong></div>
       <div><span>Total paid</span><strong>${money(invoice.total_paid)}</strong></div>
       <div><span>Balance due</span><strong>${money(invoice.balance_due)}</strong></div>
+      ${invoice.square_invoice_id ? `<div><span>Square status</span><strong>${escapeHtml(invoice.square_status || "unknown")}</strong></div>` : ""}
+      ${invoice.square_payment_url ? `<div><span>Square pay link</span><strong><a href="${escapeHtml(invoice.square_payment_url)}" target="_blank" rel="noopener">Open payment page</a></strong></div>` : ""}
     </div>
     <section class="result-section"><h3>Line items</h3><ul>${lineItems}</ul></section>
     <section class="result-section"><h3>Payment history</h3><ul>${paymentRows}</ul></section>
@@ -2327,6 +2415,13 @@ function renderInvoiceDetail(invoice = null) {
   $("invoice-open-pdf").disabled = false;
   $("invoice-issue-save").disabled = invoice.status !== "draft";
   $("invoice-payment-save").disabled = invoice.status === "draft" || invoice.status === "void";
+  const squareConfigured = Boolean(state.health?.square_configured);
+  const pushable = squareConfigured && !invoice.square_invoice_id
+    && invoice.status !== "draft" && invoice.status !== "void";
+  $("invoice-square-push").hidden = !squareConfigured;
+  $("invoice-square-push").disabled = !pushable;
+  $("invoice-square-refresh").hidden = !squareConfigured;
+  $("invoice-square-refresh").disabled = !invoice.square_invoice_id;
 }
 
 function renderInvoiceList() {
@@ -2436,6 +2531,41 @@ async function submitInvoiceIssue(event) {
   }
 }
 
+async function pushInvoiceToSquare() {
+  const invoice = state.invoices.selectedInvoice;
+  if (!invoice) {
+    showToast("Select an invoice before sending it to Square.", "error");
+    return;
+  }
+  if (!window.confirm(`Send invoice ${invoice.invoice_number} to the customer through Square?`)) return;
+  try {
+    const response = await apiFetch(`/api/invoices/${invoice.id}/square/push`, { method: "POST" });
+    const data = await readApiPayload(response);
+    if (!response.ok || !data) throw apiError(response, data, "Square send failed");
+    state.invoices.selectedInvoice = data;
+    state.invoices.selectedInvoiceId = data.id;
+    renderInvoiceDetail(data);
+    showToast("Invoice sent through Square.", "success");
+  } catch (error) {
+    showToast(`Square send failed: ${error.message}`, "error");
+  }
+}
+
+async function refreshSquareInvoice() {
+  const invoice = state.invoices.selectedInvoice;
+  if (!invoice || !invoice.square_invoice_id) return;
+  try {
+    const response = await apiFetch(`/api/invoices/${invoice.id}/square/refresh`, { method: "POST" });
+    const data = await readApiPayload(response);
+    if (!response.ok || !data) throw apiError(response, data, "Square refresh failed");
+    state.invoices.selectedInvoice = data;
+    renderInvoiceDetail(data);
+    showToast(`Square status: ${data.square_status || "unknown"}.`, "info");
+  } catch (error) {
+    showToast(`Square refresh failed: ${error.message}`, "error");
+  }
+}
+
 async function submitRecordPayment(event) {
   event.preventDefault();
   const invoiceId = $("invoice-id").value.trim();
@@ -2514,6 +2644,12 @@ function initializeInvoices() {
   $("invoices-refresh").addEventListener("click", () => {
     void loadInvoices();
   });
+  $("invoice-square-push").addEventListener("click", () => {
+    void pushInvoiceToSquare();
+  });
+  $("invoice-square-refresh").addEventListener("click", () => {
+    void refreshSquareInvoice();
+  });
   $("invoices-search").addEventListener("input", () => {
     state.invoices.search = $("invoices-search").value;
     state.invoices.page = 1;
@@ -2549,6 +2685,153 @@ function initializeInvoices() {
     openInvoiceDocument("pdf");
   });
   renderInvoiceDetail(null);
+}
+
+function updateNotificationsBadge(count) {
+  const badge = $("nav-notifications-badge");
+  if (!badge) return;
+  state.notifications.unreadCount = count;
+  badge.textContent = count > 99 ? "99+" : String(count);
+  badge.hidden = count === 0;
+}
+
+async function refreshNotificationsBadge() {
+  try {
+    const response = await apiFetch("/api/notifications?page=1&page_size=1&unread=true");
+    const data = await readApiPayload(response);
+    if (!response.ok || !data) return;
+    updateNotificationsBadge(data.unread_count);
+  } catch {
+    // Badge refresh is best-effort background polling; never toast on failure.
+  }
+}
+
+function notificationTargetLabel(entityType) {
+  if (entityType === "estimate") return "Open estimate";
+  if (entityType === "work_order") return "Open work order";
+  return "Open invoice";
+}
+
+function openNotificationTarget(notification) {
+  if (notification.entity_type === "estimate") {
+    void openEstimateRecord(notification.entity_id);
+  } else if (notification.entity_type === "work_order") {
+    navigate("work-orders");
+    void selectWorkOrder(notification.entity_id);
+  } else {
+    navigate("invoices");
+    void selectInvoice(notification.entity_id);
+  }
+}
+
+function renderNotificationsList() {
+  const list = $("notifications-list");
+  const { items, page, total, hasMore } = state.notifications;
+  $("notifications-page-status").textContent = `Page ${page} · ${total} total`;
+  $("notifications-prev").disabled = page <= 1;
+  $("notifications-next").disabled = !hasMore;
+  if (!items.length) {
+    list.innerHTML = state.notifications.unreadOnly
+      ? "<p>No unread notifications.</p>"
+      : "<p>No notifications yet.</p>";
+    return;
+  }
+  list.innerHTML = items.map((item) => `
+    <button type="button" class="customer-list-item notification-item${item.read_at ? "" : " is-unread"}" data-notification-id="${item.id}" data-notification-entity="${escapeHtml(item.entity_type)}">
+      <strong>${item.read_at ? "" : "● "}${escapeHtml(item.title)}</strong>
+      <span>${escapeHtml(item.body || notificationTargetLabel(item.entity_type))}</span>
+      <span>${new Date(item.created_at).toLocaleString()}</span>
+    </button>`).join("");
+  $$("[data-notification-id]", list).forEach((button) => {
+    button.addEventListener("click", () => {
+      const notification = state.notifications.items.find(
+        (item) => item.id === Number(button.dataset.notificationId),
+      );
+      if (!notification) return;
+      if (!notification.read_at) void markNotificationRead(notification.id);
+      openNotificationTarget(notification);
+    });
+  });
+}
+
+async function loadNotifications() {
+  if (!await requireAuthenticated("login")) return;
+  const list = $("notifications-list");
+  list.innerHTML = '<div class="loading-panel"><span class="loading-spinner"></span><div><strong>Loading notifications</strong><br><small>Reading status-change alerts.</small></div></div>';
+  const searchParams = new URLSearchParams({
+    page: String(state.notifications.page),
+    page_size: String(state.notifications.pageSize),
+    unread: String(state.notifications.unreadOnly),
+  });
+  try {
+    const response = await apiFetch(`/api/notifications?${searchParams.toString()}`);
+    const data = await readApiPayload(response);
+    if (!response.ok || !data) throw apiError(response, data, "Notification list failed");
+    state.notifications.items = data.items;
+    state.notifications.total = data.total;
+    state.notifications.hasMore = data.has_more;
+    updateNotificationsBadge(data.unread_count);
+    renderNotificationsList();
+  } catch (error) {
+    state.notifications.items = [];
+    state.notifications.total = 0;
+    state.notifications.hasMore = false;
+    renderNotificationsList();
+    showToast(`Notification list failed: ${error.message}`, "error");
+  }
+}
+
+async function markNotificationRead(notificationId) {
+  try {
+    const response = await apiFetch(`/api/notifications/${notificationId}/read`, { method: "POST" });
+    const data = await readApiPayload(response);
+    if (!response.ok || !data) throw apiError(response, data, "Mark read failed");
+    updateNotificationsBadge(data.unread_count);
+    const item = state.notifications.items.find((entry) => entry.id === notificationId);
+    if (item && !item.read_at) item.read_at = new Date().toISOString();
+    renderNotificationsList();
+  } catch (error) {
+    showToast(`Mark read failed: ${error.message}`, "error");
+  }
+}
+
+async function markAllNotificationsRead() {
+  try {
+    const response = await apiFetch("/api/notifications/read-all", { method: "POST" });
+    const data = await readApiPayload(response);
+    if (!response.ok || !data) throw apiError(response, data, "Mark all read failed");
+    updateNotificationsBadge(data.unread_count);
+    showToast("All notifications marked read.", "success");
+    void loadNotifications();
+  } catch (error) {
+    showToast(`Mark all read failed: ${error.message}`, "error");
+  }
+}
+
+function initializeNotifications() {
+  $("notifications-refresh").addEventListener("click", () => {
+    void loadNotifications();
+  });
+  $("notifications-mark-all").addEventListener("click", () => {
+    void markAllNotificationsRead();
+  });
+  $("notifications-unread-filter").addEventListener("change", () => {
+    state.notifications.unreadOnly = $("notifications-unread-filter").checked;
+    state.notifications.page = 1;
+    void loadNotifications();
+  });
+  $("notifications-prev").addEventListener("click", () => {
+    if (state.notifications.page > 1) {
+      state.notifications.page -= 1;
+      void loadNotifications();
+    }
+  });
+  $("notifications-next").addEventListener("click", () => {
+    if (state.notifications.hasMore) {
+      state.notifications.page += 1;
+      void loadNotifications();
+    }
+  });
 }
 
 function setStatus(id, text, online = null) {
@@ -2618,6 +2901,7 @@ function initializeApp() {
   initializeVehicles();
   initializeWorkOrders();
   initializeInvoices();
+  initializeNotifications();
   initializeEstimate();
   initializeSystem();
   initializeAuth();
@@ -2640,6 +2924,9 @@ function initializeApp() {
   });
   void loadHealth(false);
   window.setInterval(() => loadHealth(false), 60000);
+  window.setInterval(() => {
+    if (state.auth.authenticated) void refreshNotificationsBadge();
+  }, 60000);
 }
 
 document.addEventListener("DOMContentLoaded", initializeApp);

@@ -38,6 +38,10 @@ def test_ui_preserves_connected_workflows() -> None:
         "customers-list",
         "customer-detail",
         "customer-vehicles-list",
+        "customer-history",
+        "customer-history-estimates",
+        "customer-history-work-orders",
+        "customer-history-invoices",
         "vehicle-form",
         "vehicles-search",
         "vehicles-customer-filter",
@@ -46,6 +50,12 @@ def test_ui_preserves_connected_workflows() -> None:
         "invoices-list",
         "invoice-detail",
         "invoice-issue-form",
+        "nav-notifications-badge",
+        "notifications-list",
+        "notifications-mark-all",
+        "notifications-unread-filter",
+        "invoice-square-push",
+        "invoice-square-refresh",
         "estimate-form",
         "estimate-selected-customer",
         "estimate-selected-vehicle",
@@ -70,6 +80,11 @@ def test_ui_preserves_connected_workflows() -> None:
     assert "window.open(`/api/invoices/${invoiceId}/${kind}`" in javascript
     assert "renderInvoiceList();" in javascript
     assert "apiFetch(`/api/estimates/${estimateId}`)" in javascript
+    assert "apiFetch(`/api/customers/${customerId}/history?limit=20`)" in javascript
+    assert "/api/notifications" in javascript
+    assert 'apiFetch("/api/notifications/read-all"' in javascript
+    assert "apiFetch(`/api/invoices/${invoice.id}/square/push`" in javascript
+    assert "apiFetch(`/api/invoices/${invoice.id}/square/refresh`" in javascript
     assert "/api/estimate-approval/view" in javascript
     assert "async function openEstimateRecord" in javascript
     assert "async function openInvoiceForSelectedWorkOrder" in javascript

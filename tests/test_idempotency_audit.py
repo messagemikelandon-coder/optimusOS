@@ -5,7 +5,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 import app.main as main
-from app.db_models import InvoicePayment, WorkOrderStatusEvent
+from app.db_models import InvoicePayment, Notification, WorkOrderStatusEvent
 from app.models import (
     InvoicePaymentCreate,
     PaymentAppliesTo,
@@ -64,6 +64,20 @@ async def test_repeated_status_transition_does_not_duplicate_status_events(
     assert first.status is WorkOrderStatus.COMPLETED
     assert second.status is WorkOrderStatus.COMPLETED
     assert events_after_second == events_after_first
+    # Notifications share the status-event short-circuit: no-op transitions
+    # must not append notification rows either. The initial creation event
+    # bypasses transition_work_order_status, so notifications lag events by
+    # exactly the one creation row.
+    notification_count = db_session.scalar(
+        select(func.count())
+        .select_from(Notification)
+        .where(
+            Notification.entity_type == "work_order",
+            Notification.entity_id == work_order_id,
+        )
+    )
+    assert events_after_second is not None
+    assert notification_count == events_after_second - 1
 
 
 async def test_repeated_issue_does_not_duplicate_invoice_or_schedule(

@@ -4,64 +4,75 @@ Purpose: replaceable handoff template for the next substantial Codex/Claude sess
 Information owner: the active session author.
 Read when: starting or resuming work.
 Update when: a substantial task completes or context needs to be handed forward.
-Last verified date: 2026-07-09.
-Relevant sources: `docs/context/CURRENT_STATE.md`, `docs/context/PLANS.md`, `docs/context/KNOWN_ISSUES.md`, `docs/context/DECISIONS.md`, `git status`, `git log`, `env UV_CACHE_DIR=/tmp/uv-cache uv run pytest -q`, local Docker rehearsals of `scripts/optimusctl.sh restore`/`rollback`/`migrate-down` run on 2026-07-09.
+Last verified date: 2026-07-10.
+Relevant sources: `docs/context/CURRENT_STATE.md`, `docs/context/PLANS.md`, `docs/context/KNOWN_ISSUES.md`, `git status`, full local gate runs on 2026-07-10, live checks against the local compose stack and `https://staging.optimus-os.com`.
 
 ## Identity
 
-- Updated UTC: 2026-07-09T02:00Z
-- Agent: Claude
-- Branch: `ops/staging` (branched from `main` at `c920891`)
-- HEAD: `c920891` plus uncommitted Phase 5 local-prep work in the working tree
-- Worktree: primary (`/home/dejake/optimus-server`)
+- Updated UTC: 2026-07-10T04:00Z
+- Agent: Claude (implementer this session; independent review by a separate read-only reviewer agent completed in-session; Codex/owner review of the committed diff still recommended)
+- Branch: `agent/claude/notify-history-square`, created from `ops/staging` (`15481c6`); **all Phase 5.5 work is uncommitted in this worktree**, awaiting owner commit approval
+- Worktree: primary (`/home/dejake/optimus-server`); untracked stray `optimusOS/` clone still present (owner's accidental clone — leave alone; contains 4 formatting-dirty files from an earlier accidental `ruff format .`; owner can `git checkout -- .` inside it or delete it)
 
-## Active task
+## Active task — Phase 5.5 four-feature slice: IMPLEMENTED, uncommitted
 
-- Goal: **Phase 5 — Private Staging.**
-- Status: Local-only code/process prep is done, independently reviewed, security-reviewed, and rehearsed against the real local dev stack. **Blocked on owner-performed real-world infrastructure setup** before any actual deployment/staging work can proceed — no agent can create cloud accounts, spend money, or register a domain.
-- Important context discovered this session: Phase 3 (`feat/payment-tracking`) and Phase 4 (`harden/local-mvp`) were merged directly into `main` on GitHub by the owner (PR #7 `423192b`, PR #8 `c920891`) outside of any agent action, between sessions. Local `main` was fast-forwarded to match. Phase 4 was explicitly closed by the owner accepting its one-time live proof as sufficient (see `docs/context/KNOWN_ISSUES.md`/`PLANS.md`) — no permanent automated fresh-volume E2E/failure-drill artifact exists or is planned unless separately requested.
-- Infrastructure decision made this session (ADR-011 in `docs/context/DECISIONS.md`, owner-confirmed via direct choice): staging will run on a **DigitalOcean** droplet; domain will be registered through **Cloudflare** (also solves HTTPS/HSTS termination via Cloudflare's edge proxy, no self-managed TLS certs needed).
-- Out of scope, unchanged: Square/external payment or scheduling integration; live/billable OpenAI calls.
+Owner goal (2026-07-09 /goal): every estimate saved with approved/declined tracking + automatic customer history; notification on estimate approve/decline; a Notifications tab covering estimate/invoice/work-order status; Square integration for invoicing/scheduled payments (sandbox-only this phase). Owner confirmed: customer-first estimate flow, in-app notifications + badge, Square Invoices API sandbox-first.
 
-## Verified baseline
+Originally handed to Codex; the owner's /goal stop-condition required same-session delivery, so Claude implemented it 2026-07-10 on `agent/claude/notify-history-square` (one-agent-one-branch preserved; Codex never started).
 
-- No real cloud infrastructure exists yet. Everything below was built/rehearsed against the existing local Docker Compose dev stack only.
-- `app/main.py`: added `Strict-Transport-Security: max-age=63072000; includeSubDomains` to the `security_headers` middleware, gated on `settings.frontend_origin.lower().startswith("https://")` — same pattern as the existing Secure-cookie check in `app/auth.py`. Deliberately does NOT trust a client-supplied `X-Forwarded-Proto` header (documented in code as a limitation to revisit once staging's real reverse-proxy topology exists — trusting that header today, with no confirmed trusted-proxy boundary, would let a client force a spoofed HSTS response).
-- `scripts/optimusctl.sh`: added `restore <dump-file> [target-db]` (restores into a scratch database only — refuses if `target-db` matches the live `POSTGRES_DB` **read from `.env` directly**, not the invoking shell's ambient environment; refuses reserved Postgres names `postgres`/`template0`/`template1`; refuses non-plain-identifier names), `rollback` (retags `optimus-server-backend`/`optimus-server-worker` Docker images from `:previous` back to `:latest`, sudo-aware via a `DOCKER` array matching the script's existing `COMPOSE` convention), and `migrate-down <revision>` (runs `alembic downgrade` via the backend container). `update()` now tags current `:latest` images as `:previous` before rebuilding, so `rollback` has something to revert to.
-- `tests/test_security_headers.py` (new): the only test file in this repo that does real ASGI/middleware testing via `fastapi.testclient.TestClient` against the actual `app.main.app`, rather than this suite's usual direct-route-function-call style. Confirmed reasoning: `monkeypatch.setattr(main, "get_settings", ...)` only affects the middleware's direct unqualified call, not the already-captured `Depends(get_settings)` used by route dependency injection — tests only assert on response headers, never on settings-derived response bodies, so this is safe.
+### What was built (all verified by the gates below)
 
-## Evidence
+**Slice 1 — transient `POST /api/estimate` retired.** The UI already posted to persisted `POST /api/estimates` (customer+vehicle required), so the orphaned billable, nothing-saved route was deleted from `app/main.py`; its three tests in `tests/test_api.py` were ported to the persisted route (auth-required path string; API-key-503 via `create_estimate_record`; structured 504 upstream-error with a real customer+vehicle and monkeypatched orchestrator). Rate limiting was NOT added to `/api/estimates` (never had one; documented gap, not a regression).
 
-- Gates (2026-07-09): `ruff format`/`ruff check .` clean repo-wide; `pyright` 0 errors; `pytest -q` **174 passed** (171 prior + 3 new in `tests/test_security_headers.py`).
-- Independent review + security review both completed 2026-07-09 on all Phase 5 local-prep changes. Four real findings, all fixed same-day and re-verified:
-  - **High**: `tag_current_as_previous()`/`rollback()` used bare `docker` commands instead of the script's existing sudo-detection convention, which would have broken `update()` (an existing, previously-working command) on any host needing `sudo docker`. Fixed by adding a `DOCKER` array mirroring the existing `COMPOSE` array.
-  - **Medium**: `restore()`'s live-database guard read `POSTGRES_DB` from the invoking shell's ambient environment, not from `.env` (the file docker compose actually uses) — a staging `.env` with a non-default `POSTGRES_DB` could silently bypass the guard. Fixed with an `env_value()` helper that parses `.env` directly.
-  - **Medium**: `restore()` had no denylist for PostgreSQL's own reserved/system database names (`template0`, `template1`). Fixed with an explicit denylist.
-  - **Low**: `docs/context/CURRENT_STATE.md` mislabeled PR #7 as the Phase 2 merge (it's Phase 3; Phase 2 was PR #6, previously unmentioned in that doc). Fixed.
-  - Also flagged, not fixed (documented instead): HSTS gating trusts a static setting rather than a per-request TLS signal — both reviewers independently raised this; deliberately not changed to trust `X-Forwarded-Proto` without a confirmed trusted-proxy boundary in front of the app (see code comment in `app/main.py`).
-- Rehearsals against the real local dev stack (2026-07-09), re-run after all fixes with the same successful outcomes:
-  - `backup` → `restore` into `optimus_os_restore_check`: row counts confirmed matching the live DB exactly across `user_accounts` (17), `customers` (132), `invoices` (6), `invoice_payments` (4).
-  - Guard tests: `restore <dump> optimus_os` → refused (live DB name); `restore <dump> template1` → refused (reserved name); `restore <dump> 'evil"; DROP DATABASE optimus_os; --'` → refused (identifier-shape check) — all three dangerous inputs correctly blocked, legitimate default path still works.
-  - `rollback`: tagged current images `:previous`, force-recreated backend onto a deliberately broken `busybox` image, confirmed `/health` failed completely, ran `rollback`, confirmed `/health` returned `200` again with the exact original image ID restored.
-  - `migrate-down 008_invoices` then `migrate` (upgrade head): clean round-trip back to `009_payments (head)`, dev stack confirmed healthy throughout.
-  - All rehearsal artifacts (scratch DB, `:previous` tags, the busybox image) cleaned up afterward.
+**Slice 2 — customer history.** New `app/customer_history_store.py` (`get_customer_history`: owner-scoped 404 via `get_customer_model`, three direct queries filtered owner+customer, `ORDER BY updated_at DESC LIMIT`, COUNT totals; invoice rows use `invoice_store._payment_summary(now_utc())` so status/balance/overdue are read-time truth). New models `CustomerHistory*` in `app/models.py`; route `GET /api/customers/{id}/history?limit=` in `app/main.py`; `#customer-history` panel with three sub-lists in `index.html` + `loadCustomerHistory()`/`renderCustomerHistory()` wired into `selectCustomer` in `app.js` (click-throughs reuse `openEstimateRecord`/`selectWorkOrder`/`selectInvoice`). Tests: `tests/test_customer_history_api.py` (6) + isolation-sweep line + official-ui ids.
 
-## Unverified
+**Slice 3 — notifications.** Migration `alembic/versions/010_notifications_square.py` (down_revision `009_payments`): `notifications` table (owner FK CASCADE; polymorphic entity_type/entity_id, no entity FK; event CHECK; title/body; mutable `read_at` null=unread — the one documented deviation from append-only; two owner indexes) **plus** the Slice-4 `invoices.square_invoice_id/square_status/square_payment_url` columns (single-migration rule). `Notification` model in `db_models.py`. New leaf module `app/notification_store.py`: `record_notification` (db.add only, rides the caller's transaction), `list_notifications` (paginated, unread filter, `unread_count` in every response), `mark_notification_read` (owner-scoped 404), `mark_all_notifications_read`. In-transaction hooks at all seven producers: `send_estimate_for_approval`, `approve_estimate` + `decline_estimate` (owner derived from `estimate.owner_user_id` — public token path has no AuthContext; the expired early-commit path deliberately does not notify), `transition_work_order_status` (staged before the COMPLETED branch so it rides/rolls back with `ensure_draft_invoice_for_work_order`'s internal commit), `issue_invoice`, `record_payment` (body notes deposit flip), `void_payment`. Routes: `GET /api/notifications`, `POST /api/notifications/{id}/read`, `POST /api/notifications/read-all`. Settings: `notifications_default_page_size`/`notifications_max_page_size`. Frontend: nav tab with `#nav-notifications-badge` unread pill, notifications view (list, unread-only filter, mark-all, pager, refresh), 60s badge poll beside the health poll, badge refresh on login, cleared on logout. Tests: `tests/test_notifications_api.py` (8: full-chain sequence, customer-token approval notifies owner, unread/mark-read flow, isolation, idempotent no-op adds no row, failed COMPLETED transition rolls the notification back, pagination + max-page-size 422) + idempotency-audit extension + official-ui ids.
 
-- No real staging infrastructure exists — everything above is local-only prep and rehearsal, not a deployed staging environment.
-- No droplet, domain, DNS, TLS, secrets-store, or external monitoring/alerting has been configured or tested against anything real.
-- No browser/Playwright UI click-through was performed this session (no frontend changes were made).
+**Slice 4 — Square Invoices, sandbox-only.** Config: `square_access_token (repr=False)`, `square_environment Literal["sandbox","production"]="sandbox"`, `square_location_id`, `square_timeout_seconds`, property `square_configured` — true ONLY with token+location AND environment=="sandbox" (production structurally unreachable this phase); `.env.example` section added. `app/services/square.py`: `SquareInvoiceClient(settings, client=None)` (injectable stub seam; pinned `Square-Version: 2025-05-21`; sandbox base URL; `SquareApiError` carries status+codes, never the token), six calls with deterministic idempotency keys (`{invoice_number}:{step}`): search-customer-by-email → create-customer → create-order (ONE aggregate line item; cents via `_money()` Decimal, never `int(float*100)`) → create-invoice (payment_requests from `payment_schedules`: ≤1 row → BALANCE; 2+ rows → DEPOSIT (first row, fixed amount) + BALANCE (final due date), middle installments collapsed into the description — Square INSTALLMENT needs a paid tier) → publish (Square emails the customer the pay link) → get. `app/square_store.py`: `push_invoice_to_square` (draft/void→422, already-pushed→409, missing snapshot email→422; square columns persisted ONLY after the full sequence succeeds), `refresh_square_invoice` (not-pushed→422). Routes `POST /api/invoices/{id}/square/push|refresh` (503 unless `square_configured`; SquareApiError→502 sanitized), `/health` gains `square_configured`+`square_environment`, `InvoiceRead` gains the three square fields. **Square never writes the local ledger** — owner records money manually via the existing payment form (`method_label` e.g. "Square"). Frontend: "Send with Square" (confirm() gate — money-adjacent action) + "Refresh Square status" buttons on invoice detail, Square status + pay-link rows; hidden entirely unless health reports `square_configured`. Tests: `tests/test_square_api.py` (12, all via `StubSquareClient` — zero network: unconfigured/production 503s, happy path new+existing customer, Decimal cents equality, draft 422, no-email 422, re-push 409, publish-failure persists nothing, refresh, ledger untouched with local status still unpaid while Square says PAID, cross-user 404s, `repr(Settings)` never contains the token).
 
-## Unrelated preexisting changes
+### Evidence (2026-07-10)
 
-- None newly observed this session beyond what was already known (4 pre-existing `ruff format` drift files predating Phase 3, unrelated to any diff touched here).
+- `ruff format app tests scripts alembic` + `ruff check` clean (scoped — `.` would recurse into stray `optimusOS/`).
+- `pyright`: 0 errors. `node --check app/static/app.js` clean.
+- `pytest`: **200 passed** (174 baseline + 26 new).
+- Alembic on the real compose Postgres: `upgrade head` (009→010) → `downgrade 009_payments` → `upgrade head` all clean; `alembic current` = `010_notifications_square (head)`.
+- Backend/worker images rebuilt; live curl proofs: new routes 401 unauthenticated (auth gate ahead of the Square config gate), `/health` shows `square_configured: false` + `square_environment: sandbox` on the unconfigured local stack, served `app.js`/`index.html` contain the new tab/panels, real Postgres has the `notifications` table and the three `square_*` invoice columns.
+- Independent review (separate read-only reviewer agent, 2026-07-10): **no CRITICAL findings.** Three IMPORTANT findings, all addressed before handoff:
+  1. Unclosed `httpx.Client` per Square push/refresh request → fixed: `SquareInvoiceClient.close()` (closes only self-created clients, never injected stubs) + `finally: client.close()` in both routes + a `stub.closed` regression assertion.
+  2. Pre-existing commit-boundary gap in `ensure_draft_invoice_for_work_order`'s early-return/IntegrityError branches (the new notification inherits it in a concurrent double-completion race) → accepted as documented pre-existing risk, now recorded in `docs/context/KNOWN_ISSUES.md`.
+  3. Coverage note: only the injected-stub Square path is unit-tested; the real httpx path and the `asyncio.to_thread` routes under a live ASGI request are exercised only by the owner sandbox smoke test — carried as an explicit gap, not a defect.
+  - Reviewer's suggested hardening also applied: DB-level unique index `uq_invoices_square_invoice_id` added to model + migration (NULLs don't collide; one Square invoice can never map to two local invoices).
+  - All gates re-run green after the fixes. Codex/owner review of the committed diff still recommended as the second pass.
+
+## Next steps (exact)
+
+1. **Owner: approve commit.** Suggested shape: one commit per slice (or a single squashed feature commit — owner's call) on `agent/claude/notify-history-square`, then push and open a PR into `ops/staging` (or straight merge — owner's call).
+2. **Owner: Square sandbox smoke test** (optional until wanted): create a Square developer sandbox (developer.squareup.com), put the sandbox access token + location id in the local `.env` only (never chat/commits), restart backend (`--force-recreate` — env is fixed at container start), then push a real issued invoice via the UI button and confirm the email/pay-link on Square's sandbox dashboard.
+3. **Owner action still pending from Phase 5**: droplet redeploy one-liners (unchanged, below), then post-deploy verification.
+
+## Owner action items (pending)
+
+1. **Droplet deploy** (invoice fix + optimusctl fix are NOT yet on the droplet — it still runs `36b861b`). One line at a time (console mangles multi-line pastes):
+   `cd /opt/optimus-server && git fetch origin`
+   `git checkout ops/staging`
+   `git pull --ff-only origin ops/staging`
+   `grep COMPOSE_OVERRIDE_FILE .env` → if empty: `echo 'COMPOSE_OVERRIDE_FILE=ops/docker-compose.staging.yml' >> .env`
+   `scripts/optimusctl.sh update` then `status` (frontend MUST show `0.0.0.0:80->80/tcp`) then `health`
+   Then an agent verifies `selectionVersion` in `https://staging.optimus-os.com/static/app.js` (cache-buster; Cloudflare may cache) and the owner does the browser repro check + one full login.
+2. **Square sandbox credentials** for the smoke test (see Next steps 2).
+
+## Verified baseline (carried forward, still true)
+
+- Staging live: `https://staging.optimus-os.com/health` + `/ready` 200; **HSTS confirmed live**; **staging owner password rotation confirmed by owner** (both closed 2026-07-09).
+- `scripts/optimusctl.sh` honors `COMPOSE_OVERRIDE_FILE` (commit `7d665c8`); format-drift files fixed (`15481c6`); both pushed to `origin/ops/staging`.
+- PR #10 discovery: remote `main` (`a1b84ff`) already contains invoice fix `1139499`; old remote feature branches deleted; `origin/ops/staging` recreated by the 2026-07-09 push.
 
 ## Blockers and risks
 
-- **Owner action required before Phase 5 can proceed further**: create the DigitalOcean account, add a payment method, create a droplet; register the domain through Cloudflare. No agent can perform any of this (real credentials, spending money, cloud provider actions all require explicit owner action per `AGENTS.md`).
-- Nothing on `ops/staging` is committed or pushed yet.
-- Carried over: payment-schedule installment percentage split remains an owner-confirmed placeholder pending real business-rule confirmation (`docs/context/BUSINESS_RULES.md`).
+- Commit/push/PR/merge all need explicit owner approval (repo rule) — the whole Phase 5.5 diff is sitting uncommitted until then.
+- Local alembic head (010) is now ahead of the droplet (009) — the droplet deploy above only takes `ops/staging`, which does NOT include this branch; when Phase 5.5 merges and deploys, run `alembic upgrade head` on the droplet as an explicit step.
+- Carried over: payment-schedule installment split remains an owner-confirmed placeholder (`docs/context/BUSINESS_RULES.md`); no rate limiter on `POST /api/estimates` (pre-existing, documented in Slice 1).
 
 ## Exact next task
 
-Once the owner has a DigitalOcean droplet and a Cloudflare-registered domain, the next agent-assisted work is: provision the droplet (Docker + Compose), configure Cloudflare DNS/proxy for HTTPS termination, set up separate staging PostgreSQL/Redis credentials, get secrets onto the host without committing them, and wire up `/health`+`/ready` external monitoring. Until then, this branch's local-prep work is ready to commit/push pending explicit approval, but real deployment work is blocked on the owner's account/domain setup.
+Get owner approval to commit the Phase 5.5 diff (per-slice or squashed), push `agent/claude/notify-history-square`, and decide PR-vs-merge into `ops/staging`. Then resume the pending droplet redeploy (Owner action item 1).

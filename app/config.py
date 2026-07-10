@@ -53,6 +53,8 @@ class Settings(BaseSettings):
     work_orders_max_page_size: int = Field(default=100, ge=1, le=200)
     invoices_default_page_size: int = Field(default=20, ge=1, le=100)
     invoices_max_page_size: int = Field(default=100, ge=1, le=200)
+    notifications_default_page_size: int = Field(default=20, ge=1, le=100)
+    notifications_max_page_size: int = Field(default=100, ge=1, le=200)
     invoice_due_days_default: int = Field(default=30, ge=1, le=180)
     app_env: str = "production"
     database_url: str = Field(
@@ -67,6 +69,11 @@ class Settings(BaseSettings):
     session_cookie_name: str = "optimus_session"
     optimus_owner_username: str = Field(default="", repr=False)
     optimus_owner_password: str = Field(default="", repr=False)
+
+    square_access_token: str = Field(default="", repr=False)
+    square_environment: Literal["sandbox", "production"] = "sandbox"
+    square_location_id: str = ""
+    square_timeout_seconds: float = Field(default=20.0, ge=2, le=120)
 
     autonomy_mode: Literal["owner_full_control", "guarded"] = "owner_full_control"
     direct_owner_chat_default: bool = True
@@ -139,6 +146,15 @@ class Settings(BaseSettings):
     @property
     def estimator_model(self) -> str:
         return self.openai_estimator_model.strip() or self.openai_model.strip()
+
+    @property
+    def square_configured(self) -> bool:
+        # Sandbox-only phase: production is structurally unreachable until a
+        # separate, explicitly approved go-live change relaxes this gate.
+        return (
+            bool(self.square_access_token and self.square_location_id)
+            and self.square_environment == "sandbox"
+        )
 
 
 @lru_cache(maxsize=1)

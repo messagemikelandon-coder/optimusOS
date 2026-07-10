@@ -20,8 +20,11 @@ from app.models import (
     InvoicePaymentVoidRequest,
     InvoiceRead,
     InvoiceStatus,
+    NotificationEntityType,
+    NotificationEvent,
     PaymentAppliesTo,
 )
+from app.notification_store import record_notification
 from app.work_order_store import PAYMENT_PLAN_OPTIONS
 
 __all__ = [
@@ -109,6 +112,20 @@ def record_payment(
     # detail view (`_to_read`) always recomputes fresh regardless.
     invoice.status = new_status.value
     db.add(invoice)
+    deposit_note = (
+        " Deposit requirement satisfied on the linked work order."
+        if payload.applies_to is PaymentAppliesTo.DEPOSIT
+        else ""
+    )
+    record_notification(
+        db=db,
+        owner_user_id=invoice.owner_user_id,
+        entity_type=NotificationEntityType.INVOICE,
+        entity_id=invoice.id,
+        event=NotificationEvent.PAYMENT_RECORDED,
+        title=f"Payment of ${amount:.2f} recorded on invoice {invoice.invoice_number}",
+        body=f"Invoice status: {new_status.value}.{deposit_note}",
+    )
     db.commit()
     db.refresh(invoice)
     return _to_read(invoice)
@@ -161,6 +178,15 @@ def void_payment(
     )
     invoice.status = new_status.value
     db.add(invoice)
+    record_notification(
+        db=db,
+        owner_user_id=invoice.owner_user_id,
+        entity_type=NotificationEntityType.INVOICE,
+        entity_id=invoice.id,
+        event=NotificationEvent.PAYMENT_VOIDED,
+        title=f"Payment of ${_money(payment.amount):.2f} voided on invoice {invoice.invoice_number}",
+        body=f"Invoice status: {new_status.value}.",
+    )
     db.commit()
     db.refresh(invoice)
     return _to_read(invoice)

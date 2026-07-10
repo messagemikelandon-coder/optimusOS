@@ -28,11 +28,14 @@ from app.models import (
     InvoiceRead,
     InvoiceStatus,
     InvoiceVehicleSnapshot,
+    NotificationEntityType,
+    NotificationEvent,
     PaymentAppliesTo,
     PaymentScheduleEntryRead,
     SelectedPart,
     WorkOrderStatus,
 )
+from app.notification_store import record_notification
 
 # Money columns for payments/schedule are Decimal(10, 2), deliberately distinct
 # from the Phase 2 Float invoice/line-item columns. This local `_money` helper
@@ -207,6 +210,9 @@ def _to_read(invoice: Invoice) -> InvoiceRead:
         total_paid=float(total_paid),
         balance_due=float(balance_due),
         is_overdue=is_overdue,
+        square_invoice_id=invoice.square_invoice_id,
+        square_status=invoice.square_status,
+        square_payment_url=invoice.square_payment_url,
         line_items=[_line_item_to_read(item) for item in invoice.line_items],
         payments=[_payment_to_read(payment) for payment in invoice.payments],
         schedule=[_schedule_to_read(entry) for entry in invoice.schedule],
@@ -473,6 +479,15 @@ def issue_invoice(
             due_at=due_at,
         ):
             db.add(row)
+    record_notification(
+        db=db,
+        owner_user_id=invoice.owner_user_id,
+        entity_type=NotificationEntityType.INVOICE,
+        entity_id=invoice.id,
+        event=NotificationEvent.INVOICE_ISSUED,
+        title=f"Invoice {invoice.invoice_number} issued",
+        body=f"Due {due_at.date().isoformat()}.",
+    )
     db.commit()
     db.refresh(invoice)
     return _to_read(invoice)
