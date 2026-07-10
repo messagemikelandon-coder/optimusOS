@@ -3022,6 +3022,12 @@ function initializeApp() {
   initializeEstimate();
   initializeSystem();
   initializeAuth();
+  // "/login" and "/approval" are never the marketing landing page, regardless
+  // of auth state. Cleared here (not an inline <script>) so it stays
+  // compliant with the app's script-src 'self' CSP.
+  if (window.location.pathname === "/login" || window.location.pathname === "/approval") {
+    document.body.classList.remove("marketing-mode");
+  }
   if (window.location.pathname === "/approval") {
     navigate("approval");
     void loadPublicApprovalPage();
@@ -3030,9 +3036,12 @@ function initializeApp() {
   }
   void loadSession().then((authenticated) => {
     if (!authenticated) {
-      if (window.location.pathname !== "/approval") navigate("login");
+      // Unauthenticated visitors to "/" see the marketing landing page
+      // (default body state) instead of being forced to the login view.
+      if (window.location.pathname !== "/approval" && window.location.pathname !== "/") navigate("login");
       return;
     }
+    document.body.classList.remove("marketing-mode");
     void loadCustomerOptions().catch(() => {
       showToast("Customer options failed to load.", "error");
     });

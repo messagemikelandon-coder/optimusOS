@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import anyio
@@ -25,6 +26,52 @@ def test_official_landon_motor_works_interface_is_packaged() -> None:
     assert (STATIC / "favicon.svg").is_file()
     assert (STATIC / "invoice.css").is_file()
     assert (STATIC / "manifest.webmanifest").is_file()
+
+
+def test_index_html_has_no_inline_scripts() -> None:
+    """The app's CSP is script-src 'self' with no nonce/hash/unsafe-inline
+    (see security_headers in app/main.py), so any inline <script> block
+    (one with no src= attribute) would be silently blocked by a real
+    browser instead of raising a visible error. This regression was caught
+    in review: an earlier draft of the marketing landing page used an
+    inline bootstrap script that would have broken /login and /approval."""
+    html = (STATIC / "index.html").read_text(encoding="utf-8")
+    script_tags = re.findall(r"<script\b[^>]*>", html, flags=re.IGNORECASE)
+    assert script_tags, "expected at least one <script> tag in index.html"
+    for tag in script_tags:
+        assert re.search(r'\bsrc\s*=\s*"[^"]+"', tag), (
+            f"inline script without src= violates script-src 'self': {tag}"
+        )
+
+
+def test_index_html_has_no_inline_style_attributes() -> None:
+    """style-src 'self' has the same no-unsafe-inline restriction as
+    script-src. A live Playwright check against the real CSP found a
+    pre-existing `style="grid-column: 1 / -1;"` attribute on the Square
+    panel (unrelated to the landing-page work) silently violating this on
+    every page load; it was replaced with the `.square-panel-full` class."""
+    html = (STATIC / "index.html").read_text(encoding="utf-8")
+    assert not re.search(r'<[a-zA-Z][^>]*\sstyle\s*=\s*"', html), (
+        "inline style=\"...\" attribute violates style-src 'self'"
+    )
+
+
+def test_marketing_landing_page_gating() -> None:
+    """Unauthenticated visitors to "/" should see the marketing landing
+    page (body starts with class="marketing-mode"), while the CSP-safe
+    external app.js is responsible for revealing the app shell for /login
+    and /approval, and for an authenticated session."""
+    html = (STATIC / "index.html").read_text(encoding="utf-8")
+    javascript = (STATIC / "app.js").read_text(encoding="utf-8")
+    assert '<body class="marketing-mode">' in html
+    assert 'id="marketing-site"' in html
+    assert 'data-view-panel="landing"' in html
+    assert ".marketing-mode .app-shell" in (STATIC / "styles.css").read_text(encoding="utf-8")
+    assert (
+        'window.location.pathname === "/login" || window.location.pathname === "/approval"'
+        in javascript
+    )
+    assert 'document.body.classList.remove("marketing-mode")' in javascript
 
 
 def test_ui_preserves_connected_workflows() -> None:
