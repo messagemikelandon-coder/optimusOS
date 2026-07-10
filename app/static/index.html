@@ -3,17 +3,141 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="theme-color" content="#07111d">
+  <meta name="theme-color" content="#17171a">
   <meta name="description" content="Landon Motor Works Optimus command center for mechanic research, parts pricing, labor time, and job estimates.">
   <title>Optimus Command Center | Landon Motor Works</title>
   <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
   <link rel="manifest" href="/static/manifest.webmanifest">
   <link rel="stylesheet" href="/static/styles.css">
 </head>
-<body>
+<body class="marketing-mode">
   <div class="ambient-layer ambient-grid" aria-hidden="true"></div>
   <div class="ambient-layer ambient-glow" aria-hidden="true"></div>
   <div class="ambient-layer ambient-noise" aria-hidden="true"></div>
+
+  <section class="marketing-site" id="marketing-site" data-view-panel="landing">
+    <a class="skip-link" href="#marketing-main">Skip to content</a>
+    <header class="marketing-header">
+      <a class="marketing-brand" href="/">
+        <img src="/static/logo-mark.svg" alt="" width="34" height="38">
+        <span><strong>Landon Motor Works</strong><small>Optimus Command Center</small></span>
+      </a>
+      <nav class="marketing-nav" aria-label="Website navigation">
+        <a href="#platform">Platform</a>
+        <a href="#workflow">Workflow</a>
+        <a href="#control">Owner control</a>
+      </nav>
+      <a class="marketing-signin" href="/login">Owner sign in</a>
+    </header>
+
+    <main id="marketing-main">
+      <section class="marketing-hero hero-panel tilt-surface" data-tilt-strength="4">
+        <div class="hero-copy">
+          <span class="section-kicker"><i></i> Mobile mechanic intelligence</span>
+          <h2>The system<br>behind the repair.</h2>
+          <p>Optimus connects the customer record, vehicle history, diagnosis, estimate, owner approval, work order, and invoice into one owner-controlled shop-management system for Landon Motor Works.</p>
+          <div class="hero-actions">
+            <a class="primary-button" href="/login">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m10 17 5-5-5-5v10Zm-6 4V3h2v18H4Zm14 0h2V3h-2v18Z"/></svg>
+              Open owner workspace
+            </a>
+            <a class="secondary-button" href="#platform">See the platform</a>
+          </div>
+          <div class="hero-proof">
+            <div><strong>Owner mode</strong><span>Direct control</span></div>
+            <div><strong>Evidence first</strong><span>No fabricated stock</span></div>
+            <div><strong>Server sessions</strong><span>HttpOnly, no bearer tokens</span></div>
+          </div>
+        </div>
+
+        <div class="mechanic-stage" aria-hidden="true">
+          <div class="stage-grid"></div>
+          <div class="stage-glow"></div>
+          <div class="rotor-assembly">
+            <div class="rotor-shadow"></div>
+            <div class="rotor-disc">
+              <span class="lug lug-1"></span><span class="lug lug-2"></span><span class="lug lug-3"></span><span class="lug lug-4"></span><span class="lug lug-5"></span>
+              <div class="rotor-hub"><span>LMW</span></div>
+            </div>
+            <div class="caliper"><span>OPTIMUS</span></div>
+          </div>
+          <div class="diagnostic-tablet">
+            <div class="tablet-camera"></div>
+            <div class="tablet-screen">
+              <div class="screen-header"><span>Vehicle Intelligence</span><i></i></div>
+              <div class="scan-ring"><span>READY</span></div>
+              <div class="screen-lines"><i></i><i></i><i></i></div>
+              <div class="screen-footer"><b>WEB</b><b>VIN</b><b>PARTS</b></div>
+            </div>
+          </div>
+          <div class="floating-nut nut-one"></div>
+          <div class="floating-nut nut-two"></div>
+          <div class="floating-wrench"></div>
+        </div>
+      </section>
+
+      <section class="marketing-section" id="platform">
+        <div class="marketing-section-lead">
+          <span class="section-kicker"><i></i> 01 / Platform</span>
+          <h2>One record from intake to payment.</h2>
+          <p>Stop rebuilding the same job across texts, notes, parts tabs, estimates, and invoices. Every customer, vehicle, repair decision, approval, work order, and balance stays connected.</p>
+        </div>
+        <div class="capability-grid">
+          <article class="capability-card tilt-surface" data-tilt-strength="3">
+            <div class="capability-icon blue"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v14H4V5Zm3 3v3h3V8H7Zm5 0v3h5V8h-5ZM7 13v3h10v-3H7Z"/></svg></div>
+            <div><span>Parts intelligence</span><strong>Current pricing</strong><p>Official retailer links, visible prices, fitment notes, and confidence labels.</p></div>
+          </article>
+          <article class="capability-card tilt-surface" data-tilt-strength="3">
+            <div class="capability-icon green"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2a7 7 0 0 0-7 7c0 5.2 7 13 7 13s7-7.8 7-13a7 7 0 0 0-7-7Zm0 10a3 3 0 1 1 0-6 3 3 0 0 1 0 6Z"/></svg></div>
+            <div><span>Store network</span><strong>Local availability</strong><p>Uses ZIP, city, or state to research nearby inventory in real time.</p></div>
+          </article>
+          <article class="capability-card tilt-surface" data-tilt-strength="3">
+            <div class="capability-icon amber"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a9 9 0 1 0 9 9 9 9 0 0 0-9-9Zm1 5v4.6l3.2 1.9-1 1.7-4.2-2.5V8h2Z"/></svg></div>
+            <div><span>Time analysis</span><strong>Labor guidance</strong><p>Published-time research separated from practical mobile-mechanic working time.</p></div>
+          </article>
+          <article class="capability-card tilt-surface" data-tilt-strength="3">
+            <div class="capability-icon violet"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 3h14v18H5V3Zm3 4h8V5H8v2Zm0 5h3V9H8v3Zm5 0h3V9h-3v3Zm-5 5h3v-3H8v3Zm5 0h3v-3h-3v3Z"/></svg></div>
+            <div><span>Business output</span><strong>Complete estimate</strong><p>Labor, selected parts, fees, supplies, taxes, warnings, tools, and source links.</p></div>
+          </article>
+        </div>
+      </section>
+
+      <section class="marketing-section" id="workflow">
+        <div class="marketing-section-lead">
+          <span class="section-kicker"><i></i> 02 / Workflow</span>
+          <h2>Every handoff stays attached to the job.</h2>
+          <p>Optimus follows the same sequence a working mechanic does. Information is collected once, verified, and carried forward to the next stage.</p>
+        </div>
+        <ol class="workflow-list">
+          <li><span>01</span><div><strong>Intake &amp; vehicle record</strong><p>Customer contact, VIN, mileage, complaint, and service history.</p></div></li>
+          <li><span>02</span><div><strong>Diagnosis &amp; estimate</strong><p>Current parts research, labor guidance, tools, risk notes, and a customer-ready estimate.</p></div></li>
+          <li><span>03</span><div><strong>Owner approval</strong><p>The customer reviews and approves the exact estimate revision sent to them.</p></div></li>
+          <li><span>04</span><div><strong>Execution</strong><p>Approved estimates convert into a work order with append-only status history and notes.</p></div></li>
+          <li><span>05</span><div><strong>Invoice &amp; payment</strong><p>Completed work orders generate a customer-safe invoice with payment tracking.</p></div></li>
+        </ol>
+      </section>
+
+      <section class="marketing-section" id="control">
+        <div class="marketing-section-lead">
+          <span class="section-kicker"><i></i> 03 / Owner control</span>
+          <h2>Optimus works for the owner, not around them.</h2>
+          <p>Optimus is configured to separate evidence from assumptions, identify missing fitment details, cite current sources, and label uncertain inventory instead of guessing.</p>
+        </div>
+        <div class="principle-tags"><span>Evidence first</span><span>Current sources</span><span>Owner controlled</span><span>No fabricated stock</span><span>HttpOnly sessions</span></div>
+        <div class="marketing-cta">
+          <a class="primary-button large" href="/login">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m10 17 5-5-5-5v10Zm-6 4V3h2v18H4Zm14 0h2V3h-2v18Z"/></svg>
+            Owner sign in
+          </a>
+        </div>
+      </section>
+    </main>
+
+    <footer class="marketing-footer">
+      <span>Landon Motor Works</span>
+      <span>Optimus Command Center</span>
+    </footer>
+  </section>
 
   <div class="app-shell">
     <aside class="sidebar" id="sidebar" aria-label="Primary navigation">
@@ -832,7 +956,7 @@
 
         <section class="app-view" id="view-square" data-view-panel="square" hidden>
           <div class="customers-layout">
-            <section class="panel customers-list-panel" style="grid-column: 1 / -1;">
+            <section class="panel customers-list-panel square-panel-full">
               <div class="panel-heading">
                 <div><span class="section-kicker"><i></i> Payment integration</span><h2>Square</h2><p>Push issued invoices to Square for online card payment, and track their status here.</p></div>
                 <button class="secondary-button compact" type="button" id="square-refresh-all">Refresh list</button>
