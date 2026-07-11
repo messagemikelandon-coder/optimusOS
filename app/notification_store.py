@@ -5,7 +5,7 @@ from datetime import UTC, datetime
 from sqlalchemy import Select, func, select
 from sqlalchemy.orm import Session
 
-from app.auth import AuthContext
+from app.auth import AuthContext, effective_owner_id
 from app.config import Settings
 from app.db_models import Notification
 from app.models import (
@@ -64,7 +64,7 @@ def record_notification(
 
 
 def _notification_query(auth: AuthContext) -> Select[tuple[Notification]]:
-    return select(Notification).where(Notification.owner_user_id == auth.user.id)
+    return select(Notification).where(Notification.owner_user_id == effective_owner_id(auth))
 
 
 def _to_read(notification: Notification) -> NotificationRead:
@@ -86,7 +86,7 @@ def _unread_count(db: Session, auth: AuthContext) -> int:
             select(func.count())
             .select_from(Notification)
             .where(
-                Notification.owner_user_id == auth.user.id,
+                Notification.owner_user_id == effective_owner_id(auth),
                 Notification.read_at.is_(None),
             )
         )

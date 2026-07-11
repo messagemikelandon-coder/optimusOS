@@ -6,7 +6,7 @@ from sqlalchemy import Select, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.auth import AuthContext, ensure_utc
+from app.auth import AuthContext, effective_owner_id, ensure_utc
 from app.config import Settings
 from app.customer_store import display_name as customer_display_name
 from app.db_models import Estimate, WorkOrder, WorkOrderNote, WorkOrderStatusEvent
@@ -74,7 +74,7 @@ class WorkOrderNotFoundError(WorkOrderStoreError):
 
 
 def _work_order_query(auth: AuthContext) -> Select[tuple[WorkOrder]]:
-    return select(WorkOrder).where(WorkOrder.owner_user_id == auth.user.id)
+    return select(WorkOrder).where(WorkOrder.owner_user_id == effective_owner_id(auth))
 
 
 def _require_work_order(db: Session, auth: AuthContext, work_order_id: int) -> WorkOrder:
@@ -86,7 +86,9 @@ def _require_work_order(db: Session, auth: AuthContext, work_order_id: int) -> W
 
 def _require_approved_estimate(db: Session, auth: AuthContext, estimate_id: int) -> Estimate:
     estimate = db.scalar(
-        select(Estimate).where(Estimate.owner_user_id == auth.user.id, Estimate.id == estimate_id)
+        select(Estimate).where(
+            Estimate.owner_user_id == effective_owner_id(auth), Estimate.id == estimate_id
+        )
     )
     if estimate is None:
         raise EstimateNotFoundError("Estimate not found.")
@@ -212,7 +214,7 @@ def _append_status_event(
     db.add(
         WorkOrderStatusEvent(
             work_order_id=work_order.id,
-            owner_user_id=auth.user.id,
+            owner_user_id=effective_owner_id(auth),
             from_status=from_status.value if from_status else None,
             to_status=to_status.value,
             reason=reason,
@@ -246,7 +248,7 @@ def create_work_order_from_estimate(
         else WorkOrderStatus.READY_TO_SCHEDULE
     )
     work_order = WorkOrder(
-        owner_user_id=auth.user.id,
+        owner_user_id=effective_owner_id(auth),
         estimate_id=estimate.id,
         estimate_revision_id=revision.id,
         customer_id=estimate.customer_id,
@@ -444,7 +446,7 @@ def add_work_order_note(
     db.add(
         WorkOrderNote(
             work_order_id=work_order.id,
-            owner_user_id=auth.user.id,
+            owner_user_id=effective_owner_id(auth),
             visibility=payload.visibility.value,
             note=payload.note,
             created_by_user_id=auth.user.id,

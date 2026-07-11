@@ -229,3 +229,46 @@ def require_authenticated_user(
     auth: Annotated[AuthContext, Depends(get_current_auth_context)],
 ) -> UserAccount:
     return auth.user
+
+
+def effective_owner_id(auth: AuthContext) -> int:
+    """The shop-owning user id that business data should be scoped to.
+
+    Owners scope to themselves. Technicians scope to their shop owner, so an
+    owner and their technicians share one pool of customers/estimates/work
+    orders/etc. Every store module must use this instead of `auth.user.id`
+    for data scoping (actor/audit fields like `created_by_user_id` still use
+    `auth.user.id` directly since those record who acted, not whose shop).
+    """
+    if auth.user.role == "owner":
+        return auth.user.id
+    if auth.user.shop_owner_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="This account is not associated with a shop owner.",
+        )
+    return auth.user.shop_owner_id
+
+
+def require_role(auth: AuthContext, *allowed: str) -> None:
+    if auth.user.role not in allowed:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Your role does not have access to this action.",
+        )
+
+
+def require_owner_context(
+    auth: Annotated[AuthContext, Depends(get_current_auth_context)],
+) -> AuthContext:
+    """Route dependency for endpoints that are owner-only for v1.
+
+    Technician-specific routes (own assigned work orders, clock-in/out,
+    diagnostics/inspections) don't exist yet — they're built in a later
+    Phase 5.6 sub-phase once `WorkOrder.assigned_technician_id` exists. Until
+    then every business route is gated to the owner role so a technician
+    account (once one can be created) starts with zero data access instead
+    of inheriting the old single-role behavior.
+    """
+    require_role(auth, "owner")
+    return auth

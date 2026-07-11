@@ -24,12 +24,19 @@ from app.db import Base
 
 class UserAccount(Base):
     __tablename__ = "user_accounts"
-    __table_args__ = (UniqueConstraint("username", name="uq_user_accounts_username"),)
+    __table_args__ = (
+        UniqueConstraint("username", name="uq_user_accounts_username"),
+        CheckConstraint("role IN ('owner', 'technician')", name="ck_user_accounts_role"),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     username: Mapped[str] = mapped_column(String(120), nullable=False)
     display_name: Mapped[str] = mapped_column(String(120), nullable=False)
     role: Mapped[str] = mapped_column(String(40), nullable=False, default="owner")
+    shop_owner_id: Mapped[int | None] = mapped_column(
+        ForeignKey("user_accounts.id", ondelete="CASCADE"),
+        nullable=True,
+    )
     password_hash: Mapped[str] = mapped_column(Text, nullable=False)
     is_active: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=True, server_default="true"

@@ -23,6 +23,7 @@ from app.auth import (
     create_auth_session,
     get_current_auth_context,
     require_authenticated_user,
+    require_owner_context,
     set_session_cookie,
 )
 from app.config import Settings, get_settings
@@ -174,6 +175,7 @@ SettingsDep = Annotated[Settings, Depends(get_settings)]
 DbSessionDep = Annotated[Session, Depends(get_db_session)]
 AuthContextDep = Annotated[AuthContext, Depends(get_current_auth_context)]
 CurrentUserDep = Annotated[UserAccount, Depends(require_authenticated_user)]
+OwnerAuthContextDep = Annotated[AuthContext, Depends(require_owner_context)]
 
 app = FastAPI(
     title="Optimus Command Center | Landon Motor Works",
@@ -380,7 +382,7 @@ async def auth_me(auth: AuthContextDep) -> AuthMeResponse:
 async def create_customer_record(
     payload: CustomerCreate,
     db: DbSessionDep,
-    auth: AuthContextDep,
+    auth: OwnerAuthContextDep,
 ) -> CustomerRead:
     try:
         return create_customer(db=db, auth=auth, payload=payload)
@@ -398,7 +400,7 @@ async def create_customer_record(
 async def list_customer_records(
     db: DbSessionDep,
     settings: SettingsDep,
-    auth: AuthContextDep,
+    auth: OwnerAuthContextDep,
     page: int = Query(default=1),
     page_size: int = Query(default=20),
     search: str | None = Query(default=None, max_length=120),
@@ -428,7 +430,7 @@ async def list_customer_records(
 async def get_customer_record(
     customer_id: int,
     db: DbSessionDep,
-    auth: AuthContextDep,
+    auth: OwnerAuthContextDep,
 ) -> CustomerRead:
     try:
         return get_customer(db=db, auth=auth, customer_id=customer_id)
@@ -449,7 +451,7 @@ async def update_customer_record(
     customer_id: int,
     payload: CustomerUpdate,
     db: DbSessionDep,
-    auth: AuthContextDep,
+    auth: OwnerAuthContextDep,
 ) -> CustomerRead:
     try:
         return update_customer(db=db, auth=auth, customer_id=customer_id, payload=payload)
@@ -469,7 +471,7 @@ async def update_customer_record(
 async def archive_customer_record(
     customer_id: int,
     db: DbSessionDep,
-    auth: AuthContextDep,
+    auth: OwnerAuthContextDep,
 ) -> CustomerArchiveResponse:
     try:
         return archive_customer(db=db, auth=auth, customer_id=customer_id)
@@ -490,7 +492,7 @@ async def create_vehicle_record(
     customer_id: int,
     payload: VehicleCreate,
     db: DbSessionDep,
-    auth: AuthContextDep,
+    auth: OwnerAuthContextDep,
 ) -> VehicleRead:
     try:
         return create_vehicle(db=db, auth=auth, customer_id=customer_id, payload=payload)
@@ -511,7 +513,7 @@ async def list_customer_vehicle_records(
     customer_id: int,
     db: DbSessionDep,
     settings: SettingsDep,
-    auth: AuthContextDep,
+    auth: OwnerAuthContextDep,
     page: int = Query(default=1),
     page_size: int = Query(default=20),
     search: str | None = Query(default=None, max_length=120),
@@ -544,7 +546,7 @@ async def list_customer_vehicle_records(
 async def get_customer_history_record(
     customer_id: int,
     db: DbSessionDep,
-    auth: AuthContextDep,
+    auth: OwnerAuthContextDep,
     limit: int = Query(default=20, ge=1, le=50),
 ) -> CustomerHistoryResponse:
     try:
@@ -565,7 +567,7 @@ async def get_customer_history_record(
 async def list_vehicle_records(
     db: DbSessionDep,
     settings: SettingsDep,
-    auth: AuthContextDep,
+    auth: OwnerAuthContextDep,
     page: int = Query(default=1),
     page_size: int = Query(default=20),
     search: str | None = Query(default=None, max_length=120),
@@ -599,7 +601,7 @@ async def list_vehicle_records(
 async def get_vehicle_record(
     vehicle_id: int,
     db: DbSessionDep,
-    auth: AuthContextDep,
+    auth: OwnerAuthContextDep,
 ) -> VehicleRead:
     try:
         return get_vehicle(db=db, auth=auth, vehicle_id=vehicle_id)
@@ -620,7 +622,7 @@ async def update_vehicle_record(
     vehicle_id: int,
     payload: VehicleUpdate,
     db: DbSessionDep,
-    auth: AuthContextDep,
+    auth: OwnerAuthContextDep,
 ) -> VehicleRead:
     try:
         return update_vehicle(db=db, auth=auth, vehicle_id=vehicle_id, payload=payload)
@@ -640,7 +642,7 @@ async def update_vehicle_record(
 async def archive_vehicle_record(
     vehicle_id: int,
     db: DbSessionDep,
-    auth: AuthContextDep,
+    auth: OwnerAuthContextDep,
 ) -> VehicleArchiveResponse:
     try:
         return archive_vehicle(db=db, auth=auth, vehicle_id=vehicle_id)
@@ -808,7 +810,7 @@ async def create_estimate_record(
     payload: EstimateCreate,
     db: DbSessionDep,
     settings: SettingsDep,
-    auth: AuthContextDep,
+    auth: OwnerAuthContextDep,
 ) -> EstimateRead:
     if not settings.openai_api_key:
         raise HTTPException(status_code=503, detail="OPENAI_API_KEY is not configured.")
@@ -839,7 +841,7 @@ async def create_estimate_record(
 @app.get("/api/estimates", response_model=EstimateListResponse)
 async def list_estimate_records(
     db: DbSessionDep,
-    auth: AuthContextDep,
+    auth: OwnerAuthContextDep,
     page: int = Query(default=1),
     page_size: int = Query(default=20),
     status_filter: Annotated[EstimateStatus | None, Query(alias="status")] = None,
@@ -879,7 +881,7 @@ async def list_estimate_records(
 async def get_estimate_record(
     estimate_id: int,
     db: DbSessionDep,
-    auth: AuthContextDep,
+    auth: OwnerAuthContextDep,
 ) -> EstimateRead:
     try:
         return get_estimate(db=db, auth=auth, estimate_id=estimate_id)
@@ -900,7 +902,7 @@ async def update_estimate_record(
     estimate_id: int,
     payload: EstimateUpdate,
     db: DbSessionDep,
-    auth: AuthContextDep,
+    auth: OwnerAuthContextDep,
 ) -> EstimateRead:
     try:
         return update_estimate(db=db, auth=auth, estimate_id=estimate_id, payload=payload)
@@ -924,7 +926,7 @@ async def create_estimate_revision_record(
     payload: EstimateRevisionCreate,
     db: DbSessionDep,
     settings: SettingsDep,
-    auth: AuthContextDep,
+    auth: OwnerAuthContextDep,
 ) -> EstimateRead:
     if not settings.openai_api_key:
         raise HTTPException(status_code=503, detail="OPENAI_API_KEY is not configured.")
@@ -960,7 +962,7 @@ async def send_estimate_record_for_approval(
     estimate_id: int,
     payload: EstimateSendForApprovalRequest,
     db: DbSessionDep,
-    auth: AuthContextDep,
+    auth: OwnerAuthContextDep,
     request_context: Request,
 ) -> EstimateApprovalSendResponse:
     del request_context
@@ -1083,7 +1085,7 @@ async def approval_decline(
 async def estimate_approval_history(
     estimate_id: int,
     db: DbSessionDep,
-    auth: AuthContextDep,
+    auth: OwnerAuthContextDep,
 ) -> EstimateApprovalAuditResponse:
     try:
         return approval_history(db=db, auth=auth, estimate_id=estimate_id)
@@ -1103,7 +1105,7 @@ async def estimate_approval_history(
 async def create_work_order_record(
     estimate_id: int,
     db: DbSessionDep,
-    auth: AuthContextDep,
+    auth: OwnerAuthContextDep,
 ) -> WorkOrderRead:
     try:
         return create_work_order_from_estimate(db=db, auth=auth, estimate_id=estimate_id)
@@ -1127,7 +1129,7 @@ async def create_work_order_record(
 async def list_work_order_records(
     db: DbSessionDep,
     settings: SettingsDep,
-    auth: AuthContextDep,
+    auth: OwnerAuthContextDep,
     page: int = Query(default=1),
     page_size: int = Query(default=20),
     status_filter: Annotated[WorkOrderStatus | None, Query(alias="status")] = None,
@@ -1161,7 +1163,7 @@ async def list_work_order_records(
 async def get_work_order_record(
     work_order_id: int,
     db: DbSessionDep,
-    auth: AuthContextDep,
+    auth: OwnerAuthContextDep,
 ) -> WorkOrderRead:
     try:
         return get_work_order(db=db, auth=auth, work_order_id=work_order_id)
@@ -1182,7 +1184,7 @@ async def update_work_order_record(
     work_order_id: int,
     payload: WorkOrderUpdate,
     db: DbSessionDep,
-    auth: AuthContextDep,
+    auth: OwnerAuthContextDep,
 ) -> WorkOrderRead:
     try:
         return update_work_order(db=db, auth=auth, work_order_id=work_order_id, payload=payload)
@@ -1203,7 +1205,7 @@ async def update_work_order_status_record(
     work_order_id: int,
     payload: WorkOrderStatusUpdate,
     db: DbSessionDep,
-    auth: AuthContextDep,
+    auth: OwnerAuthContextDep,
 ) -> WorkOrderRead:
     try:
         return transition_work_order_status(
@@ -1233,7 +1235,7 @@ async def add_work_order_note_record(
     work_order_id: int,
     payload: WorkOrderNoteCreate,
     db: DbSessionDep,
-    auth: AuthContextDep,
+    auth: OwnerAuthContextDep,
 ) -> WorkOrderRead:
     try:
         return add_work_order_note(db=db, auth=auth, work_order_id=work_order_id, payload=payload)
@@ -1253,7 +1255,7 @@ async def add_work_order_note_record(
 async def list_invoice_records(
     db: DbSessionDep,
     settings: SettingsDep,
-    auth: AuthContextDep,
+    auth: OwnerAuthContextDep,
     page: int = Query(default=1),
     page_size: int = Query(default=20),
     status_filter: Annotated[InvoiceStatus | None, Query(alias="status")] = None,
@@ -1283,7 +1285,7 @@ async def list_invoice_records(
 async def get_invoice_record(
     invoice_id: int,
     db: DbSessionDep,
-    auth: AuthContextDep,
+    auth: OwnerAuthContextDep,
 ) -> InvoiceRead:
     try:
         return get_invoice(db=db, auth=auth, invoice_id=invoice_id)
@@ -1305,7 +1307,7 @@ async def issue_invoice_record(
     payload: InvoiceIssueRequest,
     db: DbSessionDep,
     settings: SettingsDep,
-    auth: AuthContextDep,
+    auth: OwnerAuthContextDep,
 ) -> InvoiceRead:
     try:
         return issue_invoice(
@@ -1332,7 +1334,7 @@ async def get_invoice_html(
     invoice_id: int,
     db: DbSessionDep,
     settings: SettingsDep,
-    auth: AuthContextDep,
+    auth: OwnerAuthContextDep,
 ) -> Response:
     try:
         invoice = get_invoice(db=db, auth=auth, invoice_id=invoice_id)
@@ -1357,7 +1359,7 @@ async def get_invoice_pdf(
     invoice_id: int,
     db: DbSessionDep,
     settings: SettingsDep,
-    auth: AuthContextDep,
+    auth: OwnerAuthContextDep,
 ) -> Response:
     try:
         invoice = get_invoice(db=db, auth=auth, invoice_id=invoice_id)
@@ -1381,7 +1383,7 @@ async def record_invoice_payment(
     invoice_id: int,
     payload: InvoicePaymentCreate,
     db: DbSessionDep,
-    auth: AuthContextDep,
+    auth: OwnerAuthContextDep,
 ) -> InvoiceRead:
     try:
         return record_payment(db=db, auth=auth, invoice_id=invoice_id, payload=payload)
@@ -1403,7 +1405,7 @@ async def void_invoice_payment(
     payment_id: int,
     payload: InvoicePaymentVoidRequest,
     db: DbSessionDep,
-    auth: AuthContextDep,
+    auth: OwnerAuthContextDep,
 ) -> InvoiceRead:
     try:
         return void_payment(
@@ -1430,7 +1432,7 @@ async def push_invoice_to_square_record(
     invoice_id: int,
     db: DbSessionDep,
     settings: SettingsDep,
-    auth: AuthContextDep,
+    auth: OwnerAuthContextDep,
 ) -> InvoiceRead:
     if not settings.square_configured:
         raise HTTPException(
@@ -1472,7 +1474,7 @@ async def refresh_square_invoice_record(
     invoice_id: int,
     db: DbSessionDep,
     settings: SettingsDep,
-    auth: AuthContextDep,
+    auth: OwnerAuthContextDep,
 ) -> InvoiceRead:
     if not settings.square_configured:
         raise HTTPException(
@@ -1510,7 +1512,7 @@ async def refresh_square_invoice_record(
 async def list_notification_records(
     db: DbSessionDep,
     settings: SettingsDep,
-    auth: AuthContextDep,
+    auth: OwnerAuthContextDep,
     page: int = Query(default=1),
     page_size: int = Query(default=20),
     unread: bool = Query(default=False),
@@ -1538,7 +1540,7 @@ async def list_notification_records(
 async def mark_notification_read_record(
     notification_id: int,
     db: DbSessionDep,
-    auth: AuthContextDep,
+    auth: OwnerAuthContextDep,
 ) -> NotificationMarkReadResponse:
     try:
         return mark_notification_read(db=db, auth=auth, notification_id=notification_id)
@@ -1557,7 +1559,7 @@ async def mark_notification_read_record(
 @app.post("/api/notifications/read-all", response_model=NotificationMarkReadResponse)
 async def mark_all_notifications_read_record(
     db: DbSessionDep,
-    auth: AuthContextDep,
+    auth: OwnerAuthContextDep,
 ) -> NotificationMarkReadResponse:
     try:
         return mark_all_notifications_read(db=db, auth=auth)
@@ -1574,7 +1576,7 @@ async def mark_all_notifications_read_record(
 @app.get("/api/dashboard/summary", response_model=DashboardSummaryResponse)
 async def get_dashboard_summary_record(
     db: DbSessionDep,
-    auth: AuthContextDep,
+    auth: OwnerAuthContextDep,
     date_from: Annotated[datetime | None, Query()] = None,
     date_to: Annotated[datetime | None, Query()] = None,
 ) -> DashboardSummaryResponse:
