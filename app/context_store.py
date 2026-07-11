@@ -7,7 +7,7 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy import Select, func, select
 from sqlalchemy.orm import Session
 
-from app.auth import AuthContext, ensure_utc
+from app.auth import AuthContext, effective_owner_id, ensure_utc
 from app.config import Settings
 from app.db_models import ContextEntry
 from app.models import ContextDeleteResponse, ContextEntryRead, ContextListResponse, ContextScope
@@ -90,7 +90,7 @@ def _base_query(
 ) -> Select[tuple[ContextEntry]]:
     return (
         select(ContextEntry)
-        .where(ContextEntry.user_id == auth.user.id)
+        .where(ContextEntry.user_id == effective_owner_id(auth))
         .where(ContextEntry.project_key == normalized_scope.project_key)
         .where(ContextEntry.scope_type == normalized_scope.scope.value)
         .where(ContextEntry.scope_key == normalized_scope.scope_key)
@@ -190,7 +190,7 @@ def upsert_entry(
     count = db.scalar(
         select(func.count())
         .select_from(ContextEntry)
-        .where(ContextEntry.user_id == auth.user.id)
+        .where(ContextEntry.user_id == effective_owner_id(auth))
         .where(ContextEntry.scope_type == normalized_scope.scope.value)
         .where(ContextEntry.scope_key == normalized_scope.scope_key)
     )
@@ -200,7 +200,7 @@ def upsert_entry(
         )
 
     entry = ContextEntry(
-        user_id=auth.user.id,
+        user_id=effective_owner_id(auth),
         auth_session_id=normalized_scope.auth_session_id,
         project_key=normalized_scope.project_key,
         scope_type=normalized_scope.scope.value,

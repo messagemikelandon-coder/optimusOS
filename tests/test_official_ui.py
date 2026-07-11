@@ -118,8 +118,8 @@ def test_overview_dashboard_and_approval_queue_markup() -> None:
 
     assert 'data-view-panel="approval-queue"' in html
     assert 'data-view="approval-queue"' in html
-    assert html.count("nav-item is-disabled") == 8
-    assert html.count("nav-soon-badge") == 8
+    assert html.count("nav-item is-disabled") == 7
+    assert html.count("nav-soon-badge") == 7
 
     assert "async function loadDashboardSummary" in javascript
     assert "/api/dashboard/summary" in javascript

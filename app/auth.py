@@ -229,3 +229,60 @@ def require_authenticated_user(
     auth: Annotated[AuthContext, Depends(get_current_auth_context)],
 ) -> UserAccount:
     return auth.user
+
+
+def effective_owner_id(auth: AuthContext) -> int:
+    """The shop-owning user id that business data should be scoped to.
+
+    Owners scope to themselves. Technicians scope to their shop owner, so an
+    owner and their technicians share one pool of customers/estimates/work
+    orders/etc. Every store module must use this instead of `auth.user.id`
+    for data scoping (actor/audit fields like `created_by_user_id` still use
+    `auth.user.id` directly since those record who acted, not whose shop).
+    """
+    if auth.user.role == "owner":
+        return auth.user.id
+    if auth.user.shop_owner_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="This account is not associated with a shop owner.",
+        )
+    return auth.user.shop_owner_id
+
+
+def require_role(auth: AuthContext, *allowed: str) -> None:
+    if auth.user.role not in allowed:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Your role does not have access to this action.",
+        )
+
+
+def require_owner_context(
+    auth: Annotated[AuthContext, Depends(get_current_auth_context)],
+) -> AuthContext:
+    """Route dependency for endpoints that stay owner-only.
+
+    Most business routes are still owner-only — Diagnostics/Inspections and
+    the rest of the Phase 5.6 module set don't exist yet. Technicians (as of
+    sub-phase 2) can log in, provision nowhere themselves, clock in/out, and
+    view/update only their own assigned work orders via
+    `require_owner_or_technician_context` below plus store-level scoping in
+    `work_order_store.py`.
+    """
+    require_role(auth, "owner")
+    return auth
+
+
+def require_owner_or_technician_context(
+    auth: Annotated[AuthContext, Depends(get_current_auth_context)],
+) -> AuthContext:
+    """Route dependency for the small set of routes both roles can reach.
+
+    Does not by itself scope *which* rows a technician can see — the store
+    layer (e.g. `work_order_store._work_order_query`) still filters a
+    technician down to their own assigned records via `effective_owner_id`
+    plus an explicit `assigned_technician_id` check.
+    """
+    require_role(auth, "owner", "technician")
+    return auth

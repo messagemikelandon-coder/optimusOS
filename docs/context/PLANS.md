@@ -4,7 +4,7 @@ Purpose: durable phase checklist for OptimusOS from the verified Estimate Approv
 Information owner: repository maintainers (roadmap authored 2026-07-07).
 Read when: starting any new slice, or checking overall project sequencing.
 Update when: a phase's acceptance criteria are met, or the sequence changes.
-Last verified date: 2026-07-08.
+Last verified date: 2026-07-11 (Phase 5.6 sub-phases 0, 1 & 2 completed and reviewed same day).
 Relevant sources: `docs/context/CURRENT_STATE.md`, `docs/context/KNOWN_ISSUES.md`, `docs/context/SESSION_HANDOFF.md`, `AGENTS.md`, `CLAUDE.md`.
 
 ## Standing rules (apply to every phase below)
@@ -195,6 +195,44 @@ Owner-approved 2026-07-09. Implemented by **Claude** on branch `agent/claude/not
 - [x] **Deployed to the staging droplet and verified externally 2026-07-10**: `git pull --ff-only origin main` (clean fast-forward), `scripts/optimusctl.sh update` (rebuild+restart, port binding held at `0.0.0.0:80`), `scripts/optimusctl.sh migrate` (alembic 009→010 applied, confirmed via `alembic current`). External curl checks from outside the droplet confirmed `/health` now reports `square_configured`/`square_environment`, the served `app.js` contains all three new feature markers, and `index.html` contains the Notifications tab. Staging's own `.env` has no Square credentials, so `square_configured: false` there — expected; Square is proven working only against the local dev stack so far.
 - [ ] Optional: add Square sandbox credentials to the staging droplet's `.env` + restart if the owner wants Square live on staging too (separate step, not yet done).
 - Out of scope: Square live/production, webhooks, email/SMS channels, background jobs.
+
+### Phase 5.6 — Operations Forms Modules & Multi-Role Authorization — IN PROGRESS (sub-phases 0, 1 & 2 complete, uncommitted)
+
+Owner-directed 2026-07-11, planned via `/plan` on branch `agent/claude/landing-page-redesign` (same branch as the Overview dashboard slice above). Source of truth for every module's fields: `/home/dejake/Downloads/Landon_Motor_Works_Operations_Forms.xlsx` (one sheet per module). Replaces the 8 disabled "Coming soon" nav stubs shipped with the Overview dashboard (Service Desk, Diagnostics, Inspections, Scheduling, Technicians, Parts, Vendors, Reports) with real, working modules, one phase at a time — each phase gets its own branch-local commit, gates, and independent review before the next starts, same discipline as Phases 1–4 above.
+
+Owner decisions locked in before planning:
+- Technicians get **real logins** (not just data records) — this requires OptimusOS's first genuine multi-role permission system, built first as its own sub-phase since every existing store module currently scopes data by `owner_user_id == auth.user.id` under a strict single-role isolation model.
+- Vendors/PurchaseOrders normalized into two related tables (not the spreadsheet's flat one-row-per-PO-with-repeated-vendor-info layout).
+- Full roadmap planned now, dependency-ordered; implemented one sub-phase at a time.
+
+Also bundled into this same branch, already done: removed "Talk to Optimus" from the sidebar/mobile nav (chat stays reachable via the Overview "Direct command" panel's quick-prompts, which already `navigate("chat")` — no functionality lost).
+
+**Sub-phases 0, 1, and 2 are implemented, live-verified, and independently + security reviewed (all passed) as of 2026-07-11 — full detail in `docs/context/CURRENT_STATE.md`'s "Phase 5.6 Sub-phase 0 & 1" and "Phase 5.6 Sub-phase 2" sections. Uncommitted, pending owner approval, same as the rest of this branch.**
+
+**Sub-phase order (dependency-driven):**
+
+1. **Multi-role authorization foundation — DONE 2026-07-11.** New migration adds `UserAccount.shop_owner_id` (nullable self-FK, `NULL` for owners, set to the shop owner's id for technicians) plus a `role IN ('owner','technician')` check constraint. `app/auth.py::effective_owner_id(auth)` (returns `auth.user.id` for an owner, `auth.user.shop_owner_id` for a technician) is now the single scoping call in every store module (`customer_store.py`, `vehicle_store.py`, `estimate_store.py`, `work_order_store.py`, `invoice_store.py`, `payment_store.py`, `notification_store.py`, `customer_history_store.py`, `dashboard_store.py`, `context_store.py`; `square_store.py` needed no direct edit since it inherits scoping transitively through `invoice_store.py`). New `require_role(auth, *allowed)` and `require_owner_context(auth)` route-level gates, applied to all 38 business routes in `app/main.py`. Technician permission boundary for v1 is enforced as fully owner-gated for now (technicians can log in but every business route 403s) since the "own assigned work orders" carve-out needs `WorkOrder.assigned_technician_id`, which is sub-phase 2 scope — see sub-phase 2 below. **Security review pass completed 2026-07-11: PASS, no blocking findings** — full detail in `docs/context/CURRENT_STATE.md`. One hardening item deferred to sub-phase 2's provisioning endpoint (see below), tracked in `docs/context/KNOWN_ISSUES.md`.
+2. **Technicians — DONE 2026-07-11.** `app/technician_store.py`, new `Technician` + `TechnicianTimeEntry` tables (the latter with a DB-level partial unique index enforcing at most one open clock-in per technician), new `WorkOrder.assigned_technician_id` + `WorkOrder.is_comeback` columns. Owner-only CRUD + login provisioning (`POST /api/technicians/{id}/provision-login`, which re-validates the sub-phase-1-mandated `shop_owner_id`-resolves-to-a-real-owner check as defense-in-depth); technician self-service clock-in/out (`POST /api/technicians/me/clock-in|out`) and own-profile view (`GET /api/technicians/me`, deliberately excludes the owner-only `hourly_cost` wage field via a dedicated `TechnicianSelfRead` model — a security-review finding, fixed same-day). New `#view-technicians` (list/detail/form, same pattern as `#view-customers` — this sub-phase is the template CRUD pattern every later sub-phase below reuses without re-describing it) plus `#view-my-day` for technician-role sessions, with role-based nav visibility (`data-owner-only`/`data-technician-only` + `applyRoleNavVisibility()`) and role-based post-login/reload routing. Work orders carved open for technicians (own-assigned-only): `GET /api/work-orders`, `GET /api/work-orders/{id}`, `POST /api/work-orders/{id}/status`, `POST /api/work-orders/{id}/notes` now use a new `OwnerOrTechnicianAuthContextDep`, scoped in `work_order_store._work_order_query(db, auth)` via the technician's own linked `Technician.id`; a new owner-only `POST /api/work-orders/{id}/assign-technician` route lets the owner assign/unassign. **Independent + security review both PASS 2026-07-11**, two real findings fixed same-day (see `docs/context/CURRENT_STATE.md`'s "Phase 5.6 Sub-phase 2" section for full detail): a technician losing their My Day landing on page reload (frontend routing bug), and `hourly_cost` leaking into the technician's own `/api/technicians/me` response (now excluded).
+3. **Parts Inventory + Vendors** (paired). New `Vendor`, `PurchaseOrder` (normalized, per the owner's decision above), `Part`, `PartAllocation` tables. `Part.unit_cost` is the missing wholesale-cost field — once real, `app/dashboard_store.py` gets a follow-up to compute real COGS and finally light up **Gross Profit**, **Gross Profit Margin**, and progress toward **Net Profit** (still needs a general expense concept for full Net Profit; vendor payments are a natural first real expense category). The dashboard follow-up itself is flagged as its own small task after this sub-phase ships, not bundled into it.
+4. **Service Desk** (intake). New `ServiceDeskIntake` table with a "convert to estimate" action that pre-fills the existing `create_estimate` flow. Owner-only for v1 (no "service advisor" role exists yet).
+5. **Scheduling** (appointments). New `Appointment` table plus a real server-side technician double-booking conflict check (not just a stored field).
+6. **Diagnostics + Inspections** (paired). New `DiagnosticRecord` table (reuses the existing `Confidence` enum already used by the estimator) and `Inspection` + `InspectionItem` tables (one inspection visit, many checklist line items — the spreadsheet's flat rows are really this child table). Writable by the assigned technician on their own assigned work order.
+7. **Reports.** New `SavedReportRequest` table — per the workbook's own stated purpose, a lightweight recurring-report request/tracking log, not a BI engine. Owner-only. Built last since it conceptually reports on everything above it.
+
+**Required tests per sub-phase:** full CRUD + owner isolation (same pattern as every existing slice); from sub-phase 1 onward, also a cross-*role* isolation sweep (technician session gets `403`/empty on every owner-only route; sees only their own assigned work). Sub-phase 1 additionally reruns the *entire* existing test suite after the mechanical `effective_owner_id` swap, since a missed call site would silently regress an existing cross-user isolation guarantee.
+
+**Verification per sub-phase:** same gate sequence as every slice on this branch — `ruff format`/`ruff check .`, `pyright`, `pytest -q`, `node --check app/static/app.js`, then a live Playwright check against the rebuilt `backend` container (the CSP-enforcing surface) under a synthetic seeded account, deleted afterward. No live OpenAI calls needed for any of this.
+
+**Acceptance (per sub-phase):** backend + frontend + tests + non-billable live proof + docs updated + independent review passed, before the next sub-phase starts — sub-phase 1 additionally requires a security review pass. Nothing committed, pushed, or deployed without separate explicit owner approval, same as every other slice in this roadmap.
+
+- [x] Sub-phase 0 — remove "Talk to Optimus" from nav. (2026-07-11, uncommitted)
+- [x] Sub-phase 1 — multi-role authorization foundation + security review. (2026-07-11, uncommitted; security review PASS)
+- [x] Sub-phase 2 — Technicians. (2026-07-11, uncommitted; independent + security review PASS, 2 findings fixed same-day)
+- [ ] Sub-phase 3 — Parts Inventory + Vendors (+ Gross Profit/Net Profit dashboard follow-up).
+- [ ] Sub-phase 4 — Service Desk.
+- [ ] Sub-phase 5 — Scheduling.
+- [ ] Sub-phase 6 — Diagnostics + Inspections.
+- [ ] Sub-phase 7 — Reports.
 
 ### Phase 6 — Production Readiness
 - Threat model (approval links, session cookies, owner auth, public endpoints, PDF generation).

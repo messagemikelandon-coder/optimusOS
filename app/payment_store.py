@@ -3,7 +3,7 @@ from __future__ import annotations
 from sqlalchemy import Select, select
 from sqlalchemy.orm import Session
 
-from app.auth import AuthContext, ensure_utc
+from app.auth import AuthContext, effective_owner_id, ensure_utc
 from app.db_models import Invoice, InvoicePayment
 from app.invoice_store import (
     InvoiceNotFoundError,
@@ -42,7 +42,7 @@ class PaymentNotFoundError(InvoiceStoreError):
 
 def _payment_query(invoice_id: int, auth: AuthContext) -> Select[tuple[InvoicePayment]]:
     return select(InvoicePayment).where(
-        InvoicePayment.owner_user_id == auth.user.id,
+        InvoicePayment.owner_user_id == effective_owner_id(auth),
         InvoicePayment.invoice_id == invoice_id,
     )
 
@@ -77,7 +77,7 @@ def record_payment(
 
     recorded_at = ensure_utc(payload.recorded_at) if payload.recorded_at else now
     payment = InvoicePayment(
-        owner_user_id=auth.user.id,
+        owner_user_id=effective_owner_id(auth),
         invoice_id=invoice.id,
         amount=amount,
         applies_to=payload.applies_to.value,
@@ -154,7 +154,7 @@ def void_payment(
     now = now_utc()
     reversal_amount = -_money(payment.amount)
     reversal = InvoicePayment(
-        owner_user_id=auth.user.id,
+        owner_user_id=effective_owner_id(auth),
         invoice_id=invoice.id,
         amount=reversal_amount,
         applies_to=payment.applies_to,

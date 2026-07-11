@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
-from app.auth import AuthContext, ensure_utc
+from app.auth import AuthContext, effective_owner_id, ensure_utc
 from app.db_models import (
     Estimate,
     EstimateApprovalRequest,
@@ -72,7 +72,7 @@ def _period_aggregate(
             func.coalesce(func.sum(Invoice.fees_total), 0.0),
             func.count(Invoice.id),
         ).where(
-            Invoice.owner_user_id == auth.user.id,
+            Invoice.owner_user_id == effective_owner_id(auth),
             Invoice.status.in_([s.value for s in _ISSUED_INVOICE_STATUSES]),
             Invoice.issued_at.is_not(None),
             Invoice.issued_at >= date_from,
@@ -116,7 +116,7 @@ def _revenue_trend(
             Invoice.labor_total,
             Invoice.parts_total,
         ).where(
-            Invoice.owner_user_id == auth.user.id,
+            Invoice.owner_user_id == effective_owner_id(auth),
             Invoice.status.in_([s.value for s in _ISSUED_INVOICE_STATUSES]),
             Invoice.issued_at.is_not(None),
             Invoice.issued_at >= date_from,
@@ -148,7 +148,7 @@ def _work_order_trend(
 ) -> list[DashboardTrendPoint]:
     opened_rows = db.execute(
         select(WorkOrder.created_at).where(
-            WorkOrder.owner_user_id == auth.user.id,
+            WorkOrder.owner_user_id == effective_owner_id(auth),
             WorkOrder.created_at >= date_from,
             WorkOrder.created_at <= date_to,
         )
@@ -157,7 +157,7 @@ def _work_order_trend(
         select(WorkOrderStatusEvent.created_at)
         .join(WorkOrder, WorkOrder.id == WorkOrderStatusEvent.work_order_id)
         .where(
-            WorkOrder.owner_user_id == auth.user.id,
+            WorkOrder.owner_user_id == effective_owner_id(auth),
             WorkOrderStatusEvent.to_status == WorkOrderStatus.COMPLETED.value,
             WorkOrderStatusEvent.created_at >= date_from,
             WorkOrderStatusEvent.created_at <= date_to,
@@ -188,7 +188,7 @@ def _approval_conversion_rate(
     row = db.execute(
         select(Estimate.status, func.count())
         .where(
-            Estimate.owner_user_id == auth.user.id,
+            Estimate.owner_user_id == effective_owner_id(auth),
             Estimate.status.in_([EstimateStatus.APPROVED.value, EstimateStatus.DECLINED.value]),
             Estimate.updated_at >= date_from,
             Estimate.updated_at <= date_to,
@@ -222,7 +222,7 @@ def _accounts_receivable(
             select(Invoice)
             .options(selectinload(Invoice.payments), selectinload(Invoice.schedule))
             .where(
-                Invoice.owner_user_id == auth.user.id,
+                Invoice.owner_user_id == effective_owner_id(auth),
                 Invoice.status.in_([s.value for s in _OPEN_INVOICE_STATUSES]),
             )
         )
@@ -281,7 +281,7 @@ def _accounts_receivable(
 def _current_operations(db: Session, auth: AuthContext) -> DashboardCurrentOperations:
     rows = db.execute(
         select(WorkOrder.status, func.count())
-        .where(WorkOrder.owner_user_id == auth.user.id)
+        .where(WorkOrder.owner_user_id == effective_owner_id(auth))
         .group_by(WorkOrder.status)
     ).all()
     counts = {status: count for status, count in rows}
@@ -295,7 +295,7 @@ def _current_operations(db: Session, auth: AuthContext) -> DashboardCurrentOpera
             select(func.count())
             .select_from(Estimate)
             .where(
-                Estimate.owner_user_id == auth.user.id,
+                Estimate.owner_user_id == effective_owner_id(auth),
                 Estimate.status == EstimateStatus.AWAITING_APPROVAL.value,
             )
         )
@@ -307,7 +307,7 @@ def _current_operations(db: Session, auth: AuthContext) -> DashboardCurrentOpera
             .select_from(WorkOrder)
             .outerjoin(Invoice, Invoice.work_order_id == WorkOrder.id)
             .where(
-                WorkOrder.owner_user_id == auth.user.id,
+                WorkOrder.owner_user_id == effective_owner_id(auth),
                 WorkOrder.status == WorkOrderStatus.COMPLETED.value,
                 Invoice.id.is_(None),
             )
@@ -331,7 +331,7 @@ def _current_operations(db: Session, auth: AuthContext) -> DashboardCurrentOpera
 def _work_orders_by_status(db: Session, auth: AuthContext) -> list[DashboardWorkOrderStatusCount]:
     rows = db.execute(
         select(WorkOrder.status, func.count())
-        .where(WorkOrder.owner_user_id == auth.user.id)
+        .where(WorkOrder.owner_user_id == effective_owner_id(auth))
         .group_by(WorkOrder.status)
     ).all()
     counts = {status: count for status, count in rows}
@@ -362,7 +362,7 @@ def _stalled_work_order_insights(
         select(WorkOrder, entered_at_subquery.c.entered_at)
         .join(entered_at_subquery, entered_at_subquery.c.work_order_id == WorkOrder.id)
         .where(
-            WorkOrder.owner_user_id == auth.user.id,
+            WorkOrder.owner_user_id == effective_owner_id(auth),
             WorkOrder.status == WorkOrderStatus.WAITING_FOR_PARTS.value,
             entered_at_subquery.c.entered_at <= threshold,
         )
@@ -406,7 +406,7 @@ def _stalled_approval_insights(
         select(Estimate, sent_at_subquery.c.sent_at)
         .join(sent_at_subquery, sent_at_subquery.c.estimate_id == Estimate.id)
         .where(
-            Estimate.owner_user_id == auth.user.id,
+            Estimate.owner_user_id == effective_owner_id(auth),
             Estimate.status == EstimateStatus.AWAITING_APPROVAL.value,
             sent_at_subquery.c.sent_at <= threshold,
         )

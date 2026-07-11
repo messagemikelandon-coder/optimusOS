@@ -41,6 +41,20 @@ const state = {
     archivedOnly: false,
     customerFilterId: null,
   },
+  technicians: {
+    items: [],
+    selectedTechnicianId: null,
+    selectedTechnician: null,
+    page: 1,
+    pageSize: 20,
+    total: 0,
+    hasMore: false,
+    search: "",
+    archivedOnly: false,
+  },
+  myDay: {
+    profile: null,
+  },
   estimates: {
     selectedEstimateId: null,
     selectedEstimate: null,
@@ -109,6 +123,8 @@ const viewMeta = {
   dashboard: { eyebrow: "Operations", title: "Overview" },
   customers: { eyebrow: "Records", title: "Customers" },
   vehicles: { eyebrow: "Fleet", title: "Vehicles" },
+  technicians: { eyebrow: "Staff", title: "Technicians" },
+  "my-day": { eyebrow: "Technician workspace", title: "My Day" },
   "work-orders": { eyebrow: "Repair execution", title: "Work orders" },
   "approval-queue": { eyebrow: "Customer decisions", title: "Approval Queue" },
   invoices: { eyebrow: "Customer billing", title: "Invoices" },
@@ -171,10 +187,25 @@ function apiError(response, data, fallback) {
   return new Error(`${fallback} (HTTP ${response.status})`);
 }
 
+function isTechnicianSession() {
+  return state.auth.authenticated && state.auth.user?.role === "technician";
+}
+
+function applyRoleNavVisibility() {
+  const technician = isTechnicianSession();
+  $$("[data-owner-only]").forEach((el) => {
+    el.hidden = technician;
+  });
+  $$("[data-technician-only]").forEach((el) => {
+    el.hidden = !technician;
+  });
+}
+
 function setAuthState(authenticated, user = null, expiresAt = null) {
   const wasAuthenticated = state.auth.authenticated;
   state.auth = { authenticated, user, expiresAt };
-  if (authenticated && !wasAuthenticated) void refreshNotificationsBadge();
+  applyRoleNavVisibility();
+  if (authenticated && !wasAuthenticated && user?.role === "owner") void refreshNotificationsBadge();
   $("topbar-login-link").hidden = authenticated;
   $("topbar-logout").hidden = !authenticated;
   $("system-login-link").hidden = authenticated;
@@ -245,10 +276,14 @@ async function handleLoginSubmit(event) {
     if (!response.ok || !data) throw apiError(response, data, "Sign-in failed");
     setAuthState(true, data.user, data.expires_at);
     $("login-password").value = "";
-    void loadCustomerOptions();
-    void restoreSelectionsFromContext();
     showToast("Signed in.", "success");
-    navigate("dashboard");
+    if (data.user.role === "technician") {
+      navigate("my-day");
+    } else {
+      void loadCustomerOptions();
+      void restoreSelectionsFromContext();
+      navigate("dashboard");
+    }
   } catch (error) {
     setAuthState(false);
     showToast(`Sign-in failed: ${error.message}`, "error");
@@ -314,11 +349,20 @@ function navigate(view) {
   if (view === "dashboard" && state.auth.authenticated) void loadDashboardSummary();
   if (view === "customers" && state.auth.authenticated) void loadCustomers();
   if (view === "vehicles" && state.auth.authenticated) void loadVehicles();
-  if (view === "work-orders" && state.auth.authenticated) void loadWorkOrders();
+  if (view === "work-orders" && state.auth.authenticated) {
+    void loadWorkOrders();
+    if (!isTechnicianSession()) {
+      void loadTechnicianOptions().catch(() => {
+        // Owner-only convenience dropdown; a failure here shouldn't block work-order browsing.
+      });
+    }
+  }
   if (view === "approval-queue" && state.auth.authenticated) void loadApprovalQueue();
   if (view === "invoices" && state.auth.authenticated) void loadInvoices();
   if (view === "notifications" && state.auth.authenticated) void loadNotifications();
   if (view === "square" && state.auth.authenticated) void loadSquareDashboard();
+  if (view === "technicians" && state.auth.authenticated) void loadTechnicians();
+  if (view === "my-day" && state.auth.authenticated) void loadMyDay();
   if (view === "chat") window.setTimeout(() => $("chat-message").focus(), 180);
   if (view === "login") window.setTimeout(() => $("login-username").focus(), 180);
 }
@@ -1403,6 +1447,396 @@ function initializeCustomers() {
   renderCustomerVehiclePreview();
 }
 
+function technicianPayloadFromForm() {
+  return {
+    first_name: $("technician-first-name").value.trim() || null,
+    last_name: $("technician-last-name").value.trim() || null,
+    job_title: $("technician-job-title").value.trim() || null,
+    email: $("technician-email").value.trim() || null,
+    phone: $("technician-phone").value.trim() || null,
+    employment_status: $("technician-employment-status").value.trim() || null,
+    hire_date: $("technician-hire-date").value || null,
+    hourly_cost: $("technician-hourly-cost").value ? Number($("technician-hourly-cost").value) : null,
+    certifications: $("technician-certifications").value.trim() || null,
+    certification_expiration: $("technician-certification-expiration").value || null,
+    specialties: $("technician-specialties").value.trim() || null,
+    driver_license_valid: $("technician-driver-license-valid").checked,
+    insurance_verified: $("technician-insurance-verified").checked,
+    normal_availability: $("technician-normal-availability").value.trim() || null,
+    safety_notes: $("technician-safety-notes").value.trim() || null,
+  };
+}
+
+function populateTechnicianForm(technician = null) {
+  $("technician-id").value = technician?.id ?? "";
+  $("technician-first-name").value = technician?.first_name ?? "";
+  $("technician-last-name").value = technician?.last_name ?? "";
+  $("technician-job-title").value = technician?.job_title ?? "";
+  $("technician-email").value = technician?.email ?? "";
+  $("technician-phone").value = technician?.phone ?? "";
+  $("technician-employment-status").value = technician?.employment_status ?? "";
+  $("technician-hire-date").value = technician?.hire_date ?? "";
+  $("technician-hourly-cost").value = technician?.hourly_cost ?? "";
+  $("technician-certifications").value = technician?.certifications ?? "";
+  $("technician-certification-expiration").value = technician?.certification_expiration ?? "";
+  $("technician-specialties").value = technician?.specialties ?? "";
+  $("technician-driver-license-valid").checked = Boolean(technician?.driver_license_valid);
+  $("technician-insurance-verified").checked = Boolean(technician?.insurance_verified);
+  $("technician-normal-availability").value = technician?.normal_availability ?? "";
+  $("technician-safety-notes").value = technician?.safety_notes ?? "";
+  $("technician-form-title").textContent = technician ? "Edit technician" : "Create technician";
+  $("technician-form-mode").textContent = technician ? "EDIT" : "CREATE";
+  $("technician-archive").hidden = !technician;
+  renderTechnicianLoginPanel(technician);
+}
+
+function technicianSummaryLine(technician) {
+  return [technician.job_title, technician.email, technician.phone].filter(Boolean).join(" · ");
+}
+
+function renderTechnicianLoginPanel(technician) {
+  const status = $("technician-login-status");
+  const form = $("technician-login-form");
+  if (!technician) {
+    status.innerHTML = "<p>Select a technician to manage their login.</p>";
+    form.hidden = true;
+    return;
+  }
+  if (technician.has_login) {
+    status.innerHTML = `<div class="empty-card"><strong>Login active</strong><p>${escapeHtml(technician.display_name)} already has a login. Logins cannot be reissued once created.</p></div>`;
+    form.hidden = true;
+    return;
+  }
+  status.innerHTML = "";
+  form.hidden = false;
+  $("technician-login-username").value = "";
+  $("technician-login-password").value = "";
+}
+
+function renderTechnicianDetail(technician = null) {
+  const detail = $("technician-detail");
+  if (!technician) {
+    detail.innerHTML = "<p>Select a technician from the list or create a new record.</p>";
+    $("technician-archive").hidden = true;
+    return;
+  }
+  detail.innerHTML = `
+    <div class="customer-detail-header">
+      <strong>${escapeHtml(technician.display_name)}</strong>
+      <span>${technician.is_archived ? "Archived" : "Active"}</span>
+    </div>
+    <p>${escapeHtml(technicianSummaryLine(technician) || "No details provided.")}</p>
+    <div class="customer-detail-grid">
+      <div><span>Login</span><strong>${technician.has_login ? "Provisioned" : "Not provisioned"}</strong></div>
+      <div><span>Clocked in</span><strong>${technician.is_clocked_in ? "Yes" : "No"}</strong></div>
+      <div><span>Hourly cost</span><strong>${technician.hourly_cost != null ? `$${technician.hourly_cost.toFixed(2)}` : "Not set"}</strong></div>
+      <div><span>Comebacks</span><strong>${technician.comeback_count}</strong></div>
+    </div>
+    <div class="customer-detail-notes">
+      <span>Certifications</span>
+      <p>${escapeHtml(technician.certifications || "None recorded.")}</p>
+    </div>
+    <div class="customer-detail-notes">
+      <span>Safety / training notes</span>
+      <p>${escapeHtml(technician.safety_notes || "No notes recorded.")}</p>
+    </div>`;
+  $("technician-archive").hidden = false;
+}
+
+function renderTechniciansList() {
+  const container = $("technicians-list");
+  if (!state.technicians.items.length) {
+    const emptyMessage = state.technicians.search || state.technicians.archivedOnly
+      ? "No technicians matched this filter."
+      : "No technicians yet. Create the first technician record.";
+    container.innerHTML = `<div class="empty-card"><strong>No results</strong><p>${escapeHtml(emptyMessage)}</p></div>`;
+  } else {
+    container.innerHTML = state.technicians.items.map((technician) => `
+      <button type="button" class="customer-list-item${state.technicians.selectedTechnicianId === technician.id ? " is-active" : ""}" data-technician-id="${technician.id}">
+        <strong>${escapeHtml(technician.display_name)}</strong>
+        <span>${escapeHtml(technicianSummaryLine(technician) || "No details")}</span>
+      </button>`).join("");
+    $$("[data-technician-id]", container).forEach((button) => {
+      button.addEventListener("click", () => {
+        void selectTechnician(Number(button.dataset.technicianId));
+      });
+    });
+  }
+  $("technicians-page-status").textContent = `Page ${state.technicians.page} · ${state.technicians.total} total`;
+  $("technicians-prev").disabled = state.technicians.page <= 1;
+  $("technicians-next").disabled = !state.technicians.hasMore;
+}
+
+async function selectTechnician(technicianId) {
+  try {
+    const response = await apiFetch(`/api/technicians/${technicianId}`);
+    const data = await readApiPayload(response);
+    if (!response.ok || !data) throw apiError(response, data, "Technician lookup failed");
+    state.technicians.selectedTechnicianId = data.id;
+    state.technicians.selectedTechnician = data;
+    renderTechnicianDetail(data);
+    populateTechnicianForm(data);
+    renderTechniciansList();
+    return data;
+  } catch (error) {
+    showToast(`Technician lookup failed: ${error.message}`, "error");
+    return null;
+  }
+}
+
+async function loadTechnicians() {
+  if (!await requireAuthenticated("login")) return;
+  const list = $("technicians-list");
+  list.innerHTML = '<div class="loading-panel"><span class="loading-spinner"></span><div><strong>Loading technicians</strong><br><small>Reading PostgreSQL technician records.</small></div></div>';
+  const searchParams = new URLSearchParams({
+    page: String(state.technicians.page),
+    page_size: String(state.technicians.pageSize),
+    archived: String(state.technicians.archivedOnly),
+  });
+  if (state.technicians.search.trim()) searchParams.set("search", state.technicians.search.trim());
+  try {
+    const response = await apiFetch(`/api/technicians?${searchParams.toString()}`);
+    const data = await readApiPayload(response);
+    if (!response.ok || !data) throw apiError(response, data, "Technician list failed");
+    state.technicians.items = data.items;
+    state.technicians.total = data.total;
+    state.technicians.hasMore = data.has_more;
+    renderTechniciansList();
+    if (state.technicians.selectedTechnicianId) {
+      const selected = data.items.find((item) => item.id === state.technicians.selectedTechnicianId);
+      if (selected) {
+        state.technicians.selectedTechnician = selected;
+        renderTechnicianDetail(selected);
+        populateTechnicianForm(selected);
+      } else {
+        state.technicians.selectedTechnicianId = null;
+        state.technicians.selectedTechnician = null;
+        populateTechnicianForm(null);
+        renderTechnicianDetail(null);
+      }
+    }
+  } catch (error) {
+    list.innerHTML = `<div class="error-card"><strong>Technician list failed</strong><p>${escapeHtml(error.message)}</p></div>`;
+    showToast(`Technician list failed: ${error.message}`, "error");
+  }
+}
+
+async function submitTechnicianForm(event) {
+  event.preventDefault();
+  if (!await requireAuthenticated("login")) return;
+  const technicianId = $("technician-id").value.trim();
+  const submit = $("technician-save");
+  submit.disabled = true;
+  submit.textContent = technicianId ? "Saving…" : "Creating…";
+  try {
+    const response = await apiFetch(technicianId ? `/api/technicians/${technicianId}` : "/api/technicians", {
+      method: technicianId ? "PATCH" : "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(technicianPayloadFromForm()),
+    });
+    const data = await readApiPayload(response);
+    if (!response.ok || !data) throw apiError(response, data, "Technician save failed");
+    state.technicians.selectedTechnicianId = data.id;
+    state.technicians.selectedTechnician = data;
+    populateTechnicianForm(data);
+    renderTechnicianDetail(data);
+    state.technicians.page = 1;
+    await loadTechnicians();
+    showToast(technicianId ? "Technician updated." : "Technician created.", "success");
+  } catch (error) {
+    showToast(`Technician save failed: ${error.message}`, "error");
+  } finally {
+    submit.disabled = false;
+    submit.textContent = "Save technician";
+  }
+}
+
+async function archiveSelectedTechnician() {
+  const technician = state.technicians.selectedTechnician;
+  if (!technician) return;
+  if (!window.confirm(`Archive ${technician.display_name}?`)) return;
+  try {
+    const response = await apiFetch(`/api/technicians/${technician.id}`, { method: "DELETE" });
+    const data = await readApiPayload(response);
+    if (!response.ok || !data) throw apiError(response, data, "Technician archive failed");
+    state.technicians.selectedTechnicianId = null;
+    state.technicians.selectedTechnician = null;
+    populateTechnicianForm(null);
+    renderTechnicianDetail(null);
+    await loadTechnicians();
+    showToast("Technician archived.", "success");
+  } catch (error) {
+    showToast(`Technician archive failed: ${error.message}`, "error");
+  }
+}
+
+async function submitTechnicianLoginForm(event) {
+  event.preventDefault();
+  const technician = state.technicians.selectedTechnician;
+  if (!technician) return;
+  const username = $("technician-login-username").value.trim();
+  const password = $("technician-login-password").value;
+  if (!username || password.length < 8) {
+    showToast("Enter a username and an 8+ character password.", "error");
+    return;
+  }
+  const submit = $("technician-login-submit");
+  submit.disabled = true;
+  submit.textContent = "Creating…";
+  try {
+    const response = await apiFetch(`/api/technicians/${technician.id}/provision-login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username, password }),
+    });
+    const data = await readApiPayload(response);
+    if (!response.ok || !data) throw apiError(response, data, "Login provisioning failed");
+    state.technicians.selectedTechnician = data.technician;
+    renderTechnicianDetail(data.technician);
+    renderTechnicianLoginPanel(data.technician);
+    await loadTechnicians();
+    showToast(`Login created for ${data.username}.`, "success");
+  } catch (error) {
+    showToast(`Login provisioning failed: ${error.message}`, "error");
+  } finally {
+    submit.disabled = false;
+    submit.textContent = "Create login";
+  }
+}
+
+function initializeTechnicians() {
+  $("technician-form").addEventListener("submit", (event) => {
+    void submitTechnicianForm(event);
+  });
+  $("technician-login-form").addEventListener("submit", (event) => {
+    void submitTechnicianLoginForm(event);
+  });
+  $("technician-cancel").addEventListener("click", () => {
+    state.technicians.selectedTechnicianId = null;
+    state.technicians.selectedTechnician = null;
+    populateTechnicianForm(null);
+    renderTechnicianDetail(null);
+  });
+  $("technicians-new").addEventListener("click", () => {
+    navigate("technicians");
+    state.technicians.selectedTechnicianId = null;
+    state.technicians.selectedTechnician = null;
+    populateTechnicianForm(null);
+    renderTechnicianDetail(null);
+    $("technician-first-name").focus();
+  });
+  $("technicians-refresh").addEventListener("click", () => {
+    void loadTechnicians();
+  });
+  $("technicians-search").addEventListener("input", () => {
+    state.technicians.search = $("technicians-search").value;
+    state.technicians.page = 1;
+    void loadTechnicians();
+  });
+  $("technicians-archived-only").addEventListener("change", () => {
+    state.technicians.archivedOnly = $("technicians-archived-only").checked;
+    state.technicians.page = 1;
+    state.technicians.selectedTechnicianId = null;
+    state.technicians.selectedTechnician = null;
+    populateTechnicianForm(null);
+    renderTechnicianDetail(null);
+    void loadTechnicians();
+  });
+  $("technicians-prev").addEventListener("click", () => {
+    state.technicians.page = Math.max(1, state.technicians.page - 1);
+    void loadTechnicians();
+  });
+  $("technicians-next").addEventListener("click", () => {
+    if (!state.technicians.hasMore) return;
+    state.technicians.page += 1;
+    void loadTechnicians();
+  });
+  $("technician-archive").addEventListener("click", () => {
+    void archiveSelectedTechnician();
+  });
+  populateTechnicianForm(null);
+  renderTechnicianDetail(null);
+}
+
+function renderMyDayClockState() {
+  const profile = state.myDay.profile;
+  const clockedIn = Boolean(profile?.technician?.is_clocked_in);
+  $("my-day-status-title").textContent = profile ? profile.technician.display_name : "Checking status…";
+  $("my-day-clock-state").textContent = clockedIn ? "Clocked in" : "Clocked out";
+  $("my-day-clock-detail").textContent = clockedIn
+    ? "You're on the clock. Clock out when your shift ends."
+    : "You're off the clock. Clock in to start your shift.";
+  $("my-day-clock-in").hidden = clockedIn;
+  $("my-day-clock-out").hidden = !clockedIn;
+}
+
+function renderMyDayWorkOrders() {
+  const container = $("my-day-work-orders");
+  const ids = state.myDay.profile?.assigned_work_order_ids ?? [];
+  if (!ids.length) {
+    container.innerHTML = "<p>No work orders are assigned to you right now.</p>";
+    return;
+  }
+  container.innerHTML = `<p>${ids.length} work order${ids.length === 1 ? "" : "s"} assigned. Open Work Orders to view status and details.</p>`;
+}
+
+function renderMyDayTimeEntries() {
+  const container = $("my-day-time-entries");
+  const entries = state.myDay.profile?.recent_time_entries ?? [];
+  if (!entries.length) {
+    container.innerHTML = "<p>No shifts recorded yet.</p>";
+    return;
+  }
+  container.innerHTML = entries.map((entry) => `
+    <div class="empty-card">
+      <strong>${new Date(entry.clock_in_at).toLocaleString()}</strong>
+      <p>${entry.clock_out_at ? `Out ${new Date(entry.clock_out_at).toLocaleString()} · ${entry.duration_minutes} min` : "Still clocked in"}</p>
+    </div>`).join("");
+}
+
+async function loadMyDay() {
+  if (!await requireAuthenticated("login")) return;
+  try {
+    const response = await apiFetch("/api/technicians/me");
+    const data = await readApiPayload(response);
+    if (!response.ok || !data) throw apiError(response, data, "My Day failed to load");
+    state.myDay.profile = data;
+    renderMyDayClockState();
+    renderMyDayWorkOrders();
+    renderMyDayTimeEntries();
+  } catch (error) {
+    $("my-day-status-title").textContent = "My Day";
+    $("my-day-clock-state").textContent = "Unavailable";
+    $("my-day-clock-detail").textContent = error.message;
+    showToast(`My Day failed to load: ${error.message}`, "error");
+  }
+}
+
+async function submitMyDayClock(action) {
+  const button = action === "in" ? $("my-day-clock-in") : $("my-day-clock-out");
+  button.disabled = true;
+  try {
+    const response = await apiFetch(`/api/technicians/me/clock-${action}`, { method: "POST" });
+    const data = await readApiPayload(response);
+    if (!response.ok || !data) throw apiError(response, data, `Clock ${action} failed`);
+    showToast(action === "in" ? "Clocked in." : "Clocked out.", "success");
+    await loadMyDay();
+  } catch (error) {
+    showToast(`Clock ${action} failed: ${error.message}`, "error");
+  } finally {
+    button.disabled = false;
+  }
+}
+
+function initializeMyDay() {
+  $("my-day-clock-in").addEventListener("click", () => {
+    void submitMyDayClock("in");
+  });
+  $("my-day-clock-out").addEventListener("click", () => {
+    void submitMyDayClock("out");
+  });
+}
+
 function vehiclePayloadFromForm() {
   return {
     vin: $("vehicle-vin").value.trim() || null,
@@ -2040,6 +2474,8 @@ function renderWorkOrderDetail(workOrder = null) {
     $("work-order-open-invoice").disabled = true;
     $("work-order-blocked-status").innerHTML = "<strong>No blockers</strong><p>Select a work order to see blocked transitions and prerequisites.</p>";
     populateWorkOrderStatusOptions(null);
+    if ($("work-order-assign-technician")) $("work-order-assign-technician").value = "";
+    if ($("work-order-is-comeback")) $("work-order-is-comeback").checked = false;
     return;
   }
   const notes = workOrder.notes.map((note) => `
@@ -2064,6 +2500,8 @@ function renderWorkOrderDetail(workOrder = null) {
       <div><span>Scheduled for</span><strong>${escapeHtml(workOrder.scheduled_for ? new Date(workOrder.scheduled_for).toLocaleString() : "Not scheduled")}</strong></div>
       <div><span>Invoice</span><strong>${escapeHtml(workOrder.invoice_number || "Not generated yet")}</strong></div>
       <div><span>Invoice status</span><strong>${escapeHtml(workOrder.invoice_status ? workOrder.invoice_status.replaceAll("_", " ") : "Not generated")}</strong></div>
+      <div><span>Technician</span><strong>${escapeHtml(workOrder.assigned_technician_display_name || "Unassigned")}</strong></div>
+      <div><span>Comeback</span><strong>${workOrder.is_comeback ? "Yes" : "No"}</strong></div>
     </div>
     <div class="result-grid">
       <section class="result-section"><h3>Approved revision</h3><p>${escapeHtml(workOrder.source_revision.request.job)}</p><p>${money(workOrder.source_revision.estimate.totals.estimated_total)} · revision ${workOrder.source_revision.revision_number}</p></section>
@@ -2086,6 +2524,10 @@ function renderWorkOrderDetail(workOrder = null) {
     ? `<strong>Blocked transitions</strong><p>${blocked.map(([status, reason]) => `${workOrderStatusLabel(status)}: ${reason}`).join(" ")}</p>`
     : "<strong>No blockers</strong><p>The current prerequisites are satisfied for the available next status choices.</p>";
   populateWorkOrderStatusOptions(workOrder);
+  if ($("work-order-assign-technician")) {
+    $("work-order-assign-technician").value = workOrder.assigned_technician_id ? String(workOrder.assigned_technician_id) : "";
+  }
+  if ($("work-order-is-comeback")) $("work-order-is-comeback").checked = Boolean(workOrder.is_comeback);
 }
 
 function renderWorkOrderList() {
@@ -2223,6 +2665,52 @@ async function submitWorkOrderUpdate(event) {
   }
 }
 
+async function loadTechnicianOptions() {
+  const response = await apiFetch("/api/technicians?page=1&page_size=100&archived=false");
+  const data = await readApiPayload(response);
+  if (!response.ok || !data) throw apiError(response, data, "Technician options failed");
+  const select = $("work-order-assign-technician");
+  if (!select) return;
+  const currentValue = select.value;
+  select.innerHTML = ['<option value="">Unassigned</option>', ...data.items.map((technician) => (
+    `<option value="${technician.id}">${escapeHtml(technician.display_name)}</option>`
+  ))].join("");
+  if (currentValue) select.value = currentValue;
+}
+
+async function submitWorkOrderAssignment(event) {
+  event.preventDefault();
+  const workOrderId = $("work-order-id").value.trim();
+  if (!workOrderId) {
+    showToast("Select a work order before assigning a technician.", "error");
+    return;
+  }
+  const technicianId = $("work-order-assign-technician").value;
+  try {
+    const assignResponse = await apiFetch(`/api/work-orders/${workOrderId}/assign-technician`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ technician_id: technicianId ? Number(technicianId) : null }),
+    });
+    const assignData = await readApiPayload(assignResponse);
+    if (!assignResponse.ok || !assignData) throw apiError(assignResponse, assignData, "Technician assignment failed");
+    const patchResponse = await apiFetch(`/api/work-orders/${workOrderId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ is_comeback: $("work-order-is-comeback").checked }),
+    });
+    const patchData = await readApiPayload(patchResponse);
+    if (!patchResponse.ok || !patchData) throw apiError(patchResponse, patchData, "Comeback flag update failed");
+    state.workOrders.selectedWorkOrder = patchData;
+    state.workOrders.selectedWorkOrderId = patchData.id;
+    renderWorkOrderDetail(patchData);
+    void loadWorkOrders();
+    showToast("Assignment saved.", "success");
+  } catch (error) {
+    showToast(`Assignment save failed: ${error.message}`, "error");
+  }
+}
+
 async function submitWorkOrderStatus(event) {
   event.preventDefault();
   const workOrderId = $("work-order-id").value.trim();
@@ -2344,6 +2832,9 @@ function initializeWorkOrders() {
   });
   $("work-order-update-form").addEventListener("submit", (event) => {
     void submitWorkOrderUpdate(event);
+  });
+  $("work-order-assign-form").addEventListener("submit", (event) => {
+    void submitWorkOrderAssignment(event);
   });
   $("work-order-status-form").addEventListener("submit", (event) => {
     void submitWorkOrderStatus(event);
@@ -3502,6 +3993,8 @@ function initializeApp() {
   initializeDashboard();
   initializeCustomers();
   initializeVehicles();
+  initializeTechnicians();
+  initializeMyDay();
   initializeWorkOrders();
   initializeApprovalQueue();
   initializeInvoices();
@@ -3530,19 +4023,31 @@ function initializeApp() {
       return;
     }
     document.body.classList.remove("marketing-mode");
-    void loadCustomerOptions().catch(() => {
-      showToast("Customer options failed to load.", "error");
-    });
-    void restoreSelectionsFromContext();
-    void loadDashboardSummary();
-    void refreshApprovalQueueBadge();
-    if (window.location.pathname === "/login") navigate("dashboard");
+    if (isTechnicianSession()) {
+      // Unlike the owner branch below, "my-day" is never the page's static
+      // default view (the HTML ships with #view-dashboard marked
+      // is-active), so this must fire on every authenticated load -- not
+      // just the first login redirect from "/login" -- or a technician
+      // reopening/refreshing the app lands on the owner-only Overview shell
+      // instead of My Day.
+      navigate("my-day");
+    } else {
+      void loadCustomerOptions().catch(() => {
+        showToast("Customer options failed to load.", "error");
+      });
+      void restoreSelectionsFromContext();
+      void loadDashboardSummary();
+      void refreshApprovalQueueBadge();
+      if (window.location.pathname === "/login") navigate("dashboard");
+    }
   });
   void loadHealth(false);
   window.setInterval(() => loadHealth(false), 60000);
   window.setInterval(() => {
-    if (state.auth.authenticated) void refreshNotificationsBadge();
-    if (state.auth.authenticated) void refreshApprovalQueueBadge();
+    if (state.auth.authenticated && state.auth.user?.role === "owner") {
+      void refreshNotificationsBadge();
+      void refreshApprovalQueueBadge();
+    }
   }, 60000);
 }
 
