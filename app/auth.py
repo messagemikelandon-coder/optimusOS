@@ -261,14 +261,28 @@ def require_role(auth: AuthContext, *allowed: str) -> None:
 def require_owner_context(
     auth: Annotated[AuthContext, Depends(get_current_auth_context)],
 ) -> AuthContext:
-    """Route dependency for endpoints that are owner-only for v1.
+    """Route dependency for endpoints that stay owner-only.
 
-    Technician-specific routes (own assigned work orders, clock-in/out,
-    diagnostics/inspections) don't exist yet — they're built in a later
-    Phase 5.6 sub-phase once `WorkOrder.assigned_technician_id` exists. Until
-    then every business route is gated to the owner role so a technician
-    account (once one can be created) starts with zero data access instead
-    of inheriting the old single-role behavior.
+    Most business routes are still owner-only — Diagnostics/Inspections and
+    the rest of the Phase 5.6 module set don't exist yet. Technicians (as of
+    sub-phase 2) can log in, provision nowhere themselves, clock in/out, and
+    view/update only their own assigned work orders via
+    `require_owner_or_technician_context` below plus store-level scoping in
+    `work_order_store.py`.
     """
     require_role(auth, "owner")
+    return auth
+
+
+def require_owner_or_technician_context(
+    auth: Annotated[AuthContext, Depends(get_current_auth_context)],
+) -> AuthContext:
+    """Route dependency for the small set of routes both roles can reach.
+
+    Does not by itself scope *which* rows a technician can see — the store
+    layer (e.g. `work_order_store._work_order_query`) still filters a
+    technician down to their own assigned records via `effective_owner_id`
+    plus an explicit `assigned_technician_id` check.
+    """
+    require_role(auth, "owner", "technician")
     return auth

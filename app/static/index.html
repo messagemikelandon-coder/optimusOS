@@ -151,7 +151,7 @@
       </div>
 
       <nav class="primary-nav">
-        <button class="nav-item is-active" type="button" data-view="dashboard" aria-current="page">
+        <button class="nav-item is-active" type="button" data-view="dashboard" aria-current="page" data-owner-only="true">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 13h6V4H4v9Zm0 7h6v-5H4v5Zm10 0h6v-9h-6v9Zm0-16v5h6V4h-6Z"/></svg>
           <span>Overview</span>
         </button>
@@ -160,11 +160,11 @@
           <span>Service Desk</span>
           <span class="nav-soon-badge">Soon</span>
         </button>
-        <button class="nav-item" type="button" data-view="customers">
+        <button class="nav-item" type="button" data-view="customers" data-owner-only="true">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16 11a4 4 0 1 0-3.999-4A4 4 0 0 0 16 11Zm-8 1a3 3 0 1 0-3-3 3 3 0 0 0 3 3Zm8 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4ZM8 14c-.29 0-.62.02-.97.05C5.2 14.22 2 15.14 2 18v2h4v-2c0-1.52.81-2.83 2.16-3.76A6.86 6.86 0 0 0 8 14Z"/></svg>
           <span>Customers</span>
         </button>
-        <button class="nav-item" type="button" data-view="vehicles">
+        <button class="nav-item" type="button" data-view="vehicles" data-owner-only="true">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 6h14l2 6v6h-2a2 2 0 0 1-4 0H9a2 2 0 0 1-4 0H3v-6l2-6Zm2.44 2L6.1 12h11.8L16.56 8H7.44ZM7 13a2 2 0 1 0 0 4 2 2 0 0 0 0-4Zm10 0a2 2 0 1 0-.001 4.001A2 2 0 0 0 17 13Z"/></svg>
           <span>Vehicles</span>
         </button>
@@ -182,7 +182,7 @@
           <span>Inspections</span>
           <span class="nav-soon-badge">Soon</span>
         </button>
-        <button class="nav-item" type="button" data-view="approval-queue">
+        <button class="nav-item" type="button" data-view="approval-queue" data-owner-only="true">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2 4 5v6c0 5.2 3.4 9.7 8 11 4.6-1.3 8-5.8 8-11V5l-8-3Zm-1 14-4-4 1.4-1.4L11 13.2l4.6-4.6L17 10l-6 6Z"/></svg>
           <span>Approval Queue</span>
           <span class="nav-badge" id="nav-approval-queue-badge" hidden>0</span>
@@ -192,10 +192,13 @@
           <span>Scheduling</span>
           <span class="nav-soon-badge">Soon</span>
         </button>
-        <button class="nav-item is-disabled" type="button" aria-disabled="true" title="Not built yet — no technician data model exists yet.">
+        <button class="nav-item" type="button" data-view="technicians" data-owner-only="true">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21.7 19.3 16 13.6a5 5 0 0 1-6.1-6.1L4.4 2 2 4.4l5.5 5.5a5 5 0 0 0 6.1 6.1l5.7 5.7a1 1 0 0 0 1.4 0l1-1a1 1 0 0 0 0-1.4Z"/></svg>
           <span>Technicians</span>
-          <span class="nav-soon-badge">Soon</span>
+        </button>
+        <button class="nav-item" type="button" data-view="my-day" data-technician-only="true" hidden>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2 4 5v6c0 5.2 3.4 9.7 8 11 4.6-1.3 8-5.8 8-11V5l-8-3Zm-1 14-4-4 1.4-1.4L11 13.2l4.6-4.6L17 10l-6 6Z"/></svg>
+          <span>My Day</span>
         </button>
         <button class="nav-item is-disabled" type="button" aria-disabled="true" title="Not built yet — no parts-inventory data model exists yet.">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v14H4V5Zm3 3v3h3V8H7Zm5 0v3h5V8h-5ZM7 13v3h10v-3H7Z"/></svg>
@@ -207,16 +210,16 @@
           <span>Vendors</span>
           <span class="nav-soon-badge">Soon</span>
         </button>
-        <button class="nav-item" type="button" data-view="invoices">
+        <button class="nav-item" type="button" data-view="invoices" data-owner-only="true">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 2h9l5 5v15H6V2Zm8 1.5V8h4.5L14 3.5ZM8 11h10v2H8v-2Zm0 4h10v2H8v-2Zm0-8h4v2H8V7Z"/></svg>
           <span>Invoices</span>
         </button>
-        <button class="nav-item" type="button" data-view="notifications">
+        <button class="nav-item" type="button" data-view="notifications" data-owner-only="true">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 22a2.2 2.2 0 0 0 2.2-2.2H9.8A2.2 2.2 0 0 0 12 22Zm7-5v-1l-1.6-1.6V9.9A5.6 5.6 0 0 0 13 4.4V3a1 1 0 1 0-2 0v1.4a5.6 5.6 0 0 0-4.4 5.5v4.5L5 16v1h14Z"/></svg>
           <span>Notifications</span>
           <span class="nav-badge" id="nav-notifications-badge" hidden>0</span>
         </button>
-        <button class="nav-item" type="button" data-view="square">
+        <button class="nav-item" type="button" data-view="square" data-owner-only="true">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5h14a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2Zm2 4v2h2V9H7Zm4 0v2h6V9h-6ZM7 13v2h2v-2H7Zm4 0v2h6v-2h-6Z"/></svg>
           <span>Square</span>
         </button>
@@ -225,7 +228,7 @@
           <span>Reports</span>
           <span class="nav-soon-badge">Soon</span>
         </button>
-        <button class="nav-item" type="button" data-view="estimate">
+        <button class="nav-item" type="button" data-view="estimate" data-owner-only="true">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 3h10v2h2v16H5V5h2V3Zm2 2h6V4H9v1Zm0 5h6V8H9v2Zm0 4h6v-2H9v2Zm0 4h4v-2H9v2Z"/></svg>
           <span>Job estimator</span>
         </button>
@@ -823,6 +826,159 @@
           </div>
         </section>
 
+        <section class="app-view" id="view-technicians" data-view-panel="technicians" hidden>
+          <div class="customers-layout">
+            <section class="panel customers-list-panel">
+              <div class="panel-heading">
+                <div><span class="section-kicker"><i></i> Staff records</span><h2>Technicians</h2><p>Owner-scoped technician records. Archived technicians stay out of the default list.</p></div>
+                <button class="secondary-button compact" type="button" id="technicians-new">New technician</button>
+              </div>
+
+              <div class="customers-toolbar">
+                <label class="field full">
+                  Search
+                  <input id="technicians-search" placeholder="Search name, email, or job title">
+                </label>
+                <label class="toggle-field">
+                  <input id="technicians-archived-only" type="checkbox">
+                  <span>Show archived</span>
+                </label>
+                <button class="secondary-button compact" type="button" id="technicians-refresh">Refresh</button>
+              </div>
+
+              <div id="technicians-list" class="customers-list" aria-live="polite"></div>
+
+              <div class="customers-pagination">
+                <button class="secondary-button compact" type="button" id="technicians-prev">Previous</button>
+                <span id="technicians-page-status">Page 1</span>
+                <button class="secondary-button compact" type="button" id="technicians-next">Next</button>
+              </div>
+            </section>
+
+            <section class="customers-detail-stack">
+              <section class="panel" id="technician-detail-panel">
+                <div class="panel-heading">
+                  <div><span class="section-kicker"><i></i> Detail view</span><h3>Selected technician</h3></div>
+                  <button class="text-button" type="button" id="technician-archive">Archive</button>
+                </div>
+                <div id="technician-detail" class="customer-detail-card">
+                  <p>Select a technician from the list or create a new record.</p>
+                </div>
+              </section>
+
+              <section class="panel" id="technician-login-panel">
+                <div class="panel-heading">
+                  <div><span class="section-kicker"><i></i> Access</span><h3>Login provisioning</h3><p>Grant this technician their own sign-in. This cannot be undone or reissued to a different username later.</p></div>
+                </div>
+                <div id="technician-login-status"><p>Select a technician to manage their login.</p></div>
+                <form class="form-grid two" id="technician-login-form" hidden>
+                  <label class="field">Username <input id="technician-login-username" maxlength="120" autocomplete="off"></label>
+                  <label class="field">Temporary password <input id="technician-login-password" type="password" minlength="8" maxlength="256" autocomplete="new-password"></label>
+                  <div class="estimate-submit-row">
+                    <div><strong>Provision login</strong><span>The technician should change this password after first sign-in.</span></div>
+                    <button class="primary-button compact" type="submit" id="technician-login-submit">Create login</button>
+                  </div>
+                </form>
+              </section>
+
+              <form class="panel estimate-form-panel" id="technician-form">
+                <div class="panel-heading">
+                  <div><span class="section-kicker"><i></i> Record editor</span><h3 id="technician-form-title">Create technician</h3></div>
+                  <span class="estimate-number" id="technician-form-mode">CREATE</span>
+                </div>
+                <input id="technician-id" type="hidden">
+
+                <fieldset>
+                  <legend><span>01</span> Identity</legend>
+                  <div class="form-grid three">
+                    <label class="field">First name <input id="technician-first-name" maxlength="120"></label>
+                    <label class="field">Last name <input id="technician-last-name" maxlength="120"></label>
+                    <label class="field">Job title <input id="technician-job-title" maxlength="120" placeholder="Master Technician"></label>
+                  </div>
+                </fieldset>
+
+                <fieldset>
+                  <legend><span>02</span> Contact</legend>
+                  <div class="form-grid two">
+                    <label class="field">Email <input id="technician-email" maxlength="180" inputmode="email"></label>
+                    <label class="field">Phone <input id="technician-phone" maxlength="40" inputmode="tel"></label>
+                  </div>
+                </fieldset>
+
+                <fieldset>
+                  <legend><span>03</span> Employment</legend>
+                  <div class="form-grid three">
+                    <label class="field">Employment status <input id="technician-employment-status" maxlength="40" placeholder="Full-time"></label>
+                    <label class="field">Hire date <input id="technician-hire-date" type="date"></label>
+                    <label class="field">Hourly cost <input id="technician-hourly-cost" type="number" min="0" max="1000" step="0.01"></label>
+                  </div>
+                </fieldset>
+
+                <fieldset>
+                  <legend><span>04</span> Qualifications</legend>
+                  <label class="field full">Certifications <textarea id="technician-certifications" maxlength="2000"></textarea></label>
+                  <div class="form-grid two">
+                    <label class="field">Certification expiration <input id="technician-certification-expiration" type="date"></label>
+                    <label class="field">Normal availability <input id="technician-normal-availability" maxlength="500" placeholder="Mon-Fri 8a-5p"></label>
+                  </div>
+                  <label class="field full">Specialties <textarea id="technician-specialties" maxlength="2000"></textarea></label>
+                  <div class="form-grid two">
+                    <label class="toggle-field"><input id="technician-driver-license-valid" type="checkbox"><span>Driver license valid</span></label>
+                    <label class="toggle-field"><input id="technician-insurance-verified" type="checkbox"><span>Insurance / MVR verified</span></label>
+                  </div>
+                </fieldset>
+
+                <fieldset>
+                  <legend><span>05</span> Safety &amp; training notes</legend>
+                  <label class="field full">Notes <textarea id="technician-safety-notes" maxlength="4000"></textarea></label>
+                </fieldset>
+
+                <div class="estimate-submit-row">
+                  <div><strong id="technician-form-status-title">Technician record</strong><span id="technician-form-status-detail">Create or edit technician records without leaving the authenticated session.</span></div>
+                  <div class="customers-form-actions">
+                    <button class="text-button" type="button" id="technician-cancel">Clear</button>
+                    <button class="primary-button compact" type="submit" id="technician-save">Save technician</button>
+                  </div>
+                </div>
+              </form>
+            </section>
+          </div>
+        </section>
+
+        <section class="app-view" id="view-my-day" data-view-panel="my-day" hidden>
+          <div class="system-grid">
+            <section class="panel system-hero">
+              <div><span class="section-kicker"><i></i> Technician workspace</span><h2>My Day</h2><p>Clock in and out, and see what's assigned to you today.</p></div>
+              <div class="server-stack" aria-hidden="true"><span></span><span></span><span></span><i></i></div>
+            </section>
+
+            <section class="panel access-panel">
+              <div class="panel-heading"><div><span class="section-kicker"><i></i> Shift</span><h3 id="my-day-status-title">Checking status…</h3></div></div>
+              <div class="location-display">
+                <div class="location-radar"><span></span></div>
+                <div>
+                  <strong id="my-day-clock-state">Loading…</strong>
+                  <p id="my-day-clock-detail">Checking your clock-in status.</p>
+                </div>
+              </div>
+              <div class="estimate-submit-row">
+                <button class="primary-button compact" type="button" id="my-day-clock-in">Clock in</button>
+                <button class="secondary-button compact" type="button" id="my-day-clock-out" hidden>Clock out</button>
+              </div>
+            </section>
+
+            <section class="panel runtime-panel">
+              <div class="panel-heading"><div><span class="section-kicker"><i></i> Today</span><h3>Assigned work</h3></div><button class="secondary-button compact" type="button" data-view="work-orders">Open Work Orders</button></div>
+              <div id="my-day-work-orders" aria-live="polite"><p>Loading assigned work orders…</p></div>
+            </section>
+
+            <section class="panel runtime-panel">
+              <div class="panel-heading"><div><span class="section-kicker"><i></i> Recent shifts</span><h3>Time entries</h3></div></div>
+              <div id="my-day-time-entries" aria-live="polite"><p>Loading recent time entries…</p></div>
+            </section>
+          </div>
+        </section>
+
         <section class="app-view" id="view-work-orders" data-view-panel="work-orders" hidden>
           <div class="customers-layout">
             <section class="panel customers-list-panel">
@@ -907,6 +1063,29 @@
                   <div><strong>Prerequisite controls</strong><span id="work-order-form-status-detail">Select a work order to update deposit, authorization, scheduling, and diagnosis details.</span></div>
                   <div class="customers-form-actions">
                     <button class="primary-button compact" type="submit" id="work-order-save">Save work order</button>
+                  </div>
+                </div>
+              </form>
+
+              <form class="panel estimate-form-panel" id="work-order-assign-form" data-owner-only="true">
+                <div class="panel-heading">
+                  <div><span class="section-kicker"><i></i> Staffing</span><h3>Assign technician</h3></div>
+                </div>
+                <div class="form-grid two">
+                  <label class="field">Technician
+                    <select id="work-order-assign-technician">
+                      <option value="">Unassigned</option>
+                    </select>
+                  </label>
+                  <label class="toggle-field">
+                    <input id="work-order-is-comeback" type="checkbox">
+                    <span>This is a comeback</span>
+                  </label>
+                </div>
+                <div class="estimate-submit-row">
+                  <div><strong>Assignment</strong><span>The assigned technician can view and update this work order's status.</span></div>
+                  <div class="customers-form-actions">
+                    <button class="primary-button compact" type="submit" id="work-order-assign-save">Save assignment</button>
                   </div>
                 </div>
               </form>
@@ -1324,14 +1503,15 @@
   </div>
 
   <nav class="mobile-bottom-nav" aria-label="Mobile navigation">
-    <button class="is-active" type="button" data-view="dashboard"><span>⌂</span>Overview</button>
-    <button type="button" data-view="customers"><span>▣</span>Customers</button>
-    <button type="button" data-view="vehicles"><span>◈</span>Vehicles</button>
+    <button class="is-active" type="button" data-view="dashboard" data-owner-only="true"><span>⌂</span>Overview</button>
+    <button type="button" data-view="customers" data-owner-only="true"><span>▣</span>Customers</button>
+    <button type="button" data-view="vehicles" data-owner-only="true"><span>◈</span>Vehicles</button>
     <button type="button" data-view="work-orders"><span>✓</span>Work</button>
-    <button type="button" data-view="approval-queue"><span>◉</span>Approval</button>
-    <button type="button" data-view="invoices"><span>◫</span>Bill</button>
-    <button type="button" data-view="notifications"><span>🔔</span>Alerts</button>
-    <button type="button" data-view="square"><span>◧</span>Square</button>
+    <button type="button" data-view="approval-queue" data-owner-only="true"><span>◉</span>Approval</button>
+    <button type="button" data-view="invoices" data-owner-only="true"><span>◫</span>Bill</button>
+    <button type="button" data-view="notifications" data-owner-only="true"><span>🔔</span>Alerts</button>
+    <button type="button" data-view="square" data-owner-only="true"><span>◧</span>Square</button>
+    <button type="button" data-view="my-day" data-technician-only="true" hidden><span>◉</span>My Day</button>
     <button type="button" data-view="system"><span>⚙</span>System</button>
   </nav>
 

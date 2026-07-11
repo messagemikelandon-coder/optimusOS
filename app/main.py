@@ -24,6 +24,7 @@ from app.auth import (
     get_current_auth_context,
     require_authenticated_user,
     require_owner_context,
+    require_owner_or_technician_context,
     set_session_cookie,
 )
 from app.config import Settings, get_settings
@@ -116,11 +117,21 @@ from app.models import (
     NotificationListResponse,
     NotificationMarkReadResponse,
     ResolvedLocation,
+    TechnicianArchiveResponse,
+    TechnicianClockResponse,
+    TechnicianCreate,
+    TechnicianListResponse,
+    TechnicianMeResponse,
+    TechnicianProvisionLoginRequest,
+    TechnicianProvisionLoginResponse,
+    TechnicianRead,
+    TechnicianUpdate,
     VehicleArchiveResponse,
     VehicleCreate,
     VehicleListResponse,
     VehicleRead,
     VehicleUpdate,
+    WorkOrderAssignTechnicianRequest,
     WorkOrderListResponse,
     WorkOrderNoteCreate,
     WorkOrderRead,
@@ -148,6 +159,20 @@ from app.square_store import (
     push_invoice_to_square,
     refresh_square_invoice,
 )
+from app.technician_store import (
+    TechnicianConflictError,
+    TechnicianNotFoundError,
+    TechnicianStoreError,
+    archive_technician,
+    clock_in,
+    clock_out,
+    create_technician,
+    get_my_technician_profile,
+    get_technician,
+    list_technicians,
+    provision_login,
+    update_technician,
+)
 from app.vehicle_store import (
     VehicleNotFoundError,
     VehicleStoreError,
@@ -161,6 +186,7 @@ from app.work_order_store import (
     WorkOrderNotFoundError,
     WorkOrderStoreError,
     add_work_order_note,
+    assign_technician,
     create_work_order_from_estimate,
     get_work_order,
     list_work_orders,
@@ -176,6 +202,9 @@ DbSessionDep = Annotated[Session, Depends(get_db_session)]
 AuthContextDep = Annotated[AuthContext, Depends(get_current_auth_context)]
 CurrentUserDep = Annotated[UserAccount, Depends(require_authenticated_user)]
 OwnerAuthContextDep = Annotated[AuthContext, Depends(require_owner_context)]
+OwnerOrTechnicianAuthContextDep = Annotated[
+    AuthContext, Depends(require_owner_or_technician_context)
+]
 
 app = FastAPI(
     title="Optimus Command Center | Landon Motor Works",
@@ -658,6 +687,196 @@ async def archive_vehicle_record(
         ) from exc
 
 
+@app.post("/api/technicians", response_model=TechnicianRead)
+async def create_technician_record(
+    payload: TechnicianCreate,
+    db: DbSessionDep,
+    auth: OwnerAuthContextDep,
+) -> TechnicianRead:
+    try:
+        return create_technician(db=db, auth=auth, payload=payload)
+    except TechnicianStoreError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Technician creation failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Technician storage is unavailable.",
+        ) from exc
+
+
+@app.get("/api/technicians", response_model=TechnicianListResponse)
+async def list_technician_records(
+    db: DbSessionDep,
+    settings: SettingsDep,
+    auth: OwnerAuthContextDep,
+    page: int = Query(default=1),
+    page_size: int = Query(default=20),
+    search: str | None = Query(default=None, max_length=120),
+    archived: bool = False,
+) -> TechnicianListResponse:
+    try:
+        return list_technicians(
+            db=db,
+            auth=auth,
+            settings=settings,
+            page=page,
+            page_size=page_size,
+            archived=archived,
+            search=search,
+        )
+    except TechnicianStoreError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Technician listing failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Technician storage is unavailable.",
+        ) from exc
+
+
+@app.get("/api/technicians/me", response_model=TechnicianMeResponse)
+async def get_my_technician_record(
+    db: DbSessionDep,
+    auth: OwnerOrTechnicianAuthContextDep,
+) -> TechnicianMeResponse:
+    try:
+        return get_my_technician_profile(db=db, auth=auth)
+    except TechnicianNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Technician self-profile lookup failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Technician storage is unavailable.",
+        ) from exc
+
+
+@app.post("/api/technicians/me/clock-in", response_model=TechnicianClockResponse)
+async def clock_in_record(
+    db: DbSessionDep,
+    auth: OwnerOrTechnicianAuthContextDep,
+) -> TechnicianClockResponse:
+    try:
+        return clock_in(db=db, auth=auth)
+    except TechnicianNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except TechnicianConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Technician clock-in failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Technician storage is unavailable.",
+        ) from exc
+
+
+@app.post("/api/technicians/me/clock-out", response_model=TechnicianClockResponse)
+async def clock_out_record(
+    db: DbSessionDep,
+    auth: OwnerOrTechnicianAuthContextDep,
+) -> TechnicianClockResponse:
+    try:
+        return clock_out(db=db, auth=auth)
+    except TechnicianNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except TechnicianConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Technician clock-out failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Technician storage is unavailable.",
+        ) from exc
+
+
+@app.get("/api/technicians/{technician_id}", response_model=TechnicianRead)
+async def get_technician_record(
+    technician_id: int,
+    db: DbSessionDep,
+    auth: OwnerAuthContextDep,
+) -> TechnicianRead:
+    try:
+        return get_technician(db=db, auth=auth, technician_id=technician_id)
+    except TechnicianNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except TechnicianStoreError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Technician retrieval failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Technician storage is unavailable.",
+        ) from exc
+
+
+@app.patch("/api/technicians/{technician_id}", response_model=TechnicianRead)
+async def update_technician_record(
+    technician_id: int,
+    payload: TechnicianUpdate,
+    db: DbSessionDep,
+    auth: OwnerAuthContextDep,
+) -> TechnicianRead:
+    try:
+        return update_technician(db=db, auth=auth, technician_id=technician_id, payload=payload)
+    except TechnicianNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except TechnicianStoreError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Technician update failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Technician storage is unavailable.",
+        ) from exc
+
+
+@app.delete("/api/technicians/{technician_id}", response_model=TechnicianArchiveResponse)
+async def archive_technician_record(
+    technician_id: int,
+    db: DbSessionDep,
+    auth: OwnerAuthContextDep,
+) -> TechnicianArchiveResponse:
+    try:
+        return archive_technician(db=db, auth=auth, technician_id=technician_id)
+    except TechnicianNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except TechnicianStoreError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Technician archive failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Technician storage is unavailable.",
+        ) from exc
+
+
+@app.post(
+    "/api/technicians/{technician_id}/provision-login",
+    response_model=TechnicianProvisionLoginResponse,
+)
+async def provision_technician_login_record(
+    technician_id: int,
+    payload: TechnicianProvisionLoginRequest,
+    db: DbSessionDep,
+    auth: OwnerAuthContextDep,
+) -> TechnicianProvisionLoginResponse:
+    try:
+        return provision_login(db=db, auth=auth, technician_id=technician_id, payload=payload)
+    except TechnicianNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except TechnicianConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except TechnicianStoreError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Technician login provisioning failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Technician storage is unavailable.",
+        ) from exc
+
+
 @app.get("/api/context/{project_key}", response_model=ContextListResponse)
 async def get_context(
     project_key: str,
@@ -1129,7 +1348,7 @@ async def create_work_order_record(
 async def list_work_order_records(
     db: DbSessionDep,
     settings: SettingsDep,
-    auth: OwnerAuthContextDep,
+    auth: OwnerOrTechnicianAuthContextDep,
     page: int = Query(default=1),
     page_size: int = Query(default=20),
     status_filter: Annotated[WorkOrderStatus | None, Query(alias="status")] = None,
@@ -1163,7 +1382,7 @@ async def list_work_order_records(
 async def get_work_order_record(
     work_order_id: int,
     db: DbSessionDep,
-    auth: OwnerAuthContextDep,
+    auth: OwnerOrTechnicianAuthContextDep,
 ) -> WorkOrderRead:
     try:
         return get_work_order(db=db, auth=auth, work_order_id=work_order_id)
@@ -1200,12 +1419,33 @@ async def update_work_order_record(
         ) from exc
 
 
+@app.post("/api/work-orders/{work_order_id}/assign-technician", response_model=WorkOrderRead)
+async def assign_work_order_technician_record(
+    work_order_id: int,
+    payload: WorkOrderAssignTechnicianRequest,
+    db: DbSessionDep,
+    auth: OwnerAuthContextDep,
+) -> WorkOrderRead:
+    try:
+        return assign_technician(db=db, auth=auth, work_order_id=work_order_id, payload=payload)
+    except WorkOrderNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except WorkOrderStoreError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Work-order technician assignment failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Work-order storage is unavailable.",
+        ) from exc
+
+
 @app.post("/api/work-orders/{work_order_id}/status", response_model=WorkOrderRead)
 async def update_work_order_status_record(
     work_order_id: int,
     payload: WorkOrderStatusUpdate,
     db: DbSessionDep,
-    auth: OwnerAuthContextDep,
+    auth: OwnerOrTechnicianAuthContextDep,
 ) -> WorkOrderRead:
     try:
         return transition_work_order_status(
@@ -1235,7 +1475,7 @@ async def add_work_order_note_record(
     work_order_id: int,
     payload: WorkOrderNoteCreate,
     db: DbSessionDep,
-    auth: OwnerAuthContextDep,
+    auth: OwnerOrTechnicianAuthContextDep,
 ) -> WorkOrderRead:
     try:
         return add_work_order_note(db=db, auth=auth, work_order_id=work_order_id, payload=payload)

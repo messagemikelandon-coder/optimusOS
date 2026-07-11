@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 from app.auth import AuthContext, effective_owner_id, ensure_utc
 from app.config import Settings
 from app.customer_store import display_name as customer_display_name
-from app.db_models import Estimate, WorkOrder, WorkOrderNote, WorkOrderStatusEvent
+from app.db_models import Estimate, Technician, WorkOrder, WorkOrderNote, WorkOrderStatusEvent
 from app.estimate_store import EstimateNotFoundError, _revision_to_read
 from app.invoice_store import ensure_draft_invoice_for_work_order
 from app.models import (
@@ -19,6 +19,7 @@ from app.models import (
     InvoiceStatus,
     NotificationEntityType,
     NotificationEvent,
+    WorkOrderAssignTechnicianRequest,
     WorkOrderListResponse,
     WorkOrderNoteCreate,
     WorkOrderNoteRead,
@@ -30,6 +31,8 @@ from app.models import (
     WorkOrderUpdate,
 )
 from app.notification_store import record_notification
+from app.technician_store import display_name as technician_display_name
+from app.technician_store import get_technician_for_user
 from app.vehicle_store import vehicle_display_name
 
 PAYMENT_PLAN_OPTIONS = {
@@ -73,12 +76,21 @@ class WorkOrderNotFoundError(WorkOrderStoreError):
     pass
 
 
-def _work_order_query(auth: AuthContext) -> Select[tuple[WorkOrder]]:
-    return select(WorkOrder).where(WorkOrder.owner_user_id == effective_owner_id(auth))
+def _work_order_query(db: Session, auth: AuthContext) -> Select[tuple[WorkOrder]]:
+    query = select(WorkOrder).where(WorkOrder.owner_user_id == effective_owner_id(auth))
+    if auth.user.role == "technician":
+        # Sub-phase 1 gated work orders fully owner-only; this sub-phase
+        # opens them to a technician, but only their own assigned rows --
+        # every other technician-facing route stays owner-only for now.
+        technician = get_technician_for_user(db, auth.user.id)
+        if technician is None:
+            return query.where(WorkOrder.id.is_(None))
+        query = query.where(WorkOrder.assigned_technician_id == technician.id)
+    return query
 
 
 def _require_work_order(db: Session, auth: AuthContext, work_order_id: int) -> WorkOrder:
-    work_order = db.scalar(_work_order_query(auth).where(WorkOrder.id == work_order_id))
+    work_order = db.scalar(_work_order_query(db, auth).where(WorkOrder.id == work_order_id))
     if work_order is None:
         raise WorkOrderNotFoundError("Work order not found.")
     return work_order
@@ -192,6 +204,13 @@ def _to_read(work_order: WorkOrder) -> WorkOrderRead:
         deposit_received=work_order.deposit_received,
         authorization_confirmed=work_order.authorization_confirmed,
         scheduled_for=ensure_utc(work_order.scheduled_for) if work_order.scheduled_for else None,
+        assigned_technician_id=work_order.assigned_technician_id,
+        assigned_technician_display_name=(
+            technician_display_name(work_order.assigned_technician)
+            if work_order.assigned_technician
+            else None
+        ),
+        is_comeback=work_order.is_comeback,
         allowed_next_statuses=_allowed_next_statuses(work_order),
         blocked_transitions=_blocked_transitions(work_order),
         source_revision=revision,
@@ -232,7 +251,7 @@ def create_work_order_from_estimate(
     estimate = _require_approved_estimate(db, auth, estimate_id)
     revision = _approved_revision(estimate)
     existing = db.scalar(
-        _work_order_query(auth).where(
+        _work_order_query(db, auth).where(
             WorkOrder.estimate_id == estimate.id,
             WorkOrder.estimate_revision_id == revision.id,
         )
@@ -270,7 +289,7 @@ def create_work_order_from_estimate(
     except IntegrityError:
         db.rollback()
         existing = db.scalar(
-            _work_order_query(auth).where(
+            _work_order_query(db, auth).where(
                 WorkOrder.estimate_id == estimate.id,
                 WorkOrder.estimate_revision_id == revision.id,
             )
@@ -309,7 +328,7 @@ def list_work_orders(
         )
     if page < 1:
         raise WorkOrderStoreError("Page must be 1 or greater.")
-    query = _work_order_query(auth)
+    query = _work_order_query(db, auth)
     if status is not None:
         query = query.where(WorkOrder.status == status.value)
     if customer_id is not None:
@@ -364,6 +383,34 @@ def update_work_order(
         or "authorization_confirmed" in payload.model_fields_set
     ):
         work_order.authorization_confirmed = bool(payload.authorization_confirmed)
+    if payload.is_comeback is not None or "is_comeback" in payload.model_fields_set:
+        work_order.is_comeback = bool(payload.is_comeback)
+    db.add(work_order)
+    db.commit()
+    db.refresh(work_order)
+    return _to_read(work_order)
+
+
+def assign_technician(
+    *,
+    db: Session,
+    auth: AuthContext,
+    work_order_id: int,
+    payload: WorkOrderAssignTechnicianRequest,
+) -> WorkOrderRead:
+    work_order = _require_work_order(db, auth, work_order_id)
+    if payload.technician_id is None:
+        work_order.assigned_technician_id = None
+    else:
+        technician = db.scalar(
+            select(Technician).where(
+                Technician.id == payload.technician_id,
+                Technician.owner_user_id == effective_owner_id(auth),
+            )
+        )
+        if technician is None:
+            raise WorkOrderStoreError("Technician not found.")
+        work_order.assigned_technician_id = technician.id
     db.add(work_order)
     db.commit()
     db.refresh(work_order)

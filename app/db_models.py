@@ -1,12 +1,13 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 
 from sqlalchemy import (
     JSON,
     Boolean,
     CheckConstraint,
+    Date,
     DateTime,
     ForeignKey,
     Index,
@@ -539,6 +540,104 @@ class EstimateApprovalEvent(Base):
     revision: Mapped[EstimateRevision] = relationship()
 
 
+class Technician(Base):
+    __tablename__ = "technicians"
+    __table_args__ = (
+        Index(
+            "ix_technicians_owner_archived_updated", "owner_user_id", "is_archived", "updated_at"
+        ),
+        Index("ix_technicians_owner_name", "owner_user_id", "last_name", "first_name"),
+        UniqueConstraint("user_account_id", name="uq_technicians_user_account_id"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    owner_user_id: Mapped[int] = mapped_column(
+        ForeignKey("user_accounts.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    user_account_id: Mapped[int | None] = mapped_column(
+        ForeignKey("user_accounts.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    first_name: Mapped[str | None] = mapped_column(String(120))
+    last_name: Mapped[str | None] = mapped_column(String(120))
+    phone: Mapped[str | None] = mapped_column(String(40))
+    phone_normalized: Mapped[str | None] = mapped_column(String(32))
+    email: Mapped[str | None] = mapped_column(String(180))
+    email_normalized: Mapped[str | None] = mapped_column(String(180))
+    employment_status: Mapped[str | None] = mapped_column(String(40))
+    job_title: Mapped[str | None] = mapped_column(String(120))
+    hire_date: Mapped[date | None] = mapped_column(Date)
+    hourly_cost: Mapped[Decimal | None] = mapped_column(Numeric(10, 2))
+    certifications: Mapped[str | None] = mapped_column(Text)
+    certification_expiration: Mapped[date | None] = mapped_column(Date)
+    specialties: Mapped[str | None] = mapped_column(Text)
+    driver_license_valid: Mapped[bool | None] = mapped_column(Boolean)
+    insurance_verified: Mapped[bool | None] = mapped_column(Boolean)
+    normal_availability: Mapped[str | None] = mapped_column(Text)
+    safety_notes: Mapped[str | None] = mapped_column(Text)
+    is_archived: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=False,
+        server_default="false",
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    time_entries: Mapped[list[TechnicianTimeEntry]] = relationship(
+        back_populates="technician",
+        cascade="all, delete-orphan",
+        order_by="TechnicianTimeEntry.clock_in_at.desc()",
+    )
+
+
+class TechnicianTimeEntry(Base):
+    __tablename__ = "technician_time_entries"
+    __table_args__ = (
+        Index(
+            "ix_technician_time_entries_technician_created",
+            "technician_id",
+            "created_at",
+        ),
+        Index(
+            "ux_technician_time_entries_one_open_per_technician",
+            "technician_id",
+            unique=True,
+            postgresql_where=text("clock_out_at IS NULL"),
+            sqlite_where=text("clock_out_at IS NULL"),
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    technician_id: Mapped[int] = mapped_column(
+        ForeignKey("technicians.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    owner_user_id: Mapped[int] = mapped_column(
+        ForeignKey("user_accounts.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    clock_in_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    clock_out_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+
+    technician: Mapped[Technician] = relationship(back_populates="time_entries")
+
+
 class WorkOrder(Base):
     __tablename__ = "work_orders"
     __table_args__ = (
@@ -562,6 +661,7 @@ class WorkOrder(Base):
             "vehicle_id",
             "updated_at",
         ),
+        Index("ix_work_orders_assigned_technician", "assigned_technician_id"),
         UniqueConstraint(
             "estimate_id",
             "estimate_revision_id",
@@ -611,6 +711,16 @@ class WorkOrder(Base):
         server_default="false",
     )
     scheduled_for: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    assigned_technician_id: Mapped[int | None] = mapped_column(
+        ForeignKey("technicians.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    is_comeback: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=False,
+        server_default="false",
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
@@ -624,6 +734,7 @@ class WorkOrder(Base):
     )
 
     owner: Mapped[UserAccount] = relationship(back_populates="work_orders")
+    assigned_technician: Mapped[Technician | None] = relationship()
     estimate: Mapped[Estimate] = relationship(back_populates="work_orders")
     revision: Mapped[EstimateRevision] = relationship(back_populates="work_orders")
     customer: Mapped[Customer] = relationship()
