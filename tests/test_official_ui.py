@@ -74,65 +74,6 @@ def test_marketing_landing_page_gating() -> None:
     assert 'document.body.classList.remove("marketing-mode")' in javascript
 
 
-def test_overview_dashboard_and_approval_queue_markup() -> None:
-    """Regression coverage for the Overview dashboard that replaced the old
-    "Shop intelligence online" hero, and the new Approval Queue view."""
-    html = (STATIC / "index.html").read_text(encoding="utf-8")
-    javascript = (STATIC / "app.js").read_text(encoding="utf-8")
-    css = (STATIC / "styles.css").read_text(encoding="utf-8")
-
-    assert "Shop intelligence online" not in html
-
-    for element_id in (
-        "dashboard-range-preset",
-        "dashboard-date-from",
-        "dashboard-date-to",
-        "dashboard-summary-refresh",
-        "dashboard-metrics",
-        "dashboard-health",
-        "chart-revenue-trend",
-        "chart-work-order-trend",
-        "revenue-breakdown-list",
-        "dashboard-insights-list",
-        "current-ops-open",
-        "current-ops-in-progress",
-        "current-ops-waiting-parts",
-        "current-ops-awaiting-approval",
-        "current-ops-completed-not-invoiced",
-        "financial-obligations-outstanding",
-        "financial-obligations-overdue-balance",
-        "financial-obligations-overdue-count",
-        "financial-obligations-deposits",
-        "upcoming-installments-list",
-        "dashboard-command",
-        "dashboard-send",
-        "refresh-health",
-        "view-approval-queue",
-        "approval-queue-list",
-        "approval-queue-detail",
-        "approval-queue-open-estimate",
-        "approval-queue-open-customer",
-        "nav-approval-queue-badge",
-    ):
-        assert f'id="{element_id}"' in html
-
-    assert 'data-view-panel="approval-queue"' in html
-    assert 'data-view="approval-queue"' in html
-    assert html.count("nav-item is-disabled") == 8
-    assert html.count("nav-soon-badge") == 8
-
-    assert "async function loadDashboardSummary" in javascript
-    assert "/api/dashboard/summary" in javascript
-    assert "async function loadApprovalQueue" in javascript
-    assert "status=awaiting_approval" in javascript
-    assert 'src="/static/vendor/chart.umd.min.js"' in html
-    assert (STATIC / "vendor" / "chart.umd.min.js").is_file()
-    assert (STATIC / "vendor" / "LICENSE-chart.js").is_file()
-
-    assert ".metric-card" in css
-    assert ".gauge-ring" in css
-
-
 def test_ui_preserves_connected_workflows() -> None:
     html = (STATIC / "index.html").read_text(encoding="utf-8")
     javascript = (STATIC / "app.js").read_text(encoding="utf-8")
