@@ -5,41 +5,63 @@ Information owner: the active session author.
 Read when: starting or resuming work.
 Update when: a substantial task completes or context needs to be handed forward.
 Last verified date: 2026-07-11.
-Relevant sources: `docs/context/CURRENT_STATE.md`, `docs/context/KNOWN_ISSUES.md`, `docs/context/PLANS.md`, `git status`/`git log`, full local gate runs on 2026-07-11 (230 tests), two live migration + Playwright browser verification passes against the real backend container, independent review + security review for both sub-phase 1 and sub-phase 2 (all PASS, two real sub-phase-2 findings fixed same-day).
+Relevant sources: `docs/context/CURRENT_STATE.md`, `docs/context/KNOWN_ISSUES.md`, `docs/context/PLANS.md`, `git status`/`git log`, `gh pr list`/`gh pr view`, full local gate runs on 2026-07-11 (230 tests), two live migration + Playwright browser verification passes against the real backend container, independent review + security review for both sub-phase 1 and sub-phase 2 (all PASS, two real sub-phase-2 findings fixed same-day).
 
 ## Identity
 
 - Updated UTC: 2026-07-11.
 - Agent: Claude
 - Branch: `agent/claude/landing-page-redesign` (created off `main` at `ab8ed98`).
-- Worktree: primary (`/home/dejake/optimus-server`); untracked stray `optimusOS/` clone still present (owner's accidental clone — leave alone, unrelated to this app).
+- Worktree: primary (`/home/dejake/optimus-server`).
 
-## Active task — Two slices SHIPPED; sub-phase 0+1 COMMITTED locally; sub-phase 2 implemented, reviewed, uncommitted
+## Active task — Phase 5.6 sub-phases 0-2 implemented, pushed, PR open against main
 
-Branch `agent/claude/landing-page-redesign` (3 commits ahead of `main` — 2 pushed to `origin`, 1 local-only — plus uncommitted working-tree changes):
+Branch `agent/claude/landing-page-redesign`, 4 commits ahead of the original `main` base, all pushed to `origin`:
 
-1. `4a8566a` (pushed) — **Landing Page Redesign**: a new unauthenticated marketing page at `/` plus a graphite/off-white/steel/restrained-red re-theme of the whole app.
-2. `97e8b9d` (pushed) — **Overview Dashboard & Approval Queue**: replaced the old "Shop intelligence online" dashboard hero with a real, backend-connected shop-management overview plus a new real Approval Queue view. No fabricated data — metrics without real backing show an honest "not available" reason instead.
-3. `d7f31eb` (**committed, not pushed**) — **Phase 5.6 sub-phase 0 + 1**: nav cleanup + the multi-role owner/technician authorization foundation (`shop_owner_id` column, `effective_owner_id()`/`require_role()`/`require_owner_context()`, every owner-scoped store module switched to the new scoping call, all 38 business routes gated to owner). Independently reviewed (no defects) and security reviewed (**PASS**, one hardening item deferred to sub-phase 2 — now closed, see below).
-4. **UNCOMMITTED** — **Phase 5.6 sub-phase 2 (Technicians module)**: `Technician`/`TechnicianTimeEntry` tables + migration, `app/technician_store.py` (CRUD + login provisioning + clock in/out — the template pattern every later sub-phase reuses), work orders carved open for technicians (own-assigned-only), new `#view-technicians`/`#view-my-day` frontend, role-based nav visibility and routing. Independently reviewed and security reviewed (**both PASS after fixes**) — two real findings fixed same-day: a technician losing their "My Day" landing on page reload, and their own wage field (`hourly_cost`) leaking via `GET /api/technicians/me`. Both fixes live-verified via a second Playwright pass.
+1. `4a8566a` — **Landing Page Redesign**: unauthenticated marketing page at `/` plus a graphite/off-white/steel/restrained-red re-theme. Merged to `main` via PR #14.
+2. `97e8b9d` — **Overview Dashboard & Approval Queue**: real backend-connected shop-management overview + Approval Queue view. No fabricated data. Merged to `main` via PR #15.
+3. `d7f31eb` — **Phase 5.6 sub-phase 0 + 1**: nav cleanup + multi-role owner/technician authorization foundation (`shop_owner_id`, `effective_owner_id()`/`require_role()`/`require_owner_context()`, all 38 business routes gated to owner). Independently + security reviewed, PASS.
+4. `f169311` — **Phase 5.6 sub-phase 2 (Technicians module)**: `Technician`/`TechnicianTimeEntry` tables, `app/technician_store.py` (CRUD + login provisioning + clock in/out), work orders carved open for technicians (own-assigned-only), `#view-technicians`/`#view-my-day` frontend. Independently + security reviewed, PASS after fixing two same-day findings (My Day lost on reload; `hourly_cost` leaking to a technician's own profile view).
 
-All four are detailed in full in `docs/context/CURRENT_STATE.md` (not duplicated here — see "Landing Page Redesign", "Overview Dashboard & Approval Queue", "Phase 5.6 Sub-phase 0 & 1", and "Phase 5.6 Sub-phase 2" sections). Items 1-2 are **pushed to `origin/agent/claude/landing-page-redesign`, not merged into `main`, not deployed**. Item 3 is **committed locally, not pushed**. Item 4 is **implemented and reviewed, not committed**. None of this is merged, deployed, or has an open PR — all of that needs separate explicit owner approval.
+Full change detail for all four lives in `docs/context/CURRENT_STATE.md` (not duplicated here).
 
-### What to check before continuing
+## Verified baseline
 
-- Read `docs/context/CURRENT_STATE.md`'s "Landing Page Redesign", "Overview Dashboard & Approval Queue", "Phase 5.6 Sub-phase 0 & 1", and "Phase 5.6 Sub-phase 2" sections for full change lists and verification evidence.
-- Read `docs/context/PLANS.md`'s "Phase 5.6" section in full before starting sub-phase 3 (Parts Inventory + Vendors) — sub-phases 0, 1, and 2 are all marked done there.
-- Read `docs/context/KNOWN_ISSUES.md`'s "Historical Resolved Issues" — the sub-phase 1 security-review hardening item is now closed (re-validated inside `provision_login()`), and a new entry records sub-phase 2's two review findings and their fixes.
-- `git status --short` should show `alembic/versions/012_technicians.py`, `app/technician_store.py`, and `tests/test_technicians_api.py` as untracked (new), and `app/auth.py`, `app/db_models.py`, `app/main.py`, `app/models.py`, `app/static/app.js`, `app/static/index.html`, `app/work_order_store.py`, `tests/test_official_ui.py`, `tests/test_role_isolation.py` as modified — plus the pre-existing untracked `optimusOS/` stray clone (unrelated, leave alone; flagged again in this session's independent review as a repo-hygiene risk worth cleaning up or gitignoring at some point).
-- The four `docker compose` containers (`backend`, `frontend`, `postgres`, `redis`, `worker`) are running the local dev stack; `backend` was rebuilt twice this session (once for sub-phase 2's initial implementation, once after the two review-driven fixes) — its image bakes in `app/static` and `app/*.py` at build time, unlike the `frontend` nginx service which bind-mounts `app/static` live and never exercises the real CSP or real backend routes. The dev Postgres is currently at migration head `012_technicians`.
-- No synthetic or real credentials are left lying around: all synthetic accounts created for this session's two live-verification passes (`subphase2-verify-owner` and its provisioned technician login, deleted via cascade) were removed from the dev database afterward.
+- Session started with `main` at `ab8ed98` and this branch already carrying commits 1-2 (pushed, PRs #14/#15 already merged to `main` by the owner via GitHub before this session's `git`/GitHub sync check). Commit 3 (`d7f31eb`) existed locally, committed but unpushed, from immediately prior work in the same session lineage.
+- This session added commit 4 (`f169311`), pushed both 3 and 4, fast-forwarded local `main` to match `origin/main` (`acd886d`), and confirmed local/remote SHA parity on both `main` and this branch.
 
-### Exact next task for this branch
+## Evidence
 
-Two independent threads, neither blocks the other:
+- `ruff format`/`ruff check .`: clean. `pyright`: 0 errors. `node --check app/static/app.js`: OK.
+- `pytest -q`: 230 passed (214 prior + 15 new in `tests/test_technicians_api.py` + 1 `hourly_cost`-exclusion assertion).
+- Migration `012_technicians` applied and downgraded cleanly against the real dev Postgres (`docker compose exec backend alembic upgrade head` / `downgrade -1` / `upgrade head`); schema confirmed via `psql \d`.
+- Two full Playwright walkthroughs against the rebuilt `backend` container (owner creates/provisions a technician, technician logs in, sees role-correct nav, clocks in/out, reloads and still lands on My Day, `/api/technicians/me` excludes `hourly_cost`, `/api/customers` returns `403` from the technician's own session) — zero console errors, zero CSP violations both times. Synthetic accounts deleted afterward.
+- Independent review (`optimus-reviewer`) and security review (`optimus-security-reviewer`) run separately for sub-phase 1 and sub-phase 2; both sub-phases PASS. Sub-phase 2 had two real findings, both fixed and re-verified live same-day (see `docs/context/KNOWN_ISSUES.md`).
+- `git`/GitHub sync confirmed via `git rev-parse` on both sides and `gh api .../branches/...`: local `main` and local `agent/claude/landing-page-redesign` are byte-identical to their `origin` counterparts.
 
-1. **Owner commit/merge decision** on everything now sitting on this branch: the two already-pushed commits (landing page, dashboard) still need a decision on merging to `main`/opening a PR; the locally-committed sub-phase 0+1 commit needs a push decision; the uncommitted sub-phase 2 work needs a commit decision.
-2. **If continuing Phase 5.6**: start sub-phase 3 (Parts Inventory + Vendors, paired) per `docs/context/PLANS.md` — new `Vendor`, `PurchaseOrder` (normalized per the owner's decision), `Part`, `PartAllocation` tables; `Part.unit_cost` unlocks a dashboard follow-up to finally compute real Gross Profit/Gross Profit Margin (flagged as its own small task after this sub-phase, not bundled into it).
+## Unverified
+
+- No live/billable OpenAI calls were made this session (not needed for this work).
+- Staging deployment status for this branch's work is unverified — nothing here has been deployed; staging still runs an older `main` commit per `docs/context/KNOWN_ISSUES.md`.
+- PR #17 (opened by the owner against `main`, containing commits 3-4) had a failing `handoff-contract` CI check at last look (this file was missing required headings) — fixed in this same commit; not yet re-confirmed green in CI as of writing this line.
+
+## Unrelated preexisting changes
+
+- Untracked stray `optimusOS/` directory (~45MB nested project clone) at the repo root — owner's accidental clone, predates this session, not part of any commit, flagged again by this session's independent review as a repo-hygiene item worth cleaning up or gitignoring eventually.
+- Untracked `..env.swp` file (vim swap file) appeared in the working tree during this session — not created by this session's work, not read or committed, flagged to the owner directly in-conversation.
+- Open PR #16 ("Revert 'Replace Shop Intelligence Online...'") against `main`, opened by the owner shortly after PR #15 merged — predates this session's work, not touched by this session, still open/unresolved.
+
+## Blockers and risks
+
+- PR #16 (revert of the dashboard work) is open and unresolved on `main`. This session did not merge, close, or otherwise act on it — that decision belongs to the owner. Its eventual resolution (merge or close) could affect files this session's PR #17 also touches (`app/static/index.html`, `app/static/app.js`); worth resolving PR #16 before or shortly after PR #17 merges to avoid compounding merge complexity.
+- Sub-phase 1's security review flagged (and sub-phase 2 closed) a hardening item around `shop_owner_id` validation — no longer open, kept here only as a pointer in case future sub-phases touch `provision_login()` again.
+- No new blockers introduced by this session's own work; all gates green, both sub-phases independently + security reviewed with a clean pass.
+
+## Exact next task
+
+1. Resolve PR #16 (merge the revert or close it) — owner decision, not made this session.
+2. Merge or otherwise resolve PR #17 (owner decision/action).
+3. If continuing Phase 5.6: start sub-phase 3 (Parts Inventory + Vendors, paired) per `docs/context/PLANS.md` — new `Vendor`, `PurchaseOrder` (normalized), `Part`, `PartAllocation` tables; `Part.unit_cost` unlocks a follow-up to compute real Gross Profit/Gross Profit Margin on the dashboard (flagged as its own small task, not bundled into sub-phase 3).
 
 ## Carried over from the Phase 5.5 session — not touched by any slice on this branch
 
