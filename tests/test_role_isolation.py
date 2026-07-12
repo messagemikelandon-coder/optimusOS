@@ -137,6 +137,7 @@ def test_technician_session_is_rejected_on_owner_only_routes_end_to_end(
             "/api/estimates",
             "/api/invoices",
             "/api/notifications",
+            "/api/dashboard/summary",
             "/api/technicians",
         ]
 
