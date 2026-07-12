@@ -71,7 +71,7 @@ plugins = ["pydantic.mypy"]
 include = ["app*", "integration*", "scripts*"]
 
 [tool.setuptools.package-data]
-app = ["static/*"]
+app = ["static/*", "static/vendor/*", "static/media/*"]
 
 [dependency-groups]
 dev = [

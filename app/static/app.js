@@ -130,6 +130,8 @@ const viewMeta = {
   invoices: { eyebrow: "Customer billing", title: "Invoices" },
   notifications: { eyebrow: "Owner alerts", title: "Notifications" },
   square: { eyebrow: "Payment integration", title: "Square" },
+  reports: { eyebrow: "Owner reporting", title: "Reports" },
+  scheduling: { eyebrow: "Not yet built", title: "Scheduling" },
   chat: { eyebrow: "Owner channel", title: "Talk to Optimus" },
   estimate: { eyebrow: "Pricing workflow", title: "Job estimator" },
   approval: { eyebrow: "Customer authorization", title: "Estimate approval" },
@@ -361,10 +363,25 @@ function navigate(view) {
   if (view === "invoices" && state.auth.authenticated) void loadInvoices();
   if (view === "notifications" && state.auth.authenticated) void loadNotifications();
   if (view === "square" && state.auth.authenticated) void loadSquareDashboard();
+  if (view === "reports" && state.auth.authenticated) void loadReports();
   if (view === "technicians" && state.auth.authenticated) void loadTechnicians();
   if (view === "my-day" && state.auth.authenticated) void loadMyDay();
-  if (view === "chat") window.setTimeout(() => $("chat-message").focus(), 180);
+  if (view === "chat") {
+    renderChatContextSummary();
+    window.setTimeout(() => $("chat-message").focus(), 180);
+  }
   if (view === "login") window.setTimeout(() => $("login-username").focus(), 180);
+}
+
+function renderChatContextSummary() {
+  const customerEl = $("chat-context-customer");
+  if (!customerEl) return;
+  customerEl.textContent = state.customers.selectedCustomer?.display_name || "None selected";
+  $("chat-context-vehicle").textContent = state.vehicles.selectedVehicle?.display_name || "None selected";
+  $("chat-context-estimate").textContent = state.approvalQueue.selectedEstimate?.estimate_number || "None selected";
+  $("chat-context-work-order").textContent = state.workOrders.selectedWorkOrder
+    ? `${state.workOrders.selectedWorkOrder.estimate_number} · ${workOrderStatusLabel(state.workOrders.selectedWorkOrder.status)}`
+    : "None selected";
 }
 
 function initializeNavigation() {
@@ -394,24 +411,6 @@ function initializeNavigation() {
       $("sidebar").classList.remove("is-open");
       $("mobile-menu").setAttribute("aria-expanded", "false");
     }
-  });
-}
-
-function initializeTilt() {
-  if (window.matchMedia("(pointer: coarse)").matches || window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
-  const tiltClasses = ["tilt-nw", "tilt-n", "tilt-ne", "tilt-w", "tilt-e", "tilt-sw", "tilt-s", "tilt-se"];
-  $$("[data-tilt-strength]").forEach((card) => {
-    card.addEventListener("pointermove", (event) => {
-      const rect = card.getBoundingClientRect();
-      const x = (event.clientX - rect.left) / rect.width;
-      const y = (event.clientY - rect.top) / rect.height;
-      const horizontal = x < .34 ? "w" : x > .66 ? "e" : "";
-      const vertical = y < .34 ? "n" : y > .66 ? "s" : "";
-      card.classList.remove(...tiltClasses);
-      const key = `tilt-${vertical}${horizontal}`;
-      if (tiltClasses.includes(key)) card.classList.add(key);
-    });
-    card.addEventListener("pointerleave", () => card.classList.remove(...tiltClasses));
   });
 }
 
@@ -1903,12 +1902,70 @@ function populateVehicleForm(vehicle = null, options = {}) {
   $("vehicle-customer-id").disabled = Boolean(vehicle);
 }
 
+function renderVehicleHistory(data) {
+  const estimatesEl = $("vehicle-history-estimates");
+  const workOrdersEl = $("vehicle-history-work-orders");
+  if (!estimatesEl || !workOrdersEl) return;
+
+  estimatesEl.innerHTML = data.estimates.items.length
+    ? data.estimates.items.map((item) => `
+      <button type="button" class="vehicle-preview-item" data-history-estimate-id="${item.id}">
+        <strong>${escapeHtml(item.estimate_number)} · ${escapeHtml(historyStatusLabel(item.status))}</strong>
+        <span>${item.estimate_total != null ? `$${item.estimate_total.toFixed(2)} · ` : ""}${new Date(item.updated_at).toLocaleString()}</span>
+      </button>`).join("") + (data.estimates.total > data.estimates.items.length ? `<p class="history-more">Showing ${data.estimates.items.length} of ${data.estimates.total}.</p>` : "")
+    : "<p>No estimates recorded for this vehicle yet.</p>";
+
+  workOrdersEl.innerHTML = data.work_orders.items.length
+    ? data.work_orders.items.map((item) => `
+      <button type="button" class="vehicle-preview-item" data-history-work-order-id="${item.id}">
+        <strong>${escapeHtml(item.estimate_number)} · ${escapeHtml(historyStatusLabel(item.status))}</strong>
+        <span>${escapeHtml(item.title)} · ${new Date(item.updated_at).toLocaleString()}</span>
+      </button>`).join("") + (data.work_orders.total > data.work_orders.items.length ? `<p class="history-more">Showing ${data.work_orders.items.length} of ${data.work_orders.total}.</p>` : "")
+    : "<p>No work orders for this vehicle yet.</p>";
+
+  $$("[data-history-estimate-id]", estimatesEl).forEach((button) => {
+    button.addEventListener("click", () => {
+      void openEstimateRecord(Number(button.dataset.historyEstimateId));
+    });
+  });
+  $$("[data-history-work-order-id]", workOrdersEl).forEach((button) => {
+    button.addEventListener("click", () => {
+      navigate("work-orders");
+      void selectWorkOrder(Number(button.dataset.historyWorkOrderId));
+    });
+  });
+}
+
+async function loadVehicleHistory(vehicleId) {
+  const estimatesEl = $("vehicle-history-estimates");
+  const workOrdersEl = $("vehicle-history-work-orders");
+  if (!estimatesEl || !workOrdersEl) return;
+  estimatesEl.innerHTML = '<div class="loading-panel"><span class="loading-spinner"></span><div><strong>Loading history</strong><br><small>Reading linked estimates and work orders.</small></div></div>';
+  workOrdersEl.innerHTML = "";
+  try {
+    const [estimatesResponse, workOrdersResponse] = await Promise.all([
+      apiFetch(`/api/estimates?vehicle_id=${vehicleId}&page_size=20`),
+      apiFetch(`/api/work-orders?vehicle_id=${vehicleId}&page_size=20`),
+    ]);
+    const estimatesData = await readApiPayload(estimatesResponse);
+    const workOrdersData = await readApiPayload(workOrdersResponse);
+    if (!estimatesResponse.ok || !estimatesData) throw apiError(estimatesResponse, estimatesData, "Vehicle estimate history failed");
+    if (!workOrdersResponse.ok || !workOrdersData) throw apiError(workOrdersResponse, workOrdersData, "Vehicle work-order history failed");
+    renderVehicleHistory({ estimates: estimatesData, work_orders: workOrdersData });
+  } catch (error) {
+    estimatesEl.innerHTML = `<div class="error-card"><strong>Vehicle history failed</strong><p>${escapeHtml(error.message)}</p></div>`;
+    workOrdersEl.innerHTML = "";
+  }
+}
+
 function renderVehicleDetail(vehicle = null) {
   const detail = $("vehicle-detail");
   if (!vehicle) {
     detail.innerHTML = "<p>Select a vehicle from the list or create a new record.</p>";
     $("vehicle-open-customer").hidden = true;
     $("vehicle-archive").hidden = true;
+    if ($("vehicle-history-estimates")) $("vehicle-history-estimates").innerHTML = "<p>Select a vehicle to load history.</p>";
+    if ($("vehicle-history-work-orders")) $("vehicle-history-work-orders").innerHTML = "<p>No vehicle selected.</p>";
     return;
   }
   detail.innerHTML = `
@@ -1990,6 +2047,7 @@ async function selectVehicle(vehicleId, options = {}) {
     populateVehicleForm(data);
     renderVehiclesList();
     syncEstimateRecordSummary();
+    void loadVehicleHistory(data.id);
     if (remember) void rememberSelectedVehicle(data);
     return data;
   } catch (error) {
@@ -2491,23 +2549,18 @@ function renderWorkOrderDetail(workOrder = null) {
       <span>${escapeHtml(workOrderStatusLabel(workOrder.status))}</span>
     </div>
     <p>${escapeHtml(workOrder.complaint)}</p>
-    <div class="customer-detail-grid">
-      <div><span>Customer</span><strong>${escapeHtml(workOrder.customer_display_name)}</strong></div>
-      <div><span>Vehicle</span><strong>${escapeHtml(workOrder.vehicle_display_name)}</strong></div>
-      <div><span>Estimate total</span><strong>${money(workOrder.estimate_total)}</strong></div>
-      <div><span>Labor estimate</span><strong>${escapeHtml(`${workOrder.labor_hours_estimate ?? 0} hr`)}</strong></div>
-      <div><span>Payment option</span><strong>${escapeHtml(workOrder.payment_option_selected || "Not selected")}</strong></div>
-      <div><span>Scheduled for</span><strong>${escapeHtml(workOrder.scheduled_for ? new Date(workOrder.scheduled_for).toLocaleString() : "Not scheduled")}</strong></div>
-      <div><span>Invoice</span><strong>${escapeHtml(workOrder.invoice_number || "Not generated yet")}</strong></div>
-      <div><span>Invoice status</span><strong>${escapeHtml(workOrder.invoice_status ? workOrder.invoice_status.replaceAll("_", " ") : "Not generated")}</strong></div>
-      <div><span>Technician</span><strong>${escapeHtml(workOrder.assigned_technician_display_name || "Unassigned")}</strong></div>
-      <div><span>Comeback</span><strong>${workOrder.is_comeback ? "Yes" : "No"}</strong></div>
-    </div>
-    <div class="result-grid">
-      <section class="result-section"><h3>Approved revision</h3><p>${escapeHtml(workOrder.source_revision.request.job)}</p><p>${money(workOrder.source_revision.estimate.totals.estimated_total)} · revision ${workOrder.source_revision.revision_number}</p></section>
-      <section class="result-section"><h3>Status history</h3><ul>${history}</ul></section>
-      <section class="result-section"><h3>Notes</h3><ul>${notes}</ul></section>
-      <section class="result-section"><h3>Blocked transitions</h3><ul>${blocked.map(([status, reason]) => `<li><strong>${escapeHtml(workOrderStatusLabel(status))}</strong> · ${escapeHtml(reason)}</li>`).join("") || "<li>None.</li>"}</ul></section>
+    <div class="detail-split">
+      <div class="detail-main">
+        <section class="result-section"><h3>Approved revision</h3><p>${escapeHtml(workOrder.source_revision.request.job)}</p><p>${money(workOrder.source_revision.estimate.totals.estimated_total)} · revision ${workOrder.source_revision.revision_number}</p></section>
+        <section class="result-section"><h3>Status history</h3><ul>${history}</ul></section>
+        <section class="result-section"><h3>Notes</h3><ul>${notes}</ul></section>
+        <section class="result-section"><h3>Blocked transitions</h3><ul>${blocked.map(([status, reason]) => `<li><strong>${escapeHtml(workOrderStatusLabel(status))}</strong> · ${escapeHtml(reason)}</li>`).join("") || "<li>None.</li>"}</ul></section>
+      </div>
+      <div class="detail-rail">
+        <div class="detail-rail-card"><span>Customer &amp; vehicle</span><div class="customer-detail-grid"><div><span>Customer</span><strong>${escapeHtml(workOrder.customer_display_name)}</strong></div><div><span>Vehicle</span><strong>${escapeHtml(workOrder.vehicle_display_name)}</strong></div><div><span>Technician</span><strong>${escapeHtml(workOrder.assigned_technician_display_name || "Unassigned")}</strong></div><div><span>Comeback</span><strong>${workOrder.is_comeback ? "Yes" : "No"}</strong></div></div></div>
+        <div class="detail-rail-card"><span>Appointment</span><div class="customer-detail-grid"><div><span>Scheduled for</span><strong>${escapeHtml(workOrder.scheduled_for ? new Date(workOrder.scheduled_for).toLocaleString() : "Not scheduled")}</strong></div></div></div>
+        <div class="detail-rail-card"><span>Totals &amp; invoice</span><div class="detail-totals"><div><span>Estimate total</span><strong>${money(workOrder.estimate_total)}</strong></div><div><span>Labor estimate</span><strong>${escapeHtml(`${workOrder.labor_hours_estimate ?? 0} hr`)}</strong></div><div><span>Payment option</span><strong>${escapeHtml(workOrder.payment_option_selected || "Not selected")}</strong></div><div class="detail-total-emphasis"><span>Invoice</span><strong>${escapeHtml(workOrder.invoice_number || "Not generated yet")}</strong></div><div><span>Invoice status</span><strong>${escapeHtml(workOrder.invoice_status ? workOrder.invoice_status.replaceAll("_", " ") : "Not generated")}</strong></div></div></div>
+      </div>
     </div>`;
   $("work-order-id").value = String(workOrder.id);
   $("work-order-diagnosis").value = workOrder.diagnosis || "";
@@ -2909,23 +2962,26 @@ function renderInvoiceDetail(invoice = null) {
       <span>${escapeHtml(invoiceStatusLabel(invoice.status))}${invoice.is_overdue ? ' <span class="badge">Overdue</span>' : ""}</span>
     </div>
     <p>${escapeHtml(invoice.complaint)}</p>
-    <div class="customer-detail-grid">
-      <div><span>Customer</span><strong>${escapeHtml(invoice.customer.display_name)}</strong></div>
-      <div><span>Vehicle</span><strong>${escapeHtml(invoice.vehicle.display_name)}</strong></div>
-      <div><span>Issued</span><strong>${escapeHtml(invoice.issued_at ? new Date(invoice.issued_at).toLocaleString() : "Draft")}</strong></div>
-      <div><span>Due</span><strong>${escapeHtml(invoice.due_at ? new Date(invoice.due_at).toLocaleString() : "Not issued")}</strong></div>
-      <div><span>Labor total</span><strong>${money(invoice.labor_total)}</strong></div>
-      <div><span>Parts total</span><strong>${money(invoice.parts_total)}</strong></div>
-      <div><span>Fees total</span><strong>${money(invoice.fees_total)}</strong></div>
-      <div><span>Invoice total</span><strong>${money(invoice.invoice_total)}</strong></div>
-      <div><span>Total paid</span><strong>${money(invoice.total_paid)}</strong></div>
-      <div><span>Balance due</span><strong>${money(invoice.balance_due)}</strong></div>
-      ${invoice.square_invoice_id ? `<div><span>Square status</span><strong>${escapeHtml(invoice.square_status || "unknown")}</strong></div>` : ""}
-      ${invoice.square_payment_url ? `<div><span>Square pay link</span><strong><a href="${escapeHtml(invoice.square_payment_url)}" target="_blank" rel="noopener">Open payment page</a></strong></div>` : ""}
+    <div class="detail-split">
+      <div class="detail-main">
+        <section class="result-section"><h3>Line items</h3><ul>${lineItems}</ul></section>
+        <section class="result-section"><h3>Payment history</h3><ul>${paymentRows}</ul></section>
+        ${invoice.schedule.length ? `<section class="result-section"><h3>Payment schedule</h3><ul>${scheduleRows}</ul></section>` : ""}
+      </div>
+      <div class="detail-rail">
+        <div class="detail-rail-card"><span>Customer &amp; vehicle</span><div class="customer-detail-grid"><div><span>Customer</span><strong>${escapeHtml(invoice.customer.display_name)}</strong></div><div><span>Vehicle</span><strong>${escapeHtml(invoice.vehicle.display_name)}</strong></div></div></div>
+        <div class="detail-rail-card"><span>Dates</span><div class="customer-detail-grid"><div><span>Issued</span><strong>${escapeHtml(invoice.issued_at ? new Date(invoice.issued_at).toLocaleString() : "Draft")}</strong></div><div><span>Due</span><strong>${escapeHtml(invoice.due_at ? new Date(invoice.due_at).toLocaleString() : "Not issued")}</strong></div></div></div>
+        <div class="detail-rail-card"><span>Financial summary</span><div class="detail-totals">
+          <div><span>Labor total</span><strong>${money(invoice.labor_total)}</strong></div>
+          <div><span>Parts total</span><strong>${money(invoice.parts_total)}</strong></div>
+          <div><span>Fees total</span><strong>${money(invoice.fees_total)}</strong></div>
+          <div class="detail-total-emphasis"><span>Invoice total</span><strong>${money(invoice.invoice_total)}</strong></div>
+          <div><span>Total paid</span><strong>${money(invoice.total_paid)}</strong></div>
+          <div class="detail-total-emphasis"><span>Balance due</span><strong>${money(invoice.balance_due)}</strong></div>
+        </div></div>
+        ${invoice.square_invoice_id || invoice.square_payment_url ? `<div class="detail-rail-card"><span>Square</span><div class="customer-detail-grid">${invoice.square_invoice_id ? `<div><span>Square status</span><strong>${escapeHtml(invoice.square_status || "unknown")}</strong></div>` : ""}${invoice.square_payment_url ? `<div><span>Pay link</span><strong><a href="${escapeHtml(invoice.square_payment_url)}" target="_blank" rel="noopener">Open payment page</a></strong></div>` : ""}</div></div>` : ""}
+      </div>
     </div>
-    <section class="result-section"><h3>Line items</h3><ul>${lineItems}</ul></section>
-    <section class="result-section"><h3>Payment history</h3><ul>${paymentRows}</ul></section>
-    ${invoice.schedule.length ? `<section class="result-section"><h3>Payment schedule</h3><ul>${scheduleRows}</ul></section>` : ""}
   `;
   $$("[data-void-payment-id]", detail).forEach((button) => {
     button.addEventListener("click", () => {
@@ -3462,6 +3518,12 @@ function initializeSquareDashboard() {
   });
 }
 
+function initializeReports() {
+  $("reports-refresh").addEventListener("click", () => {
+    void loadReports();
+  });
+}
+
 function setStatus(id, text, online = null) {
   $(id).textContent = text;
   const dot = $(`${id}-dot`);
@@ -3585,6 +3647,77 @@ async function loadDashboardSummary() {
     renderFinancialObligations(data);
   } catch (error) {
     showToast(`Dashboard summary failed: ${error.message}`, "error");
+  }
+}
+
+async function loadReports() {
+  if (!(await requireAuthenticated("login"))) return;
+  const revenueTable = $("reports-revenue-table");
+  const workOrderTable = $("reports-work-order-table");
+  const invoiceStatusTable = $("reports-invoice-status-table");
+  const balancesTable = $("reports-balances-table");
+  [revenueTable, workOrderTable, invoiceStatusTable, balancesTable].forEach((el) => {
+    el.innerHTML = "<tr><td colspan=\"2\">Loading…</td></tr>";
+  });
+  const range = dashboardDateRangeFromPreset(30);
+  $("reports-period-note").textContent = `${range.from.toLocaleDateString()} – ${range.to.toLocaleDateString()} (last 30 days, same window as the Overview dashboard default)`;
+  try {
+    const searchParams = new URLSearchParams({
+      date_from: range.from.toISOString(),
+      date_to: range.to.toISOString(),
+    });
+    const [summaryResponse, invoicesResponse] = await Promise.all([
+      apiFetch(`/api/dashboard/summary?${searchParams.toString()}`),
+      apiFetch("/api/invoices?page_size=200"),
+    ]);
+    const summary = await readApiPayload(summaryResponse);
+    const invoicesData = await readApiPayload(invoicesResponse);
+    if (!summaryResponse.ok || !summary) throw apiError(summaryResponse, summary, "Dashboard summary failed");
+    if (!invoicesResponse.ok || !invoicesData) throw apiError(invoicesResponse, invoicesData, "Invoice listing failed");
+
+    const metricsByKey = new Map(summary.metrics.map((metric) => [metric.key, metric]));
+    const revenueRows = [
+      ["revenue", "Revenue"],
+      ["labor_revenue", "Labor revenue"],
+      ["parts_revenue", "Parts revenue"],
+      ["average_repair_order", "Average repair order"],
+    ].map(([key, label]) => {
+      const metric = metricsByKey.get(key);
+      const value = metric && metric.available ? money(metric.value) : "Not available";
+      return `<tr><td>${escapeHtml(label)}</td><td>${value}</td></tr>`;
+    });
+    revenueTable.innerHTML = revenueRows.join("");
+
+    const ops = summary.current_operations;
+    workOrderTable.innerHTML = [
+      ["Open", ops.open_work_orders],
+      ["In progress", ops.in_progress],
+      ["Waiting on parts", ops.waiting_on_parts],
+      ["Awaiting customer approval", ops.awaiting_customer_approval],
+      ["Completed, not yet invoiced", ops.completed_not_invoiced],
+    ].map(([label, count]) => `<tr><td>${escapeHtml(label)}</td><td>${count}</td></tr>`).join("");
+
+    const statusCounts = new Map();
+    invoicesData.items.forEach((invoice) => {
+      statusCounts.set(invoice.status, (statusCounts.get(invoice.status) || 0) + 1);
+    });
+    invoiceStatusTable.innerHTML = statusCounts.size
+      ? [...statusCounts.entries()].map(([status, count]) => `<tr><td>${escapeHtml(invoiceStatusLabel(status))}</td><td>${count}</td></tr>`).join("")
+        + (invoicesData.total > invoicesData.items.length ? `<tr><td colspan="2" class="report-card-note">Showing ${invoicesData.items.length} of ${invoicesData.total} invoices.</td></tr>` : "")
+      : "<tr><td colspan=\"2\">No invoices recorded yet.</td></tr>";
+
+    const obligations = summary.financial_obligations;
+    balancesTable.innerHTML = [
+      ["Outstanding balance", money(obligations.outstanding_balance)],
+      ["Overdue balance", money(obligations.overdue_balance)],
+      ["Overdue invoice count", String(obligations.overdue_invoice_count)],
+      ["Deposits received", money(obligations.deposits_received_total)],
+    ].map(([label, value]) => `<tr><td>${escapeHtml(label)}</td><td>${value}</td></tr>`).join("");
+  } catch (error) {
+    [revenueTable, workOrderTable, invoiceStatusTable, balancesTable].forEach((el) => {
+      el.innerHTML = `<tr><td colspan="2">Failed to load: ${escapeHtml(error.message)}</td></tr>`;
+    });
+    showToast(`Reports load failed: ${error.message}`, "error");
   }
 }
 
@@ -3935,11 +4068,14 @@ function renderApprovalQueueDetail(estimate) {
     return;
   }
   container.innerHTML = `
-    <div class="customer-detail-header"><strong>${escapeHtml(estimate.estimate_number)}</strong><span>${escapeHtml(estimate.status)}</span></div>
+    <div class="customer-detail-header"><strong>${escapeHtml(estimate.estimate_number)}</strong><span>${escapeHtml(estimate.status.replaceAll("_", " "))}</span></div>
+    <div class="detail-rail-card"><span>Required owner action</span><p>This estimate is waiting on the customer's approval decision. No owner action is required unless you want to follow up or extend the link.</p></div>
     <div class="customer-detail-grid">
       <div><span>Customer</span><strong>${escapeHtml(estimate.customer_display_name || "—")}</strong></div>
       <div><span>Vehicle</span><strong>${escapeHtml(estimate.vehicle_display_name || "—")}</strong></div>
+      <div><span>Revision</span><strong>${estimate.current_revision_number ?? "—"}</strong></div>
       <div><span>Estimate total</span><strong>${estimate.estimate_total != null ? money(estimate.estimate_total) : "—"}</strong></div>
+      <div><span>Sent / updated</span><strong>${estimate.updated_at ? new Date(estimate.updated_at).toLocaleString() : "—"}</strong></div>
       <div><span>Expires</span><strong>${estimate.expires_at ? new Date(estimate.expires_at).toLocaleString() : "—"}</strong></div>
     </div>`;
 }
@@ -3986,7 +4122,6 @@ function initializeApprovalQueue() {
 function initializeApp() {
   setAuthState(false);
   initializeNavigation();
-  initializeTilt();
   loadSavedPreferences();
   initializeLocation();
   initializeChat();
@@ -4000,6 +4135,7 @@ function initializeApp() {
   initializeInvoices();
   initializeNotifications();
   initializeSquareDashboard();
+  initializeReports();
   initializeEstimate();
   initializeSystem();
   initializeAuth();
