@@ -95,6 +95,24 @@ const state = {
     items: [],
     loading: false,
   },
+  dashboard: {
+    summary: null,
+    rangePreset: "30",
+    dateFrom: null,
+    dateTo: null,
+    revenueChart: null,
+    workOrderChart: null,
+    sparklineCharts: {},
+  },
+  approvalQueue: {
+    items: [],
+    selectedEstimateId: null,
+    selectedEstimate: null,
+    page: 1,
+    pageSize: 20,
+    total: 0,
+    hasMore: false,
+  },
   currentView: "dashboard",
   health: null,
   lastEstimate: null,
@@ -102,12 +120,13 @@ const state = {
 
 const viewMeta = {
   login: { eyebrow: "Authentication", title: "Sign in" },
-  dashboard: { eyebrow: "Operations", title: "Command deck" },
+  dashboard: { eyebrow: "Operations", title: "Overview" },
   customers: { eyebrow: "Records", title: "Customers" },
   vehicles: { eyebrow: "Fleet", title: "Vehicles" },
   technicians: { eyebrow: "Staff", title: "Technicians" },
   "my-day": { eyebrow: "Technician workspace", title: "My Day" },
   "work-orders": { eyebrow: "Repair execution", title: "Work orders" },
+  "approval-queue": { eyebrow: "Customer decisions", title: "Approval Queue" },
   invoices: { eyebrow: "Customer billing", title: "Invoices" },
   notifications: { eyebrow: "Owner alerts", title: "Notifications" },
   square: { eyebrow: "Payment integration", title: "Square" },
@@ -327,6 +346,7 @@ function navigate(view) {
   else if (view === "approval") history.replaceState(null, "", "/approval" + window.location.hash);
   else if (window.location.pathname === "/login") history.replaceState(null, "", "/");
   window.scrollTo({ top: 0, behavior: "smooth" });
+  if (view === "dashboard" && state.auth.authenticated) void loadDashboardSummary();
   if (view === "customers" && state.auth.authenticated) void loadCustomers();
   if (view === "vehicles" && state.auth.authenticated) void loadVehicles();
   if (view === "work-orders" && state.auth.authenticated) {
@@ -337,6 +357,7 @@ function navigate(view) {
       });
     }
   }
+  if (view === "approval-queue" && state.auth.authenticated) void loadApprovalQueue();
   if (view === "invoices" && state.auth.authenticated) void loadInvoices();
   if (view === "notifications" && state.auth.authenticated) void loadNotifications();
   if (view === "square" && state.auth.authenticated) void loadSquareDashboard();
@@ -3497,6 +3518,471 @@ function initializeAuth() {
   });
 }
 
+// --- Overview dashboard --------------------------------------------------
+
+const DASHBOARD_METRIC_FORMAT = {
+  revenue: "currency",
+  labor_revenue: "currency",
+  parts_revenue: "currency",
+  average_repair_order: "currency",
+  open_work_orders: "integer",
+  awaiting_customer_approval: "integer",
+  gross_profit: "currency",
+  net_profit: "currency",
+};
+
+const DASHBOARD_SPARKLINE_SERIES = {
+  revenue: "revenue",
+  labor_revenue: "labor",
+  parts_revenue: "parts",
+};
+
+function dashboardDateRangeFromPreset(days) {
+  const to = new Date();
+  const from = new Date(to.getTime() - days * 24 * 60 * 60 * 1000);
+  return { from, to };
+}
+
+function toDateInputValue(date) {
+  return date.toISOString().slice(0, 10);
+}
+
+async function loadDashboardSummary() {
+  if (!(await requireAuthenticated("login"))) return;
+  const preset = state.dashboard.rangePreset;
+  let dateFrom;
+  let dateTo;
+  if (preset === "custom") {
+    const fromValue = $("dashboard-date-from").value;
+    const toValue = $("dashboard-date-to").value;
+    if (!fromValue || !toValue) return;
+    dateFrom = new Date(`${fromValue}T00:00:00Z`);
+    dateTo = new Date(`${toValue}T23:59:59Z`);
+  } else {
+    const range = dashboardDateRangeFromPreset(Number(preset));
+    dateFrom = range.from;
+    dateTo = range.to;
+    $("dashboard-date-from").value = toDateInputValue(dateFrom);
+    $("dashboard-date-to").value = toDateInputValue(dateTo);
+  }
+  state.dashboard.dateFrom = dateFrom;
+  state.dashboard.dateTo = dateTo;
+  try {
+    const searchParams = new URLSearchParams({
+      date_from: dateFrom.toISOString(),
+      date_to: dateTo.toISOString(),
+    });
+    const response = await apiFetch(`/api/dashboard/summary?${searchParams.toString()}`);
+    const data = await readApiPayload(response);
+    if (!response.ok || !data) throw apiError(response, data, "Dashboard summary failed");
+    state.dashboard.summary = data;
+    renderDashboardMetrics(data);
+    renderDashboardGauges(data);
+    renderDashboardCharts(data);
+    renderRevenueBreakdown(data);
+    renderDashboardInsights(data);
+    renderCurrentOperations(data);
+    renderFinancialObligations(data);
+  } catch (error) {
+    showToast(`Dashboard summary failed: ${error.message}`, "error");
+  }
+}
+
+function renderDashboardMetrics(summary) {
+  const metricsByKey = new Map(summary.metrics.map((metric) => [metric.key, metric]));
+  $$("#dashboard-metrics [data-metric]").forEach((card) => {
+    const key = card.dataset.metric;
+    const metric = metricsByKey.get(key);
+    if (!metric) return;
+    const valueEl = card.querySelector('[data-role="value"]');
+    const deltaEl = card.querySelector('[data-role="delta"]');
+    const unavailableEl = card.querySelector('[data-role="unavailable"]');
+    if (!metric.available) {
+      if (valueEl) valueEl.textContent = "—";
+      if (deltaEl) deltaEl.textContent = "";
+      if (unavailableEl) {
+        unavailableEl.hidden = false;
+        unavailableEl.textContent = metric.unavailable_reason || "Not available yet.";
+      }
+      return;
+    }
+    if (unavailableEl) unavailableEl.hidden = true;
+    const format = DASHBOARD_METRIC_FORMAT[key];
+    if (valueEl) {
+      valueEl.textContent = format === "currency" ? money(metric.value) : String(Math.round(metric.value));
+    }
+    if (deltaEl) {
+      if (metric.change_percent == null) {
+        deltaEl.textContent = "";
+        deltaEl.classList.remove("is-up", "is-down");
+      } else {
+        const change = metric.change_percent;
+        deltaEl.textContent = `${change > 0 ? "+" : ""}${change}% vs prior period`;
+        deltaEl.classList.toggle("is-up", change > 0);
+        deltaEl.classList.toggle("is-down", change < 0);
+      }
+    }
+    const sparklineCanvas = card.querySelector('[data-role="sparkline"]');
+    const seriesKey = DASHBOARD_SPARKLINE_SERIES[key];
+    if (sparklineCanvas && seriesKey) {
+      renderMetricSparkline(sparklineCanvas, key, summary.revenue_trend, seriesKey);
+    }
+  });
+}
+
+function renderMetricSparkline(canvas, chartKey, trend, seriesKey) {
+  const existing = state.dashboard.sparklineCharts[chartKey];
+  if (existing) existing.destroy();
+  if (!trend.length || typeof Chart === "undefined") return;
+  state.dashboard.sparklineCharts[chartKey] = new Chart(canvas, {
+    type: "line",
+    data: {
+      labels: trend.map((point) => point.period_label),
+      datasets: [{
+        data: trend.map((point) => point.values[seriesKey] || 0),
+        borderColor: "#ad4634",
+        backgroundColor: "rgba(173,70,52,.12)",
+        fill: true,
+        tension: 0.35,
+        pointRadius: 0,
+        borderWidth: 2,
+      }],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      animation: false,
+      scales: { x: { display: false }, y: { display: false } },
+      plugins: { legend: { display: false }, tooltip: { enabled: false } },
+    },
+  });
+}
+
+function renderGauge(key, metric) {
+  const card = document.querySelector(`.gauge-card[data-gauge="${key}"]`);
+  if (!card) return;
+  const ring = card.querySelector('[data-role="ring"]');
+  const label = card.querySelector('[data-role="ring-label"]');
+  const unavailableEl = card.querySelector('[data-role="unavailable"]');
+  if (!metric.available) {
+    if (unavailableEl) {
+      unavailableEl.hidden = false;
+      unavailableEl.textContent = metric.unavailable_reason || "Not available yet.";
+    }
+    if (label) label.textContent = "—";
+    if (ring) ring.setAttribute("stroke-dashoffset", "100");
+    return;
+  }
+  if (unavailableEl) unavailableEl.hidden = true;
+  const percent = Math.max(0, Math.min(100, metric.value));
+  if (ring) ring.setAttribute("stroke-dashoffset", String(100 - percent));
+  if (label) label.textContent = `${Math.round(percent)}%`;
+}
+
+function renderDashboardGauges(summary) {
+  renderGauge("gross_profit_margin", summary.gross_profit_margin);
+  renderGauge("approval_conversion_rate", summary.approval_conversion_rate);
+  renderGauge("accounts_receivable_health", summary.accounts_receivable_health);
+}
+
+function renderRevenueTrendChart(trend) {
+  const canvas = $("chart-revenue-trend");
+  const emptyState = $("chart-revenue-trend-empty");
+  if (state.dashboard.revenueChart) {
+    state.dashboard.revenueChart.destroy();
+    state.dashboard.revenueChart = null;
+  }
+  if (!trend.length) {
+    canvas.hidden = true;
+    emptyState.hidden = false;
+    return;
+  }
+  canvas.hidden = false;
+  emptyState.hidden = true;
+  if (typeof Chart === "undefined") return;
+  state.dashboard.revenueChart = new Chart(canvas, {
+    type: "bar",
+    data: {
+      labels: trend.map((point) => point.period_label),
+      datasets: [
+        { label: "Revenue", data: trend.map((point) => point.values.revenue || 0), backgroundColor: "rgba(173,70,52,.55)" },
+        { label: "Labor", data: trend.map((point) => point.values.labor || 0), backgroundColor: "rgba(154,167,173,.6)" },
+        { label: "Parts", data: trend.map((point) => point.values.parts || 0), backgroundColor: "rgba(201,138,58,.55)" },
+      ],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      scales: {
+        x: { ticks: { color: "#a29e93" }, grid: { color: "rgba(198,192,182,.08)" } },
+        y: { ticks: { color: "#a29e93", callback: (value) => money(value) }, grid: { color: "rgba(198,192,182,.08)" } },
+      },
+      plugins: {
+        legend: { labels: { color: "#f1ece3" } },
+        tooltip: { callbacks: { label: (ctx) => `${ctx.dataset.label}: ${money(ctx.parsed.y)}` } },
+      },
+    },
+  });
+}
+
+function renderWorkOrderTrendChart(trend) {
+  const canvas = $("chart-work-order-trend");
+  const emptyState = $("chart-work-order-trend-empty");
+  if (state.dashboard.workOrderChart) {
+    state.dashboard.workOrderChart.destroy();
+    state.dashboard.workOrderChart = null;
+  }
+  const hasData = trend.some((point) => (point.values.opened || 0) > 0 || (point.values.completed || 0) > 0);
+  if (!trend.length || !hasData) {
+    canvas.hidden = true;
+    emptyState.hidden = false;
+    return;
+  }
+  canvas.hidden = false;
+  emptyState.hidden = true;
+  if (typeof Chart === "undefined") return;
+  state.dashboard.workOrderChart = new Chart(canvas, {
+    type: "line",
+    data: {
+      labels: trend.map((point) => point.period_label),
+      datasets: [
+        { label: "Opened", data: trend.map((point) => point.values.opened || 0), borderColor: "#ad4634", tension: 0.3 },
+        { label: "Completed", data: trend.map((point) => point.values.completed || 0), borderColor: "#9aa7ad", tension: 0.3 },
+      ],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      scales: {
+        x: { ticks: { color: "#a29e93" }, grid: { color: "rgba(198,192,182,.08)" } },
+        y: { ticks: { color: "#a29e93", precision: 0 }, grid: { color: "rgba(198,192,182,.08)" } },
+      },
+      plugins: { legend: { labels: { color: "#f1ece3" } } },
+    },
+  });
+}
+
+function renderDashboardCharts(summary) {
+  renderRevenueTrendChart(summary.revenue_trend);
+  renderWorkOrderTrendChart(summary.work_order_trend);
+}
+
+function renderRevenueBreakdown(summary) {
+  const container = $("revenue-breakdown-list");
+  if (!summary.revenue_breakdown.length) {
+    container.innerHTML = '<p class="empty-card-inline">No completed repair orders in the selected period.</p>';
+    return;
+  }
+  container.innerHTML = summary.revenue_breakdown.map((item) => `
+    <div class="revenue-breakdown-item">
+      <div class="revenue-breakdown-item-head"><strong>${escapeHtml(item.label)}</strong><span>${money(item.amount)} · ${item.percent}%</span></div>
+      <progress class="revenue-breakdown-bar" value="${item.percent}" max="100"></progress>
+    </div>`).join("");
+}
+
+function openDashboardInsightTarget(insight) {
+  if (insight.link_view === "estimate" && insight.link_record_id) {
+    void openEstimateRecord(insight.link_record_id);
+  } else if (insight.link_view === "work-orders") {
+    navigate("work-orders");
+    if (insight.link_record_id) void selectWorkOrder(insight.link_record_id);
+  } else if (insight.link_view === "invoices") {
+    navigate("invoices");
+    if (insight.link_record_id) void selectInvoice(insight.link_record_id);
+  }
+}
+
+function renderDashboardInsights(summary) {
+  const container = $("dashboard-insights-list");
+  if (!summary.insights.length) {
+    container.innerHTML = '<p class="empty-card-inline">No open items right now.</p>';
+    return;
+  }
+  container.innerHTML = summary.insights.map((insight, index) => `
+    <button type="button" class="insight-item priority-${escapeHtml(insight.priority)}" data-insight-index="${index}">
+      <span class="insight-item-issue">${escapeHtml(insight.issue)}</span>
+      <span class="insight-item-metric">${escapeHtml(insight.metric)}</span>
+      <span class="insight-item-action">${escapeHtml(insight.recommended_action)}</span>
+    </button>`).join("");
+  $$("[data-insight-index]", container).forEach((button) => {
+    button.addEventListener("click", () => {
+      const insight = summary.insights[Number(button.dataset.insightIndex)];
+      if (insight) openDashboardInsightTarget(insight);
+    });
+  });
+}
+
+function renderCurrentOperations(summary) {
+  const ops = summary.current_operations;
+  $("current-ops-open").textContent = String(ops.open_work_orders);
+  $("current-ops-in-progress").textContent = String(ops.in_progress);
+  $("current-ops-waiting-parts").textContent = String(ops.waiting_on_parts);
+  $("current-ops-awaiting-approval").textContent = String(ops.awaiting_customer_approval);
+  $("current-ops-completed-not-invoiced").textContent = String(ops.completed_not_invoiced);
+  $("current-ops-note").textContent = ops.ready_for_pickup_note;
+}
+
+function renderFinancialObligations(summary) {
+  const obligations = summary.financial_obligations;
+  $("financial-obligations-outstanding").textContent = money(obligations.outstanding_balance);
+  $("financial-obligations-overdue-balance").textContent = money(obligations.overdue_balance);
+  $("financial-obligations-overdue-count").textContent = String(obligations.overdue_invoice_count);
+  $("financial-obligations-deposits").textContent = money(obligations.deposits_received_total);
+  const list = $("upcoming-installments-list");
+  if (!obligations.upcoming_installments.length) {
+    list.innerHTML = '<p class="empty-card-inline">No upcoming installments.</p>';
+    return;
+  }
+  list.innerHTML = obligations.upcoming_installments.map((item) => `
+    <div class="customer-list-item square-invoice-row">
+      <strong>${escapeHtml(item.invoice_number)} · ${escapeHtml(item.label)}</strong>
+      <span>${money(item.amount)}${item.due_at ? ` · Due ${new Date(item.due_at).toLocaleDateString()}` : ""}</span>
+    </div>`).join("");
+}
+
+function initializeDashboard() {
+  $("dashboard-range-preset").addEventListener("change", () => {
+    state.dashboard.rangePreset = $("dashboard-range-preset").value;
+    void loadDashboardSummary();
+  });
+  $("dashboard-date-from").addEventListener("change", () => {
+    $("dashboard-range-preset").value = "custom";
+    state.dashboard.rangePreset = "custom";
+    void loadDashboardSummary();
+  });
+  $("dashboard-date-to").addEventListener("change", () => {
+    $("dashboard-range-preset").value = "custom";
+    state.dashboard.rangePreset = "custom";
+    void loadDashboardSummary();
+  });
+  $("dashboard-summary-refresh").addEventListener("click", () => void loadDashboardSummary());
+}
+
+// --- Approval Queue --------------------------------------------------------
+
+function updateApprovalQueueBadge(count) {
+  const badge = $("nav-approval-queue-badge");
+  if (!badge) return;
+  badge.textContent = count > 99 ? "99+" : String(count);
+  badge.hidden = count === 0;
+}
+
+async function refreshApprovalQueueBadge() {
+  try {
+    const response = await apiFetch("/api/estimates?page=1&page_size=1&status=awaiting_approval");
+    const data = await readApiPayload(response);
+    if (!response.ok || !data) return;
+    updateApprovalQueueBadge(data.total);
+  } catch {
+    // Badge refresh is best-effort background polling; never toast on failure.
+  }
+}
+
+function renderApprovalQueueList() {
+  const list = $("approval-queue-list");
+  const { items, page, total, hasMore } = state.approvalQueue;
+  $("approval-queue-page-status").textContent = `Page ${page} · ${total} total`;
+  $("approval-queue-prev").disabled = page <= 1;
+  $("approval-queue-next").disabled = !hasMore;
+  if (!items.length) {
+    list.innerHTML = "<p>No estimates awaiting customer approval.</p>";
+    return;
+  }
+  list.innerHTML = items.map((item) => `
+    <button type="button" class="customer-list-item${item.id === state.approvalQueue.selectedEstimateId ? " is-active" : ""}" data-approval-estimate-id="${item.id}">
+      <strong>${escapeHtml(item.estimate_number)}</strong>
+      <span>${escapeHtml(item.vehicle_display_name)}${item.estimate_total != null ? ` · ${money(item.estimate_total)}` : ""}</span>
+      <span>Updated ${new Date(item.updated_at).toLocaleString()}</span>
+    </button>`).join("");
+  $$("[data-approval-estimate-id]", list).forEach((button) => {
+    button.addEventListener("click", () => {
+      void selectApprovalQueueEstimate(Number(button.dataset.approvalEstimateId));
+    });
+  });
+}
+
+async function loadApprovalQueue() {
+  if (!(await requireAuthenticated("login"))) return;
+  const list = $("approval-queue-list");
+  list.innerHTML = '<div class="loading-panel"><span class="loading-spinner"></span><div><strong>Loading approval queue</strong></div></div>';
+  const searchParams = new URLSearchParams({
+    page: String(state.approvalQueue.page),
+    page_size: String(state.approvalQueue.pageSize),
+    status: "awaiting_approval",
+  });
+  try {
+    const response = await apiFetch(`/api/estimates?${searchParams.toString()}`);
+    const data = await readApiPayload(response);
+    if (!response.ok || !data) throw apiError(response, data, "Approval queue load failed");
+    state.approvalQueue.items = data.items;
+    state.approvalQueue.total = data.total;
+    state.approvalQueue.hasMore = data.has_more;
+    renderApprovalQueueList();
+    updateApprovalQueueBadge(data.total);
+  } catch (error) {
+    state.approvalQueue.items = [];
+    state.approvalQueue.total = 0;
+    state.approvalQueue.hasMore = false;
+    renderApprovalQueueList();
+    showToast(`Approval queue load failed: ${error.message}`, "error");
+  }
+}
+
+function renderApprovalQueueDetail(estimate) {
+  const container = $("approval-queue-detail");
+  if (!estimate) {
+    container.innerHTML = "<p>Select an estimate from the list to see full detail.</p>";
+    return;
+  }
+  container.innerHTML = `
+    <div class="customer-detail-header"><strong>${escapeHtml(estimate.estimate_number)}</strong><span>${escapeHtml(estimate.status)}</span></div>
+    <div class="customer-detail-grid">
+      <div><span>Customer</span><strong>${escapeHtml(estimate.customer_display_name || "—")}</strong></div>
+      <div><span>Vehicle</span><strong>${escapeHtml(estimate.vehicle_display_name || "—")}</strong></div>
+      <div><span>Estimate total</span><strong>${estimate.estimate_total != null ? money(estimate.estimate_total) : "—"}</strong></div>
+      <div><span>Expires</span><strong>${estimate.expires_at ? new Date(estimate.expires_at).toLocaleString() : "—"}</strong></div>
+    </div>`;
+}
+
+async function selectApprovalQueueEstimate(estimateId) {
+  try {
+    const response = await apiFetch(`/api/estimates/${estimateId}`);
+    const data = await readApiPayload(response);
+    if (!response.ok || !data) throw apiError(response, data, "Estimate load failed");
+    state.approvalQueue.selectedEstimateId = data.id;
+    state.approvalQueue.selectedEstimate = data;
+    renderApprovalQueueDetail(data);
+    renderApprovalQueueList();
+  } catch (error) {
+    showToast(`Estimate load failed: ${error.message}`, "error");
+  }
+}
+
+function initializeApprovalQueue() {
+  $("approval-queue-refresh").addEventListener("click", () => void loadApprovalQueue());
+  $("approval-queue-prev").addEventListener("click", () => {
+    if (state.approvalQueue.page > 1) {
+      state.approvalQueue.page -= 1;
+      void loadApprovalQueue();
+    }
+  });
+  $("approval-queue-next").addEventListener("click", () => {
+    if (state.approvalQueue.hasMore) {
+      state.approvalQueue.page += 1;
+      void loadApprovalQueue();
+    }
+  });
+  $("approval-queue-open-estimate").addEventListener("click", () => {
+    if (state.approvalQueue.selectedEstimateId) void openEstimateRecord(state.approvalQueue.selectedEstimateId);
+  });
+  $("approval-queue-open-customer").addEventListener("click", () => {
+    const estimate = state.approvalQueue.selectedEstimate;
+    if (!estimate) return;
+    navigate("customers");
+    void selectCustomer(estimate.customer_id);
+  });
+}
+
 function initializeApp() {
   setAuthState(false);
   initializeNavigation();
@@ -3504,11 +3990,13 @@ function initializeApp() {
   loadSavedPreferences();
   initializeLocation();
   initializeChat();
+  initializeDashboard();
   initializeCustomers();
   initializeVehicles();
   initializeTechnicians();
   initializeMyDay();
   initializeWorkOrders();
+  initializeApprovalQueue();
   initializeInvoices();
   initializeNotifications();
   initializeSquareDashboard();
@@ -3548,6 +4036,8 @@ function initializeApp() {
         showToast("Customer options failed to load.", "error");
       });
       void restoreSelectionsFromContext();
+      void loadDashboardSummary();
+      void refreshApprovalQueueBadge();
       if (window.location.pathname === "/login") navigate("dashboard");
     }
   });
@@ -3556,6 +4046,7 @@ function initializeApp() {
   window.setInterval(() => {
     if (state.auth.authenticated && state.auth.user?.role === "owner") {
       void refreshNotificationsBadge();
+      void refreshApprovalQueueBadge();
     }
   }, 60000);
 }

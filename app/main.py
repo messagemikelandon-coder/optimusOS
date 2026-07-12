@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import socket
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Annotated, Any
 from urllib.parse import urlparse
@@ -46,6 +46,7 @@ from app.customer_store import (
     list_customers,
     update_customer,
 )
+from app.dashboard_store import get_dashboard_summary
 from app.db import get_db_session
 from app.db_models import UserAccount
 from app.errors import EstimatorResearchError
@@ -91,6 +92,7 @@ from app.models import (
     CustomerListResponse,
     CustomerRead,
     CustomerUpdate,
+    DashboardSummaryResponse,
     EstimateApprovalActionRequest,
     EstimateApprovalActionResponse,
     EstimateApprovalAuditResponse,
@@ -1808,4 +1810,30 @@ async def mark_all_notifications_read_record(
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Notification storage is unavailable.",
+        ) from exc
+
+
+@app.get("/api/dashboard/summary", response_model=DashboardSummaryResponse)
+async def get_dashboard_summary_record(
+    db: DbSessionDep,
+    auth: OwnerAuthContextDep,
+    date_from: Annotated[datetime | None, Query()] = None,
+    date_to: Annotated[datetime | None, Query()] = None,
+) -> DashboardSummaryResponse:
+    resolved_to = date_to or datetime.now(UTC)
+    resolved_from = date_from or (resolved_to - timedelta(days=30))
+    if resolved_from >= resolved_to:
+        raise HTTPException(status_code=422, detail="date_from must be before date_to.")
+    try:
+        return get_dashboard_summary(
+            db=db,
+            auth=auth,
+            date_from=resolved_from,
+            date_to=resolved_to,
+        )
+    except SQLAlchemyError as exc:
+        logger.warning("Dashboard summary failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Dashboard storage is unavailable.",
         ) from exc
