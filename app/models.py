@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import re
-from datetime import datetime
+from datetime import date, datetime
 from enum import StrEnum
 from typing import Annotated, Literal
 
@@ -489,6 +489,181 @@ class CustomerArchiveResponse(BaseModel):
     customer: CustomerRead
 
 
+class TechnicianBase(BaseModel):
+    first_name: str | None = Field(default=None, max_length=120)
+    last_name: str | None = Field(default=None, max_length=120)
+    phone: str | None = Field(default=None, max_length=40)
+    email: str | None = Field(default=None, max_length=180)
+    employment_status: str | None = Field(default=None, max_length=40)
+    job_title: str | None = Field(default=None, max_length=120)
+    hire_date: date | None = None
+    hourly_cost: float | None = Field(default=None, ge=0, le=1000)
+    certifications: str | None = Field(default=None, max_length=2000)
+    certification_expiration: date | None = None
+    specialties: str | None = Field(default=None, max_length=2000)
+    driver_license_valid: bool | None = None
+    insurance_verified: bool | None = None
+    normal_availability: str | None = Field(default=None, max_length=500)
+    safety_notes: str | None = Field(default=None, max_length=4000)
+
+    @field_validator(
+        "first_name",
+        "last_name",
+        "phone",
+        "email",
+        "employment_status",
+        "job_title",
+        "certifications",
+        "specialties",
+        "normal_availability",
+        "safety_notes",
+        mode="before",
+    )
+    @classmethod
+    def strip_technician_strings(cls, value: object) -> object:
+        if isinstance(value, str):
+            stripped = value.strip()
+            return stripped or None
+        return value
+
+    @model_validator(mode="after")
+    def require_name(self) -> TechnicianBase:
+        if not (self.first_name or self.last_name):
+            raise ValueError("Provide a first or last name.")
+        return self
+
+
+class TechnicianCreate(TechnicianBase):
+    pass
+
+
+class TechnicianUpdate(BaseModel):
+    first_name: str | None = Field(default=None, max_length=120)
+    last_name: str | None = Field(default=None, max_length=120)
+    phone: str | None = Field(default=None, max_length=40)
+    email: str | None = Field(default=None, max_length=180)
+    employment_status: str | None = Field(default=None, max_length=40)
+    job_title: str | None = Field(default=None, max_length=120)
+    hire_date: date | None = None
+    hourly_cost: float | None = Field(default=None, ge=0, le=1000)
+    certifications: str | None = Field(default=None, max_length=2000)
+    certification_expiration: date | None = None
+    specialties: str | None = Field(default=None, max_length=2000)
+    driver_license_valid: bool | None = None
+    insurance_verified: bool | None = None
+    normal_availability: str | None = Field(default=None, max_length=500)
+    safety_notes: str | None = Field(default=None, max_length=4000)
+
+    @field_validator(
+        "first_name",
+        "last_name",
+        "phone",
+        "email",
+        "employment_status",
+        "job_title",
+        "certifications",
+        "specialties",
+        "normal_availability",
+        "safety_notes",
+        mode="before",
+    )
+    @classmethod
+    def strip_technician_strings(cls, value: object) -> object:
+        if isinstance(value, str):
+            stripped = value.strip()
+            return stripped or None
+        return value
+
+
+class TechnicianRead(TechnicianBase):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    display_name: str
+    is_archived: bool
+    has_login: bool
+    is_clocked_in: bool
+    comeback_count: int
+    created_at: datetime
+    updated_at: datetime
+
+
+class TechnicianListResponse(BaseModel):
+    items: list[TechnicianRead]
+    page: int
+    page_size: int
+    total: int
+    has_more: bool
+
+
+class TechnicianArchiveResponse(BaseModel):
+    ok: bool = True
+    technician: TechnicianRead
+
+
+class TechnicianProvisionLoginRequest(BaseModel):
+    username: NonBlank = Field(max_length=120)
+    password: NonBlank = Field(min_length=8, max_length=256)
+
+
+class TechnicianProvisionLoginResponse(BaseModel):
+    ok: bool = True
+    technician: TechnicianRead
+    username: str
+
+
+class TechnicianTimeEntryRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    clock_in_at: datetime
+    clock_out_at: datetime | None = None
+    duration_minutes: int | None = None
+
+
+class TechnicianClockResponse(BaseModel):
+    ok: bool = True
+    is_clocked_in: bool
+    entry: TechnicianTimeEntryRead
+
+
+class TechnicianSelfRead(BaseModel):
+    """Same shape as `TechnicianRead` minus `hourly_cost` -- that's an
+    internal wage/cost field the owner sets and sees, not something a
+    technician's own self-service view should expose."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    first_name: str | None = None
+    last_name: str | None = None
+    phone: str | None = None
+    email: str | None = None
+    employment_status: str | None = None
+    job_title: str | None = None
+    hire_date: date | None = None
+    certifications: str | None = None
+    certification_expiration: date | None = None
+    specialties: str | None = None
+    driver_license_valid: bool | None = None
+    insurance_verified: bool | None = None
+    normal_availability: str | None = None
+    safety_notes: str | None = None
+    display_name: str
+    is_archived: bool
+    has_login: bool
+    is_clocked_in: bool
+    comeback_count: int
+    created_at: datetime
+    updated_at: datetime
+
+
+class TechnicianMeResponse(BaseModel):
+    technician: TechnicianSelfRead
+    recent_time_entries: list[TechnicianTimeEntryRead]
+    assigned_work_order_ids: list[int]
+
+
 class VehicleBase(BaseModel):
     vin: str | None = Field(default=None, max_length=17)
     year: int | None = Field(default=None, ge=1900, le=2100)
@@ -902,6 +1077,7 @@ class WorkOrderUpdate(BaseModel):
     scheduled_for: datetime | None = None
     deposit_received: bool | None = None
     authorization_confirmed: bool | None = None
+    is_comeback: bool | None = None
 
     @field_validator("diagnosis", mode="before")
     @classmethod
@@ -910,6 +1086,10 @@ class WorkOrderUpdate(BaseModel):
             stripped = value.strip()
             return stripped or None
         return value
+
+
+class WorkOrderAssignTechnicianRequest(BaseModel):
+    technician_id: int | None = None
 
 
 class WorkOrderStatusUpdate(BaseModel):
@@ -971,6 +1151,9 @@ class WorkOrderRead(BaseModel):
     deposit_received: bool
     authorization_confirmed: bool
     scheduled_for: datetime | None = None
+    assigned_technician_id: int | None = None
+    assigned_technician_display_name: str | None = None
+    is_comeback: bool
     allowed_next_statuses: list[WorkOrderStatus] = Field(default_factory=list)
     blocked_transitions: dict[str, str] = Field(default_factory=dict)
     source_revision: EstimateRevisionRead

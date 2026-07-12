@@ -10,7 +10,7 @@ from sqlalchemy import Select, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.auth import AuthContext, ensure_utc
+from app.auth import AuthContext, effective_owner_id, ensure_utc
 from app.config import Settings
 from app.db_models import Invoice, InvoiceLineItem, InvoicePayment, PaymentSchedule, WorkOrder
 from app.estimate_store import _revision_to_approval_view
@@ -114,7 +114,7 @@ def _payment_summary(invoice: Invoice, *, now: datetime) -> tuple[Decimal, Invoi
 
 
 def _invoice_query(auth: AuthContext) -> Select[tuple[Invoice]]:
-    return select(Invoice).where(Invoice.owner_user_id == auth.user.id)
+    return select(Invoice).where(Invoice.owner_user_id == effective_owner_id(auth))
 
 
 def _require_invoice(db: Session, auth: AuthContext, invoice_id: int) -> Invoice:
@@ -301,7 +301,7 @@ def ensure_draft_invoice_for_work_order(
     customer = revision_view.customer
     vehicle = revision_view.vehicle
     invoice = Invoice(
-        owner_user_id=auth.user.id,
+        owner_user_id=effective_owner_id(auth),
         work_order_id=work_order.id,
         estimate_id=work_order.estimate_id,
         estimate_revision_id=work_order.estimate_revision_id,

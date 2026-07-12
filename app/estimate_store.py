@@ -9,7 +9,7 @@ from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from sqlalchemy import Select, func, select
 from sqlalchemy.orm import Session
 
-from app.auth import AuthContext, ensure_utc
+from app.auth import AuthContext, effective_owner_id, ensure_utc
 from app.customer_store import display_name as customer_display_name
 from app.customer_store import get_customer_model
 from app.db_models import (
@@ -257,7 +257,7 @@ def _validate_estimate_ready_for_approval(
 
 
 def _estimate_query(auth: AuthContext) -> Select[tuple[Estimate]]:
-    return select(Estimate).where(Estimate.owner_user_id == auth.user.id)
+    return select(Estimate).where(Estimate.owner_user_id == effective_owner_id(auth))
 
 
 def _approval_request_query(token: str) -> Select[tuple[EstimateApprovalRequest]]:
@@ -447,11 +447,13 @@ def _require_estimate(db: Session, auth: AuthContext, estimate_id: int) -> Estim
 def _next_estimate_number(db: Session, auth: AuthContext) -> str:
     count = (
         db.scalar(
-            select(func.count()).select_from(Estimate).where(Estimate.owner_user_id == auth.user.id)
+            select(func.count())
+            .select_from(Estimate)
+            .where(Estimate.owner_user_id == effective_owner_id(auth))
         )
         or 0
     )
-    return f"EST-{auth.user.id:03d}-{count + 1:05d}"
+    return f"EST-{effective_owner_id(auth):03d}-{count + 1:05d}"
 
 
 async def _build_estimate_payload(
@@ -549,7 +551,7 @@ async def create_estimate(
         approval_due_at=approval_due_at,
     )
     estimate = Estimate(
-        owner_user_id=auth.user.id,
+        owner_user_id=effective_owner_id(auth),
         customer_id=payload.customer_id,
         vehicle_id=payload.vehicle_id,
         estimate_number=_next_estimate_number(db, auth),
@@ -563,7 +565,7 @@ async def create_estimate(
     db.flush()
     revision = EstimateRevision(
         estimate_id=estimate.id,
-        owner_user_id=auth.user.id,
+        owner_user_id=effective_owner_id(auth),
         revision_number=1,
         status=EstimateStatus.DRAFT.value,
         customer_snapshot=customer_summary.model_dump(mode="json"),
@@ -725,7 +727,7 @@ async def create_estimate_revision(
     next_revision_number = estimate.current_revision_number + 1
     revision = EstimateRevision(
         estimate_id=estimate.id,
-        owner_user_id=auth.user.id,
+        owner_user_id=effective_owner_id(auth),
         revision_number=next_revision_number,
         status=EstimateStatus.READY.value,
         customer_snapshot=customer_summary.model_dump(mode="json"),
@@ -767,7 +769,7 @@ def send_estimate_for_approval(
     approval_request = EstimateApprovalRequest(
         estimate_id=estimate.id,
         estimate_revision_id=revision.id,
-        owner_user_id=auth.user.id,
+        owner_user_id=effective_owner_id(auth),
         token_hash=_hash_token(token),
         status="active",
         expires_at=datetime.now(UTC) + timedelta(hours=payload.expires_in_hours),

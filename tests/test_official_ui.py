@@ -74,6 +74,33 @@ def test_marketing_landing_page_gating() -> None:
     assert 'document.body.classList.remove("marketing-mode")' in javascript
 
 
+def test_overview_dashboard_reverted() -> None:
+    """Regression coverage for the Overview dashboard revert (PR #16): the
+    old "Shop intelligence online" hero must be back, and none of the
+    dashboard/Approval-Queue-specific markup, JS, or vendored assets from
+    the reverted commit (97e8b9d) should remain, even though later Phase 5.6
+    work (Technicians module, nav-visibility roles) touches the same files."""
+    html = (STATIC / "index.html").read_text(encoding="utf-8")
+    javascript = (STATIC / "app.js").read_text(encoding="utf-8")
+
+    assert "Shop intelligence online" in html
+    assert 'data-view-panel="approval-queue"' not in html
+    assert 'data-view="approval-queue"' not in html
+    assert 'id="view-approval-queue"' not in html
+    assert 'src="/static/vendor/chart.umd.min.js"' not in html
+    assert not (STATIC / "vendor" / "chart.umd.min.js").is_file()
+
+    assert "async function loadDashboardSummary" not in javascript
+    assert "async function loadApprovalQueue" not in javascript
+    assert "/api/dashboard/summary" not in javascript
+
+    # Technicians module (Phase 5.6 sub-phase 2), unaffected by this revert.
+    assert 'data-view="technicians"' in html
+    assert 'data-view="my-day"' in html
+    assert "function loadTechnicians" in javascript
+    assert "function applyRoleNavVisibility" in javascript
+
+
 def test_ui_preserves_connected_workflows() -> None:
     html = (STATIC / "index.html").read_text(encoding="utf-8")
     javascript = (STATIC / "app.js").read_text(encoding="utf-8")
