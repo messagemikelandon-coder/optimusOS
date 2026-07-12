@@ -4,64 +4,64 @@ Purpose: replaceable handoff template for the next substantial Codex/Claude sess
 Information owner: the active session author.
 Read when: starting or resuming work.
 Update when: a substantial task completes or context needs to be handed forward.
-Last verified date: 2026-07-11.
-Relevant sources: `docs/context/CURRENT_STATE.md`, `docs/context/KNOWN_ISSUES.md`, `docs/context/PLANS.md`, `git status`/`git log`, `gh pr list`/`gh pr view`, full local gate runs on 2026-07-11 (230 tests), two live migration + Playwright browser verification passes against the real backend container, independent review + security review for both sub-phase 1 and sub-phase 2 (all PASS, two real sub-phase-2 findings fixed same-day).
+Last verified date: 2026-07-12.
+Relevant sources: `docs/context/CURRENT_STATE.md`, `docs/context/KNOWN_ISSUES.md`, `docs/context/PLANS.md`, `git status`/`git log`, `gh pr list`/`gh pr view`, full local gate runs on 2026-07-12 (229 tests), live migration + Playwright verification, an owner deploy attempt to staging (status uncertain, see Blockers).
 
 ## Identity
 
-- Updated UTC: 2026-07-11.
+- Updated UTC: 2026-07-12.
 - Agent: Claude
-- Branch: `agent/claude/landing-page-redesign` (created off `main` at `ab8ed98`).
+- Branch: `agent/claude/restore-dashboard` (created off `main` at `684f42d`, pending push).
 - Worktree: primary (`/home/dejake/optimus-server`).
 
-## Active task — Phase 5.6 sub-phases 0-2 implemented, pushed, PR open against main
+## Active task — Dashboard revert-then-restore: everything now on main except the final restore commit
 
-Branch `agent/claude/landing-page-redesign`, 4 commits ahead of the original `main` base, all pushed to `origin`:
+Full timeline of this branch's work, most-recent first:
 
-1. `4a8566a` — **Landing Page Redesign**: unauthenticated marketing page at `/` plus a graphite/off-white/steel/restrained-red re-theme. Merged to `main` via PR #14.
-2. `97e8b9d` — **Overview Dashboard & Approval Queue**: real backend-connected shop-management overview + Approval Queue view. No fabricated data. Merged to `main` via PR #15.
-3. `d7f31eb` — **Phase 5.6 sub-phase 0 + 1**: nav cleanup + multi-role owner/technician authorization foundation (`shop_owner_id`, `effective_owner_id()`/`require_role()`/`require_owner_context()`, all 38 business routes gated to owner). Independently + security reviewed, PASS.
-4. `f169311` — **Phase 5.6 sub-phase 2 (Technicians module)**: `Technician`/`TechnicianTimeEntry` tables, `app/technician_store.py` (CRUD + login provisioning + clock in/out), work orders carved open for technicians (own-assigned-only), `#view-technicians`/`#view-my-day` frontend. Independently + security reviewed, PASS after fixing two same-day findings (My Day lost on reload; `hourly_cost` leaking to a technician's own profile view).
+1. **Restore the Overview Dashboard** (this session, `agent/claude/restore-dashboard`, **NOT YET PUSHED**): owner asked for PR #16's revert to be undone. Done via `git revert -m 1` of PR #16's merge commit (`684f42d`) — a clean "revert the revert," no conflicts. Restores `app/dashboard_store.py`, the `GET /api/dashboard/summary` route, Approval Queue nav/view/JS, vendored Chart.js, and `tests/test_dashboard_api.py`. Technicians module and auth foundation untouched throughout. Full gate suite green (229 tests) and a live Playwright pass confirmed both the dashboard is back AND Technicians/My Day still work for both roles, zero console errors/CSP violations.
+2. **PR #16 merged** (owner action, 2026-07-12): the hand-resolved revert of the Overview Dashboard + Approval Queue landed on `main` as `684f42d`.
+3. **PR #17 merged** (owner action, 2026-07-11): Phase 5.6 sub-phases 0-2 (auth foundation + Technicians module) landed on `main` as `13d0807`.
+4. PRs #14 (Landing Page) and #15 (original Overview Dashboard) were already merged before this session's active work began.
 
-Full change detail for all four lives in `docs/context/CURRENT_STATE.md` (not duplicated here).
+Full change detail for every piece lives in `docs/context/CURRENT_STATE.md`'s "Overview Dashboard & Approval Queue" section (has the complete flip-flop timeline) and the Phase 5.6 sub-phase sections — not duplicated here.
 
 ## Verified baseline
 
-- Session started with `main` at `ab8ed98` and this branch already carrying commits 1-2 (pushed, PRs #14/#15 already merged to `main` by the owner via GitHub before this session's `git`/GitHub sync check). Commit 3 (`d7f31eb`) existed locally, committed but unpushed, from immediately prior work in the same session lineage.
-- This session added commit 4 (`f169311`), pushed both 3 and 4, fast-forwarded local `main` to match `origin/main` (`acd886d`), and confirmed local/remote SHA parity on both `main` and this branch.
+- Confirmed `main` at `684f42d` (PR #16 merged) via `git fetch origin main` before starting the restore.
+- Confirmed the merge commit's parent order (`git log -1 --format="%P" 684f42d`) before reverting, to revert the correct side (`-m 1`, undoing what PR #16's branch introduced relative to `main`).
+- Confirmed the revert applied with zero conflicts (nothing touched those 15 files in the brief window PR #16 was live).
 
 ## Evidence
 
 - `ruff format`/`ruff check .`: clean. `pyright`: 0 errors. `node --check app/static/app.js`: OK.
-- `pytest -q`: 230 passed (214 prior + 15 new in `tests/test_technicians_api.py` + 1 `hourly_cost`-exclusion assertion).
-- Migration `012_technicians` applied and downgraded cleanly against the real dev Postgres (`docker compose exec backend alembic upgrade head` / `downgrade -1` / `upgrade head`); schema confirmed via `psql \d`.
-- Two full Playwright walkthroughs against the rebuilt `backend` container (owner creates/provisions a technician, technician logs in, sees role-correct nav, clocks in/out, reloads and still lands on My Day, `/api/technicians/me` excludes `hourly_cost`, `/api/customers` returns `403` from the technician's own session) — zero console errors, zero CSP violations both times. Synthetic accounts deleted afterward.
-- Independent review (`optimus-reviewer`) and security review (`optimus-security-reviewer`) run separately for sub-phase 1 and sub-phase 2; both sub-phases PASS. Sub-phase 2 had two real findings, both fixed and re-verified live same-day (see `docs/context/KNOWN_ISSUES.md`).
-- `git`/GitHub sync confirmed via `git rev-parse` on both sides and `gh api .../branches/...`: local `main` and local `agent/claude/landing-page-redesign` are byte-identical to their `origin` counterparts.
+- `pytest -q`: 229 passed.
+- Migration head unchanged (`012_technicians`) — this revert/restore round-trip has no schema changes either direction.
+- Live Playwright pass against the rebuilt `backend` container: owner login shows the restored Overview dashboard (metric cards render, `/api/dashboard/summary` returns `200`) and the Approval Queue nav item is back; Technicians view still reachable for the owner; technician login still lands on My Day (not the dashboard), clock in/out still works, `/api/dashboard/summary` correctly `403`s for a technician. Zero console errors, zero CSP violations. Synthetic accounts deleted afterward.
+- `docs/context/CURRENT_STATE.md` and `docs/context/KNOWN_ISSUES.md` updated with the full timeline in this same work (not yet committed alongside the code revert — see Exact next task).
 
 ## Unverified
 
-- No live/billable OpenAI calls were made this session (not needed for this work).
-- Staging deployment status for this branch's work is unverified — nothing here has been deployed; staging still runs an older `main` commit per `docs/context/KNOWN_ISSUES.md`.
-- PR #17 (opened by the owner against `main`, containing commits 3-4) had a failing `handoff-contract` CI check at last look (this file was missing required headings) — fixed in this same commit; not yet re-confirmed green in CI as of writing this line.
+- No live/billable OpenAI calls were made this session.
+- **Staging deployment status is genuinely unclear.** The owner was walked through a deploy runbook (SSH in, `cd /opt/optimus-server`, `git status` confirmed clean, `git pull --ff-only origin main` was reached) but the conversation moved on to "the dashboard isn't showing" (expected at that point, since `main` had the dashboard reverted) before confirming `scripts/optimusctl.sh backup`/`update`/`migrate`/`health`/`ready` were run. Staging's actual current commit is unconfirmed — do not assume it matches any particular commit until re-verified (e.g. `curl https://staging.optimus-os.com/health` plus a look at the served HTML for dashboard-vs-hero markers, the same technique used earlier this session to confirm staging's pre-deploy state).
+- This restore commit is local-only, not yet pushed or PR'd (see Exact next task) — so it's also not on staging by definition yet.
 
 ## Unrelated preexisting changes
 
-- Untracked stray `optimusOS/` directory (~45MB nested project clone) at the repo root — owner's accidental clone, predates this session, not part of any commit, flagged again by this session's independent review as a repo-hygiene item worth cleaning up or gitignoring eventually.
-- Untracked `..env.swp` file (vim swap file) appeared in the working tree during this session — not created by this session's work, not read or committed, flagged to the owner directly in-conversation.
-- Open PR #16 ("Revert 'Replace Shop Intelligence Online...'") against `main`, opened by the owner shortly after PR #15 merged — predates this session's work, not touched by this session, still open/unresolved.
+- Untracked stray `optimusOS/` directory (~45MB nested project clone) at the repo root — predates this session, not part of any commit, still present.
+- The earlier-flagged `..env.swp` vim swap file is no longer present in the working tree (gone by this session, presumably cleaned up outside this conversation).
 
 ## Blockers and risks
 
-- PR #16 (revert of the dashboard work) is open and unresolved on `main`. This session did not merge, close, or otherwise act on it — that decision belongs to the owner. Its eventual resolution (merge or close) could affect files this session's PR #17 also touches (`app/static/index.html`, `app/static/app.js`); worth resolving PR #16 before or shortly after PR #17 merges to avoid compounding merge complexity.
-- Sub-phase 1's security review flagged (and sub-phase 2 closed) a hardening item around `shop_owner_id` validation — no longer open, kept here only as a pointer in case future sub-phases touch `provision_login()` again.
-- No new blockers introduced by this session's own work; all gates green, both sub-phases independently + security reviewed with a clean pass.
+- **Staging may be in a partially-deployed or ambiguous state** — see Unverified above. Before doing anything else with staging, re-confirm its actual current commit/behavior rather than assuming the last-known deploy attempt either fully succeeded or fully failed.
+- This session's restore commit is sitting locally on `agent/claude/restore-dashboard`, not yet pushed. If another agent or session starts from `main` without pulling this branch, they won't see the dashboard-restore work in progress.
+- Merging PR-style changes into `main` directly via `gh pr merge` has been denied by Claude Code's own permission classifier twice this session already (insufficient in-transcript human-approval evidence for a direct-to-main merge) — expect the same for whatever PR comes out of this restore commit; plan on the owner merging via the GitHub UI.
 
 ## Exact next task
 
-1. Resolve PR #16 (merge the revert or close it) — owner decision, not made this session.
-2. Merge or otherwise resolve PR #17 (owner decision/action).
-3. If continuing Phase 5.6: start sub-phase 3 (Parts Inventory + Vendors, paired) per `docs/context/PLANS.md` — new `Vendor`, `PurchaseOrder` (normalized), `Part`, `PartAllocation` tables; `Part.unit_cost` unlocks a follow-up to compute real Gross Profit/Gross Profit Margin on the dashboard (flagged as its own small task, not bundled into sub-phase 3).
+1. Push `agent/claude/restore-dashboard` to `origin` and open a PR against `main` (owner approval already given in-conversation for the restore itself; opening the PR is the natural next step, merging it needs the owner's own action per the blocker above).
+2. Once merged, re-verify staging's actual state before doing another deploy pass — don't assume the earlier partial deploy attempt is safe to build on top of without checking `git status`/`git log` on the droplet first.
+3. Re-run the full staging deploy runbook (`cd /opt/optimus-server` → `git status` → `git pull --ff-only origin main` → `scripts/optimusctl.sh backup` → `update` → `migrate` → `health`/`ready`) once this restore is merged, so staging ends up on the final correct state in one pass instead of mid-flip-flop.
+4. If continuing Phase 5.6: start sub-phase 3 (Parts Inventory + Vendors, paired) per `docs/context/PLANS.md`.
 
 ## Carried over from the Phase 5.5 session — not touched by any slice on this branch
 
