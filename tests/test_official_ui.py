@@ -15,17 +15,120 @@ STATIC = ROOT / "app" / "static"
 
 def test_official_landon_motor_works_interface_is_packaged() -> None:
     html = (STATIC / "index.html").read_text(encoding="utf-8")
-    css = (STATIC / "styles.css").read_text(encoding="utf-8")
     assert "Landon Motor Works" in html
     assert "Optimus Command Center" in html
-    assert "mechanic-stage" in html
-    assert "rotor-assembly" in html
-    assert "diagnostic-tablet" in html
-    assert "tilt-surface" in css
     assert (STATIC / "logo-mark.svg").is_file()
     assert (STATIC / "favicon.svg").is_file()
     assert (STATIC / "invoice.css").is_file()
     assert (STATIC / "manifest.webmanifest").is_file()
+
+
+def test_landing_page_uses_real_photography_and_required_sections() -> None:
+    """Regression coverage for the automotive-design landing page rebuild:
+    the decorative CSS-drawn hero (mechanic-stage/rotor-assembly/
+    diagnostic-tablet/tilt-surface) was replaced with real Landon Motor
+    Works photography, and the brief-required sections (founder field
+    story, ICON T7 diagnostics, oil-filter-housing case study) must all
+    be present with their media assets packaged."""
+    html = (STATIC / "index.html").read_text(encoding="utf-8")
+    css = (STATIC / "styles.css").read_text(encoding="utf-8")
+
+    assert "mechanic-stage" not in html
+    assert "rotor-assembly" not in html
+    assert "diagnostic-tablet" not in html
+    assert "tilt-surface" not in html
+    assert "tilt-surface" not in css
+
+    assert "The operating system behind the repair." in html
+    assert 'id="field"' in html
+    assert 'id="diagnostics"' in html
+    assert "Dejake Landon" in html
+    assert "ICON T7" in html
+    assert "Oil-filter-housing" in html or "oil-filter-housing" in html
+
+    media_dir = STATIC / "media"
+    for filename in (
+        "impala-field-work.webp",
+        "impala-finished.webp",
+        "icon-t7-diagnostics.webp",
+        "oil-filter-housing-repair.webp",
+        "oil-filter-housing-comparison.webp",
+    ):
+        assert f"/static/media/{filename}" in html
+        assert (media_dir / filename).is_file()
+
+
+def test_shop_management_ui_grouped_nav_and_new_modules() -> None:
+    """Regression coverage for the shop-management-UI redesign: the sidebar
+    was reorganized into labeled groups (Operations, Customers & vehicles,
+    Service & diagnostics, Estimates & approvals, Work orders & scheduling,
+    Invoices & payments, Reports, Notifications, Optimus, System) and two
+    new modules (Reports, Scheduling) plus a real Optimus nav entry point
+    were added. Every original data-view target must still resolve so
+    app.js's generic [data-view] click-delegation keeps working."""
+    html = (STATIC / "index.html").read_text(encoding="utf-8")
+    javascript = (STATIC / "app.js").read_text(encoding="utf-8")
+
+    for group_label in (
+        "Operations",
+        "Customers &amp; vehicles",
+        "Service &amp; diagnostics",
+        "Estimates &amp; approvals",
+        "Work orders &amp; scheduling",
+        "Invoices &amp; payments",
+        "Reports",
+        "Notifications",
+        "Optimus",
+        "System",
+    ):
+        assert f'<span class="nav-group-label">{group_label}</span>' in html
+
+    for data_view in (
+        "dashboard",
+        "customers",
+        "vehicles",
+        "work-orders",
+        "approval-queue",
+        "technicians",
+        "my-day",
+        "invoices",
+        "notifications",
+        "square",
+        "estimate",
+        "system",
+        "reports",
+        "scheduling",
+        "chat",
+    ):
+        assert f'data-view="{data_view}"' in html
+
+    assert 'id="view-reports"' in html
+    assert 'id="view-scheduling"' in html
+    assert 'data-view-panel="reports"' in html
+    assert 'data-view-panel="scheduling"' in html
+    assert "reports:" in javascript
+    assert "scheduling:" in javascript
+    assert "async function loadReports" in javascript
+    assert '"/api/dashboard/summary?' in javascript or "/api/dashboard/summary?" in javascript
+    assert "/api/invoices?page_size=200" in javascript
+
+    # The center-timeline + right-rail pattern must exist for the modules
+    # that got restructured, and must be defined in CSS.
+    assert "detail-split" in html or "detail-split" in javascript
+    assert ".detail-split" in (STATIC / "styles.css").read_text(encoding="utf-8")
+
+    # Vehicle history is a genuinely new feature backed by existing
+    # /api/estimates and /api/work-orders vehicle_id filters, not fabricated.
+    assert 'id="vehicle-history-estimates"' in html
+    assert 'id="vehicle-history-work-orders"' in html
+    assert "async function loadVehicleHistory" in javascript
+
+    # The decorative CSS-only 3D server-stack and spinning location-radar
+    # were removed from both System bay and My Day (a first pass missed My
+    # Day, leaving orphaned unstyled markup there — caught in review).
+    assert "server-stack" not in html
+    assert "location-radar" not in html
+    assert "server-stack" not in (STATIC / "styles.css").read_text(encoding="utf-8")
 
 
 def test_index_html_has_no_inline_scripts() -> None:
@@ -118,8 +221,8 @@ def test_overview_dashboard_and_approval_queue_markup() -> None:
 
     assert 'data-view-panel="approval-queue"' in html
     assert 'data-view="approval-queue"' in html
-    assert html.count("nav-item is-disabled") == 7
-    assert html.count("nav-soon-badge") == 7
+    assert html.count("nav-item is-disabled") == 5
+    assert html.count("nav-soon-badge") == 6
 
     assert "async function loadDashboardSummary" in javascript
     assert "/api/dashboard/summary" in javascript

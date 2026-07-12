@@ -12,8 +12,6 @@
 </head>
 <body class="marketing-mode">
   <div class="ambient-layer ambient-grid" aria-hidden="true"></div>
-  <div class="ambient-layer ambient-glow" aria-hidden="true"></div>
-  <div class="ambient-layer ambient-noise" aria-hidden="true"></div>
 
   <section class="marketing-site" id="marketing-site" data-view-panel="landing">
     <a class="skip-link" href="#marketing-main">Skip to content</a>
@@ -25,17 +23,20 @@
       <nav class="marketing-nav" aria-label="Website navigation">
         <a href="#platform">Platform</a>
         <a href="#workflow">Workflow</a>
+        <a href="#field">Built in the field</a>
         <a href="#control">Owner control</a>
       </nav>
       <a class="marketing-signin" href="/login">Owner sign in</a>
     </header>
 
     <main id="marketing-main">
-      <section class="marketing-hero hero-panel tilt-surface" data-tilt-strength="4">
-        <div class="hero-copy">
-          <span class="section-kicker"><i></i> Mobile mechanic intelligence</span>
-          <h2>The system<br>behind the repair.</h2>
-          <p>Optimus connects the customer record, vehicle history, diagnosis, estimate, owner approval, work order, and invoice into one owner-controlled shop-management system for Landon Motor Works.</p>
+      <section class="marketing-hero">
+        <img class="marketing-hero-photo" src="/static/media/impala-field-work.webp" width="1600" height="1200" alt="Mechanic diagnosing the fuel system of a red 1966 Chevrolet Impala in the field">
+        <div class="marketing-hero-shade" aria-hidden="true"></div>
+        <div class="marketing-hero-copy">
+          <span class="section-kicker"><i></i> Built for independent repair operations</span>
+          <h1>The operating system behind the repair.</h1>
+          <p>OptimusOS connects the customer record, vehicle history, diagnosis, estimate, owner approval, work order, and invoice into one owner-controlled shop-management system for Landon Motor Works.</p>
           <div class="hero-actions">
             <a class="primary-button" href="/login">
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m10 17 5-5-5-5v10Zm-6 4V3h2v18H4Zm14 0h2V3h-2v18Z"/></svg>
@@ -43,62 +44,78 @@
             </a>
             <a class="secondary-button" href="#platform">See the platform</a>
           </div>
-          <div class="hero-proof">
-            <div><strong>Owner mode</strong><span>Direct control</span></div>
-            <div><strong>Evidence first</strong><span>No fabricated stock</span></div>
-            <div><strong>Server sessions</strong><span>HttpOnly, no bearer tokens</span></div>
-          </div>
+          <ul class="marketing-hero-proof">
+            <li>Real shop workflows</li>
+            <li>Owner-controlled actions</li>
+            <li>Evidence before replacement</li>
+          </ul>
         </div>
-
-        <div class="mechanic-stage" aria-hidden="true">
-          <div class="stage-grid"></div>
-          <div class="stage-glow"></div>
-          <div class="rotor-assembly">
-            <div class="rotor-shadow"></div>
-            <div class="rotor-disc">
-              <span class="lug lug-1"></span><span class="lug lug-2"></span><span class="lug lug-3"></span><span class="lug lug-4"></span><span class="lug lug-5"></span>
-              <div class="rotor-hub"><span>LMW</span></div>
-            </div>
-            <div class="caliper"><span>OPTIMUS</span></div>
-          </div>
-          <div class="diagnostic-tablet">
-            <div class="tablet-camera"></div>
-            <div class="tablet-screen">
-              <div class="screen-header"><span>Vehicle Intelligence</span><i></i></div>
-              <div class="scan-ring"><span>READY</span></div>
-              <div class="screen-lines"><i></i><i></i><i></i></div>
-              <div class="screen-footer"><b>WEB</b><b>VIN</b><b>PARTS</b></div>
-            </div>
-          </div>
-          <div class="floating-nut nut-one"></div>
-          <div class="floating-nut nut-two"></div>
-          <div class="floating-wrench"></div>
-        </div>
+        <p class="marketing-photo-credit"><span>01</span>1966 Chevrolet Impala<br><b>Fuel-system diagnosis &middot; Landon Motor Works</b></p>
       </section>
 
       <section class="marketing-section" id="platform">
         <div class="marketing-section-lead">
           <span class="section-kicker"><i></i> 01 / Platform</span>
           <h2>One record from intake to payment.</h2>
-          <p>Stop rebuilding the same job across texts, notes, parts tabs, estimates, and invoices. Every customer, vehicle, repair decision, approval, work order, and balance stays connected.</p>
+          <p>Stop rebuilding the same job across texts, notes, parts tabs, estimates, and invoices. OptimusOS keeps the customer, vehicle, repair decision, approval, work order, and balance connected in one place.</p>
         </div>
         <div class="capability-grid">
-          <article class="capability-card tilt-surface" data-tilt-strength="3">
+          <article class="capability-card">
             <div class="capability-icon blue"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v14H4V5Zm3 3v3h3V8H7Zm5 0v3h5V8h-5ZM7 13v3h10v-3H7Z"/></svg></div>
             <div><span>Parts intelligence</span><strong>Current pricing</strong><p>Official retailer links, visible prices, fitment notes, and confidence labels.</p></div>
           </article>
-          <article class="capability-card tilt-surface" data-tilt-strength="3">
+          <article class="capability-card">
             <div class="capability-icon green"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2a7 7 0 0 0-7 7c0 5.2 7 13 7 13s7-7.8 7-13a7 7 0 0 0-7-7Zm0 10a3 3 0 1 1 0-6 3 3 0 0 1 0 6Z"/></svg></div>
             <div><span>Store network</span><strong>Local availability</strong><p>Uses ZIP, city, or state to research nearby inventory in real time.</p></div>
           </article>
-          <article class="capability-card tilt-surface" data-tilt-strength="3">
+          <article class="capability-card">
             <div class="capability-icon amber"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a9 9 0 1 0 9 9 9 9 0 0 0-9-9Zm1 5v4.6l3.2 1.9-1 1.7-4.2-2.5V8h2Z"/></svg></div>
             <div><span>Time analysis</span><strong>Labor guidance</strong><p>Published-time research separated from practical mobile-mechanic working time.</p></div>
           </article>
-          <article class="capability-card tilt-surface" data-tilt-strength="3">
+          <article class="capability-card">
             <div class="capability-icon violet"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 3h14v18H5V3Zm3 4h8V5H8v2Zm0 5h3V9H8v3Zm5 0h3V9h-3v3Zm-5 5h3v-3H8v3Zm5 0h3v-3h-3v3Z"/></svg></div>
             <div><span>Business output</span><strong>Complete estimate</strong><p>Labor, selected parts, fees, supplies, taxes, warnings, tools, and source links.</p></div>
           </article>
+        </div>
+      </section>
+
+      <section class="marketing-preview" id="app-preview">
+        <div class="marketing-section-lead">
+          <span class="section-kicker"><i></i> Owner workspace</span>
+          <h2>Shop operations without the noise.</h2>
+          <p>A real preview of the owner workspace &mdash; dense where the work requires detail, quiet everywhere else.</p>
+        </div>
+        <div class="app-preview-window" aria-hidden="true">
+          <aside class="app-preview-sidebar">
+            <div class="app-preview-brand"><img src="/static/logo-mark.svg" alt=""><span><strong>OptimusOS</strong><small>Owner workspace</small></span></div>
+            <span class="app-preview-nav-item is-active">Command deck</span>
+            <span class="app-preview-nav-item">Customers</span>
+            <span class="app-preview-nav-item">Vehicles</span>
+            <span class="app-preview-nav-item">Work orders</span>
+            <span class="app-preview-nav-item">Invoices</span>
+            <span class="app-preview-nav-item">Notifications</span>
+          </aside>
+          <div class="app-preview-workspace">
+            <div class="app-preview-topbar"><span><small>Operations</small><strong>Command deck</strong></span><em>DL</em></div>
+            <div class="app-preview-hero">
+              <div>
+                <span class="section-kicker"><i></i> Owner operations</span>
+                <h3>Move the next repair forward.</h3>
+                <p>Open the customer record, confirm the vehicle, prepare the estimate, and keep every approval attached to the job.</p>
+              </div>
+              <ol class="app-preview-steps">
+                <li><span>01</span><strong>Intake</strong><small>Customer &amp; vehicle</small></li>
+                <li><span>02</span><strong>Approve</strong><small>Estimate decision</small></li>
+                <li><span>03</span><strong>Execute</strong><small>Work order</small></li>
+                <li><span>04</span><strong>Close</strong><small>Invoice &amp; payment</small></li>
+              </ol>
+            </div>
+            <div class="app-preview-cards">
+              <article><span>Parts</span><strong>Current pricing</strong><p>Fitment notes and official retailer sources.</p></article>
+              <article><span>Work</span><strong>Approval queue</strong><p>Owner decisions stay visible and traceable.</p></article>
+              <article><span>Billing</span><strong>Open balances</strong><p>Invoices, due dates, and payment history.</p></article>
+            </div>
+          </div>
         </div>
       </section>
 
@@ -109,33 +126,102 @@
           <p>Optimus follows the same sequence a working mechanic does. Information is collected once, verified, and carried forward to the next stage.</p>
         </div>
         <ol class="workflow-list">
-          <li><span>01</span><div><strong>Intake &amp; vehicle record</strong><p>Customer contact, VIN, mileage, complaint, and service history.</p></div></li>
-          <li><span>02</span><div><strong>Diagnosis &amp; estimate</strong><p>Current parts research, labor guidance, tools, risk notes, and a customer-ready estimate.</p></div></li>
-          <li><span>03</span><div><strong>Owner approval</strong><p>The customer reviews and approves the exact estimate revision sent to them.</p></div></li>
-          <li><span>04</span><div><strong>Execution</strong><p>Approved estimates convert into a work order with append-only status history and notes.</p></div></li>
-          <li><span>05</span><div><strong>Invoice &amp; payment</strong><p>Completed work orders generate a customer-safe invoice with payment tracking.</p></div></li>
+          <li><span>01</span><div><strong>Intake &amp; vehicle record</strong><p>Customer contact, VIN, mileage, complaint, and the details affecting fitment.</p></div></li>
+          <li><span>02</span><div><strong>Diagnostics &amp; research</strong><p>Codes, test results, live parts research, labor guidance, sources, tools, and risk notes.</p></div></li>
+          <li><span>03</span><div><strong>Estimate &amp; approval</strong><p>Customer-ready pricing, tracked revisions, and an owner approval gate.</p></div></li>
+          <li><span>04</span><div><strong>Work order &amp; scheduling</strong><p>Approved scope moves into execution with status history, notes, and prerequisites.</p></div></li>
+          <li><span>05</span><div><strong>Invoice &amp; payment tracking</strong><p>Completed work becomes a customer-safe invoice with balances and due dates.</p></div></li>
         </ol>
       </section>
 
-      <section class="marketing-section" id="control">
-        <div class="marketing-section-lead">
-          <span class="section-kicker"><i></i> 03 / Owner control</span>
-          <h2>Optimus works for the owner, not around them.</h2>
-          <p>Optimus is configured to separate evidence from assumptions, identify missing fitment details, cite current sources, and label uncertain inventory instead of guessing.</p>
+      <section class="marketing-field" id="field">
+        <div class="marketing-field-copy">
+          <span class="section-kicker"><i></i> 03 / Built in the field</span>
+          <h2>Designed from the driveway, not a boardroom.</h2>
+          <p>OptimusOS comes from mobile-repair constraints: incomplete complaints, uncertain fitment, scattered approvals, limited time on site, and customers waiting for a clear answer.</p>
+          <blockquote>The system should make the repair easier to control &mdash; not create another screen to manage.</blockquote>
+          <small>Dejake Landon &middot; Mechanic and founder, Landon Motor Works</small>
         </div>
-        <div class="principle-tags"><span>Evidence first</span><span>Current sources</span><span>Owner controlled</span><span>No fabricated stock</span><span>HttpOnly sessions</span></div>
+        <div class="marketing-photo-grid">
+          <figure class="wide"><img src="/static/media/impala-field-work.webp" alt="Mechanic working on a red 1966 Chevrolet Impala in the field"><figcaption>Field diagnosis</figcaption></figure>
+          <figure><img src="/static/media/icon-t7-diagnostics.webp" alt="ICON T7 diagnostic scan tool displaying live vehicle data"><figcaption>Live diagnostic data</figcaption></figure>
+          <figure><img src="/static/media/impala-finished.webp" alt="The same red 1966 Chevrolet Impala, repair verified and finished"><figcaption>Repair verified</figcaption></figure>
+        </div>
+      </section>
+
+      <section class="marketing-section marketing-diagnostics" id="diagnostics">
+        <div class="marketing-diagnostics-photo">
+          <img src="/static/media/icon-t7-diagnostics.webp" alt="ICON T7 diagnostic scan tool reading live vehicle data during a repair">
+        </div>
+        <div class="marketing-section-lead">
+          <span class="section-kicker"><i></i> ICON T7 diagnostics</span>
+          <h2>Diagnosis starts with real vehicle data.</h2>
+          <p>Live codes and readings from the ICON T7 feed the research Optimus runs next &mdash; current parts pricing, fitment notes, and published labor time &mdash; so the estimate is built on what the vehicle is actually reporting, not a guess.</p>
+        </div>
+      </section>
+
+      <section class="marketing-case-study">
+        <div class="marketing-section-lead">
+          <span class="section-kicker"><i></i> 04 / Repair record</span>
+          <h2>A job is more than a line item.</h2>
+          <p>Preserve what was found, what was replaced, what the customer approved, and what happens next.</p>
+        </div>
+        <div class="marketing-case-grid">
+          <figure><img src="/static/media/oil-filter-housing-repair.webp" alt="Oil filter housing repair in progress on a mobile job"><figcaption><span>01</span> Repair access and component removal</figcaption></figure>
+          <figure><img src="/static/media/oil-filter-housing-comparison.webp" alt="Failed oil filter housing beside its replacement part"><figcaption><span>02</span> Failed part and replacement documented</figcaption></figure>
+          <article>
+            <span>Field note</span>
+            <h3>Oil-filter-housing replacement</h3>
+            <p>Complaint, inspection, repair decision, replacement part, owner approval, labor, and invoice, all in one connected record.</p>
+          </article>
+        </div>
+      </section>
+
+      <section class="marketing-section" id="benefits">
+        <div class="marketing-section-lead">
+          <span class="section-kicker"><i></i> 05 / Built for independent shops</span>
+          <h2>Sized for mobile mechanics, not fleets.</h2>
+          <p>OptimusOS is built around how a mobile mechanic or a small independent shop actually operates &mdash; one owner, real jobs, and no enterprise overhead.</p>
+        </div>
+        <ul class="marketing-benefits-list">
+          <li><strong>No shop floor required</strong><p>Runs the same on a driveway job as it does from a bay.</p></li>
+          <li><strong>One owner, full control</strong><p>Sized for a solo operator or a small crew, not a franchise back office.</p></li>
+          <li><strong>Nothing gets lost between jobs</strong><p>Every customer, vehicle, and repair decision stays attached to the record, not scattered across texts and notes.</p></li>
+        </ul>
+      </section>
+
+      <section class="marketing-control" id="control">
+        <div class="marketing-control-lead">
+          <span class="section-kicker"><i></i> Owner approval boundary</span>
+          <strong>Research can run. Commitments cannot.</strong>
+        </div>
+        <div class="marketing-control-body">
+          <h2>Optimus works for the owner, not around them.</h2>
+          <p>Optimus is the owner-facing manager for the shop: it researches parts, pricing, and labor time, and drafts the estimate &mdash; but parts orders, repair authorization, customer-facing financial commitments, payment actions, and production changes remain blocked until the owner approves them.</p>
+          <div class="principle-tags"><span>Evidence first</span><span>Current sources</span><span>Owner controlled</span><span>No fabricated stock</span><span>HttpOnly sessions</span></div>
+        </div>
         <div class="marketing-cta">
           <a class="primary-button large" href="/login">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m10 17 5-5-5-5v10Zm-6 4V3h2v18H4Zm14 0h2V3h-2v18Z"/></svg>
-            Owner sign in
+            Open owner workspace
           </a>
         </div>
       </section>
     </main>
 
     <footer class="marketing-footer">
-      <span>Landon Motor Works</span>
-      <span>Optimus Command Center</span>
+      <div class="marketing-footer-brand">
+        <img src="/static/logo-mark.svg" alt="" width="26" height="30">
+        <span><strong>Landon Motor Works</strong><small>Optimus Command Center</small></span>
+      </div>
+      <nav class="marketing-footer-nav" aria-label="Footer navigation">
+        <a href="#platform">Platform</a>
+        <a href="#workflow">Workflow</a>
+        <a href="#field">Built in the field</a>
+        <a href="#control">Owner control</a>
+        <a href="/login">Owner sign in</a>
+      </nav>
+      <p class="marketing-footer-note">Shop-management software built from real mobile-mechanic field work.</p>
     </footer>
   </section>
 
@@ -151,91 +237,133 @@
       </div>
 
       <nav class="primary-nav">
-        <button class="nav-item is-active" type="button" data-view="dashboard" aria-current="page" data-owner-only="true">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 13h6V4H4v9Zm0 7h6v-5H4v5Zm10 0h6v-9h-6v9Zm0-16v5h6V4h-6Z"/></svg>
-          <span>Overview</span>
-        </button>
-        <button class="nav-item is-disabled" type="button" aria-disabled="true" title="Not built yet — no service-desk/intake queue data model exists yet.">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a7 7 0 0 0-7 7v4a3 3 0 0 0 3 3h1v-7H6v-1a6 6 0 0 1 12 0v1h-3v7h1a3 3 0 0 0 3-3v-1h1v-3h-1v-.6A7 7 0 0 0 12 3Zm-1 18h2v1h-2v-1Z"/></svg>
-          <span>Service Desk</span>
-          <span class="nav-soon-badge">Soon</span>
-        </button>
-        <button class="nav-item" type="button" data-view="customers" data-owner-only="true">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16 11a4 4 0 1 0-3.999-4A4 4 0 0 0 16 11Zm-8 1a3 3 0 1 0-3-3 3 3 0 0 0 3 3Zm8 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4ZM8 14c-.29 0-.62.02-.97.05C5.2 14.22 2 15.14 2 18v2h4v-2c0-1.52.81-2.83 2.16-3.76A6.86 6.86 0 0 0 8 14Z"/></svg>
-          <span>Customers</span>
-        </button>
-        <button class="nav-item" type="button" data-view="vehicles" data-owner-only="true">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 6h14l2 6v6h-2a2 2 0 0 1-4 0H9a2 2 0 0 1-4 0H3v-6l2-6Zm2.44 2L6.1 12h11.8L16.56 8H7.44ZM7 13a2 2 0 1 0 0 4 2 2 0 0 0 0-4Zm10 0a2 2 0 1 0-.001 4.001A2 2 0 0 0 17 13Z"/></svg>
-          <span>Vehicles</span>
-        </button>
-        <button class="nav-item" type="button" data-view="work-orders">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h12v3h2v15H4V6h2V3Zm2 3h8V5H8v1Zm0 4h8V8H8v2Zm0 4h5v-2H8v2Zm7.2 6-3.6-3.6 1.4-1.4 2.2 2.2 4.4-4.4L21 15l-5.8 5Z"/></svg>
-          <span>Work orders</span>
-        </button>
-        <button class="nav-item is-disabled" type="button" aria-disabled="true" title="Not built yet — no diagnostic-findings data model exists yet.">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12h4l2-7 4 14 2-9 2 4h4"/></svg>
-          <span>Diagnostics</span>
-          <span class="nav-soon-badge">Soon</span>
-        </button>
-        <button class="nav-item is-disabled" type="button" aria-disabled="true" title="Not built yet — no digital-inspection data model exists yet.">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 2h10a2 2 0 0 1 2 2v16a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2Zm1 5h8V5H8v2Zm-.2 4.8 1.4-1.4L10 12.2l3.8-3.8 1.4 1.4L10 15Z"/></svg>
-          <span>Inspections</span>
-          <span class="nav-soon-badge">Soon</span>
-        </button>
-        <button class="nav-item" type="button" data-view="approval-queue" data-owner-only="true">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2 4 5v6c0 5.2 3.4 9.7 8 11 4.6-1.3 8-5.8 8-11V5l-8-3Zm-1 14-4-4 1.4-1.4L11 13.2l4.6-4.6L17 10l-6 6Z"/></svg>
-          <span>Approval Queue</span>
-          <span class="nav-badge" id="nav-approval-queue-badge" hidden>0</span>
-        </button>
-        <button class="nav-item is-disabled" type="button" aria-disabled="true" title="Not built yet — no appointment/scheduling data model exists yet.">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 2v2H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2h-2V2h-2v2H9V2H7Zm-2 6h14v10H5V8Z"/></svg>
-          <span>Scheduling</span>
-          <span class="nav-soon-badge">Soon</span>
-        </button>
-        <button class="nav-item" type="button" data-view="technicians" data-owner-only="true">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21.7 19.3 16 13.6a5 5 0 0 1-6.1-6.1L4.4 2 2 4.4l5.5 5.5a5 5 0 0 0 6.1 6.1l5.7 5.7a1 1 0 0 0 1.4 0l1-1a1 1 0 0 0 0-1.4Z"/></svg>
-          <span>Technicians</span>
-        </button>
-        <button class="nav-item" type="button" data-view="my-day" data-technician-only="true" hidden>
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2 4 5v6c0 5.2 3.4 9.7 8 11 4.6-1.3 8-5.8 8-11V5l-8-3Zm-1 14-4-4 1.4-1.4L11 13.2l4.6-4.6L17 10l-6 6Z"/></svg>
-          <span>My Day</span>
-        </button>
-        <button class="nav-item is-disabled" type="button" aria-disabled="true" title="Not built yet — no parts-inventory data model exists yet.">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v14H4V5Zm3 3v3h3V8H7Zm5 0v3h5V8h-5ZM7 13v3h10v-3H7Z"/></svg>
-          <span>Parts</span>
-          <span class="nav-soon-badge">Soon</span>
-        </button>
-        <button class="nav-item is-disabled" type="button" aria-disabled="true" title="Not built yet — no vendor/purchase-order data model exists yet.">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7h11v9H3V7Zm11 3h4l3 3v3h-7v-6ZM6 18a2 2 0 1 0 0 4 2 2 0 0 0 0-4Zm12 0a2 2 0 1 0 0 4 2 2 0 0 0 0-4Z"/></svg>
-          <span>Vendors</span>
-          <span class="nav-soon-badge">Soon</span>
-        </button>
-        <button class="nav-item" type="button" data-view="invoices" data-owner-only="true">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 2h9l5 5v15H6V2Zm8 1.5V8h4.5L14 3.5ZM8 11h10v2H8v-2Zm0 4h10v2H8v-2Zm0-8h4v2H8V7Z"/></svg>
-          <span>Invoices</span>
-        </button>
-        <button class="nav-item" type="button" data-view="notifications" data-owner-only="true">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 22a2.2 2.2 0 0 0 2.2-2.2H9.8A2.2 2.2 0 0 0 12 22Zm7-5v-1l-1.6-1.6V9.9A5.6 5.6 0 0 0 13 4.4V3a1 1 0 1 0-2 0v1.4a5.6 5.6 0 0 0-4.4 5.5v4.5L5 16v1h14Z"/></svg>
-          <span>Notifications</span>
-          <span class="nav-badge" id="nav-notifications-badge" hidden>0</span>
-        </button>
-        <button class="nav-item" type="button" data-view="square" data-owner-only="true">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5h14a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2Zm2 4v2h2V9H7Zm4 0v2h6V9h-6ZM7 13v2h2v-2H7Zm4 0v2h6v-2h-6Z"/></svg>
-          <span>Square</span>
-        </button>
-        <button class="nav-item is-disabled" type="button" aria-disabled="true" title="Not built yet — no cross-module reporting layer exists yet; the Overview dashboard covers the metrics that are real today.">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 20V10h3v10H5Zm5.5 0V4h3v16h-3ZM16 20v-7h3v7h-3Z"/></svg>
-          <span>Reports</span>
-          <span class="nav-soon-badge">Soon</span>
-        </button>
-        <button class="nav-item" type="button" data-view="estimate" data-owner-only="true">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 3h10v2h2v16H5V5h2V3Zm2 2h6V4H9v1Zm0 5h6V8H9v2Zm0 4h6v-2H9v2Zm0 4h4v-2H9v2Z"/></svg>
-          <span>Job estimator</span>
-        </button>
-        <button class="nav-item" type="button" data-view="system">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 2 2 3.2 3.7-.4.9 3.6 3.4 1.6-1.6 3.4.4 3.7-3.6.9L16 22l-4-2-4 2-1.2-3.6-3.6-.9.4-3.7L2 10.4l3.4-1.6.9-3.6 3.7.4L12 2Zm0 7a3 3 0 1 0 0 6 3 3 0 0 0 0-6Z"/></svg>
-          <span>System bay</span>
-        </button>
+        <div class="nav-group">
+          <span class="nav-group-label">Operations</span>
+          <button class="nav-item is-active" type="button" data-view="dashboard" aria-current="page" data-owner-only="true">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 13h6V4H4v9Zm0 7h6v-5H4v5Zm10 0h6v-9h-6v9Zm0-16v5h6V4h-6Z"/></svg>
+            <span>Overview</span>
+          </button>
+          <button class="nav-item" type="button" data-view="technicians" data-owner-only="true">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21.7 19.3 16 13.6a5 5 0 0 1-6.1-6.1L4.4 2 2 4.4l5.5 5.5a5 5 0 0 0 6.1 6.1l5.7 5.7a1 1 0 0 0 1.4 0l1-1a1 1 0 0 0 0-1.4Z"/></svg>
+            <span>Technicians</span>
+          </button>
+          <button class="nav-item" type="button" data-view="my-day" data-technician-only="true" hidden>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2 4 5v6c0 5.2 3.4 9.7 8 11 4.6-1.3 8-5.8 8-11V5l-8-3Zm-1 14-4-4 1.4-1.4L11 13.2l4.6-4.6L17 10l-6 6Z"/></svg>
+            <span>My Day</span>
+          </button>
+        </div>
+
+        <div class="nav-group">
+          <span class="nav-group-label">Customers &amp; vehicles</span>
+          <button class="nav-item" type="button" data-view="customers" data-owner-only="true">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16 11a4 4 0 1 0-3.999-4A4 4 0 0 0 16 11Zm-8 1a3 3 0 1 0-3-3 3 3 0 0 0 3 3Zm8 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4ZM8 14c-.29 0-.62.02-.97.05C5.2 14.22 2 15.14 2 18v2h4v-2c0-1.52.81-2.83 2.16-3.76A6.86 6.86 0 0 0 8 14Z"/></svg>
+            <span>Customers</span>
+          </button>
+          <button class="nav-item" type="button" data-view="vehicles" data-owner-only="true">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 6h14l2 6v6h-2a2 2 0 0 1-4 0H9a2 2 0 0 1-4 0H3v-6l2-6Zm2.44 2L6.1 12h11.8L16.56 8H7.44ZM7 13a2 2 0 1 0 0 4 2 2 0 0 0 0-4Zm10 0a2 2 0 1 0-.001 4.001A2 2 0 0 0 17 13Z"/></svg>
+            <span>Vehicles</span>
+          </button>
+        </div>
+
+        <div class="nav-group">
+          <span class="nav-group-label">Service &amp; diagnostics</span>
+          <button class="nav-item is-disabled" type="button" aria-disabled="true" title="Not built yet — no service-desk/intake queue data model exists yet.">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a7 7 0 0 0-7 7v4a3 3 0 0 0 3 3h1v-7H6v-1a6 6 0 0 1 12 0v1h-3v7h1a3 3 0 0 0 3-3v-1h1v-3h-1v-.6A7 7 0 0 0 12 3Zm-1 18h2v1h-2v-1Z"/></svg>
+            <span>Service Desk</span>
+            <span class="nav-soon-badge">Soon</span>
+          </button>
+          <button class="nav-item is-disabled" type="button" aria-disabled="true" title="Not built yet — no diagnostic-findings data model exists yet.">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12h4l2-7 4 14 2-9 2 4h4"/></svg>
+            <span>Diagnostics</span>
+            <span class="nav-soon-badge">Soon</span>
+          </button>
+          <button class="nav-item is-disabled" type="button" aria-disabled="true" title="Not built yet — no digital-inspection data model exists yet.">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 2h10a2 2 0 0 1 2 2v16a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2Zm1 5h8V5H8v2Zm-.2 4.8 1.4-1.4L10 12.2l3.8-3.8 1.4 1.4L10 15Z"/></svg>
+            <span>Inspections</span>
+            <span class="nav-soon-badge">Soon</span>
+          </button>
+        </div>
+
+        <div class="nav-group">
+          <span class="nav-group-label">Estimates &amp; approvals</span>
+          <button class="nav-item" type="button" data-view="estimate" data-owner-only="true">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 3h10v2h2v16H5V5h2V3Zm2 2h6V4H9v1Zm0 5h6V8H9v2Zm0 4h6v-2H9v2Zm0 4h4v-2H9v2Z"/></svg>
+            <span>Job estimator</span>
+          </button>
+          <button class="nav-item" type="button" data-view="approval-queue" data-owner-only="true">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2 4 5v6c0 5.2 3.4 9.7 8 11 4.6-1.3 8-5.8 8-11V5l-8-3Zm-1 14-4-4 1.4-1.4L11 13.2l4.6-4.6L17 10l-6 6Z"/></svg>
+            <span>Approval Queue</span>
+            <span class="nav-badge" id="nav-approval-queue-badge" hidden>0</span>
+          </button>
+        </div>
+
+        <div class="nav-group">
+          <span class="nav-group-label">Work orders &amp; scheduling</span>
+          <button class="nav-item" type="button" data-view="work-orders">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h12v3h2v15H4V6h2V3Zm2 3h8V5H8v1Zm0 4h8V8H8v2Zm0 4h5v-2H8v2Zm7.2 6-3.6-3.6 1.4-1.4 2.2 2.2 4.4-4.4L21 15l-5.8 5Z"/></svg>
+            <span>Work orders</span>
+          </button>
+          <button class="nav-item" type="button" data-view="scheduling">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 2v2H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2h-2V2h-2v2H9V2H7Zm-2 6h14v10H5V8Z"/></svg>
+            <span>Scheduling</span>
+            <span class="nav-soon-badge">Soon</span>
+          </button>
+          <button class="nav-item is-disabled" type="button" aria-disabled="true" title="Not built yet — no parts-inventory data model exists yet.">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v14H4V5Zm3 3v3h3V8H7Zm5 0v3h5V8h-5ZM7 13v3h10v-3H7Z"/></svg>
+            <span>Parts</span>
+            <span class="nav-soon-badge">Soon</span>
+          </button>
+          <button class="nav-item is-disabled" type="button" aria-disabled="true" title="Not built yet — no vendor/purchase-order data model exists yet.">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7h11v9H3V7Zm11 3h4l3 3v3h-7v-6ZM6 18a2 2 0 1 0 0 4 2 2 0 0 0 0-4Zm12 0a2 2 0 1 0 0 4 2 2 0 0 0 0-4Z"/></svg>
+            <span>Vendors</span>
+            <span class="nav-soon-badge">Soon</span>
+          </button>
+        </div>
+
+        <div class="nav-group">
+          <span class="nav-group-label">Invoices &amp; payments</span>
+          <button class="nav-item" type="button" data-view="invoices" data-owner-only="true">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 2h9l5 5v15H6V2Zm8 1.5V8h4.5L14 3.5ZM8 11h10v2H8v-2Zm0 4h10v2H8v-2Zm0-8h4v2H8V7Z"/></svg>
+            <span>Invoices</span>
+          </button>
+          <button class="nav-item" type="button" data-view="square" data-owner-only="true">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5h14a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2Zm2 4v2h2V9H7Zm4 0v2h6V9h-6ZM7 13v2h2v-2H7Zm4 0v2h6v-2h-6Z"/></svg>
+            <span>Square</span>
+          </button>
+        </div>
+
+        <div class="nav-group">
+          <span class="nav-group-label">Reports</span>
+          <button class="nav-item" type="button" data-view="reports" data-owner-only="true">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 20V10h3v10H5Zm5.5 0V4h3v16h-3ZM16 20v-7h3v7h-3Z"/></svg>
+            <span>Reports</span>
+          </button>
+        </div>
+
+        <div class="nav-group">
+          <span class="nav-group-label">Notifications</span>
+          <button class="nav-item" type="button" data-view="notifications" data-owner-only="true">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 22a2.2 2.2 0 0 0 2.2-2.2H9.8A2.2 2.2 0 0 0 12 22Zm7-5v-1l-1.6-1.6V9.9A5.6 5.6 0 0 0 13 4.4V3a1 1 0 1 0-2 0v1.4a5.6 5.6 0 0 0-4.4 5.5v4.5L5 16v1h14Z"/></svg>
+            <span>Notifications</span>
+            <span class="nav-badge" id="nav-notifications-badge" hidden>0</span>
+          </button>
+        </div>
+
+        <div class="nav-group">
+          <span class="nav-group-label">Optimus</span>
+          <button class="nav-item" type="button" data-view="chat">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2a9 9 0 0 0-9 9c0 1.7.46 3.29 1.26 4.66L3 21l5.53-1.22A9 9 0 1 0 12 2Zm-4 8a1.5 1.5 0 1 1 0 3 1.5 1.5 0 0 1 0-3Zm4 0a1.5 1.5 0 1 1 0 3 1.5 1.5 0 0 1 0-3Zm4 0a1.5 1.5 0 1 1 0 3 1.5 1.5 0 0 1 0-3Z"/></svg>
+            <span>Optimus</span>
+          </button>
+        </div>
+
+        <div class="nav-group">
+          <span class="nav-group-label">System</span>
+          <button class="nav-item" type="button" data-view="system">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 2 2 3.2 3.7-.4.9 3.6 3.4 1.6-1.6 3.4.4 3.7-3.6.9L16 22l-4-2-4 2-1.2-3.6-3.6-.9.4-3.7L2 10.4l3.4-1.6.9-3.6 3.7.4L12 2Zm0 7a3 3 0 1 0 0 6 3 3 0 0 0 0-6Z"/></svg>
+            <span>System bay</span>
+          </button>
+        </div>
       </nav>
 
       <div class="sidebar-spacer"></div>
@@ -559,48 +687,52 @@
             </section>
 
             <section class="customers-detail-stack">
-              <section class="panel" id="customer-detail-panel">
-                <div class="panel-heading">
-                  <div><span class="section-kicker"><i></i> Detail view</span><h3>Selected customer</h3></div>
-                  <button class="text-button" type="button" id="customer-archive">Archive</button>
-                </div>
-                <div id="customer-detail" class="customer-detail-card">
-                  <p>Select a customer from the list or create a new record.</p>
-                </div>
-              </section>
+              <div class="detail-split">
+                <section class="panel detail-main" id="customer-history">
+                  <div class="panel-heading">
+                    <div><span class="section-kicker"><i></i> Customer history</span><h3>Estimates, work orders &amp; invoices</h3><p>Every saved record linked to the selected customer, including approval outcomes.</p></div>
+                  </div>
+                  <div id="customer-history-content" aria-live="polite">
+                    <div class="customer-history-section">
+                      <h4>Estimates</h4>
+                      <div id="customer-history-estimates"><p>Select a customer to load history.</p></div>
+                    </div>
+                    <div class="customer-history-section">
+                      <h4>Work orders</h4>
+                      <div id="customer-history-work-orders"><p>No customer selected.</p></div>
+                    </div>
+                    <div class="customer-history-section">
+                      <h4>Invoices</h4>
+                      <div id="customer-history-invoices"><p>No customer selected.</p></div>
+                    </div>
+                  </div>
+                </section>
 
-              <section class="panel">
-                <div class="panel-heading">
-                  <div><span class="section-kicker"><i></i> Vehicle records</span><h3>Customer vehicles</h3><p>Attach one or more vehicles directly to the selected customer.</p></div>
-                  <div class="customers-form-actions">
-                    <button class="text-button" type="button" id="customer-vehicles-manage">Open Vehicles</button>
-                    <button class="secondary-button compact" type="button" id="customer-vehicle-new">Add vehicle</button>
-                  </div>
-                </div>
-                <div id="customer-vehicles-list" class="vehicles-preview-list" aria-live="polite">
-                  <p>Select a customer to load active vehicles.</p>
-                </div>
-              </section>
+                <div class="detail-rail">
+                  <section class="panel" id="customer-detail-panel">
+                    <div class="panel-heading">
+                      <div><span class="section-kicker"><i></i> Detail view</span><h3>Selected customer</h3></div>
+                      <button class="text-button" type="button" id="customer-archive">Archive</button>
+                    </div>
+                    <div id="customer-detail" class="customer-detail-card">
+                      <p>Select a customer from the list or create a new record.</p>
+                    </div>
+                  </section>
 
-              <section class="panel" id="customer-history">
-                <div class="panel-heading">
-                  <div><span class="section-kicker"><i></i> Customer history</span><h3>Estimates, work orders &amp; invoices</h3><p>Every saved record linked to the selected customer, including approval outcomes.</p></div>
+                  <section class="panel">
+                    <div class="panel-heading">
+                      <div><span class="section-kicker"><i></i> Vehicle records</span><h3>Customer vehicles</h3></div>
+                      <div class="customers-form-actions">
+                        <button class="text-button" type="button" id="customer-vehicles-manage">Open</button>
+                        <button class="secondary-button compact" type="button" id="customer-vehicle-new">Add</button>
+                      </div>
+                    </div>
+                    <div id="customer-vehicles-list" class="vehicles-preview-list" aria-live="polite">
+                      <p>Select a customer to load active vehicles.</p>
+                    </div>
+                  </section>
                 </div>
-                <div id="customer-history-content" aria-live="polite">
-                  <div class="customer-history-section">
-                    <h4>Estimates</h4>
-                    <div id="customer-history-estimates"><p>Select a customer to load history.</p></div>
-                  </div>
-                  <div class="customer-history-section">
-                    <h4>Work orders</h4>
-                    <div id="customer-history-work-orders"><p>No customer selected.</p></div>
-                  </div>
-                  <div class="customer-history-section">
-                    <h4>Invoices</h4>
-                    <div id="customer-history-invoices"><p>No customer selected.</p></div>
-                  </div>
-                </div>
-              </section>
+              </div>
 
               <form class="panel estimate-form-panel" id="customer-form">
                 <div class="panel-heading">
@@ -694,18 +826,38 @@
             </section>
 
             <section class="customers-detail-stack">
-              <section class="panel" id="vehicle-detail-panel">
-                <div class="panel-heading">
-                  <div><span class="section-kicker"><i></i> Detail view</span><h3>Selected vehicle</h3></div>
-                  <div class="customers-form-actions">
-                    <button class="text-button" type="button" id="vehicle-open-customer">Open customer</button>
-                    <button class="text-button" type="button" id="vehicle-archive">Archive</button>
+              <div class="detail-split">
+                <section class="panel detail-main" id="vehicle-history">
+                  <div class="panel-heading">
+                    <div><span class="section-kicker"><i></i> Vehicle history</span><h3>Service history &amp; estimates</h3><p>Every estimate and work order recorded against this vehicle.</p></div>
                   </div>
+                  <div id="vehicle-history-content" aria-live="polite">
+                    <div class="customer-history-section">
+                      <h4>Estimates</h4>
+                      <div id="vehicle-history-estimates"><p>Select a vehicle to load history.</p></div>
+                    </div>
+                    <div class="customer-history-section">
+                      <h4>Work orders</h4>
+                      <div id="vehicle-history-work-orders"><p>No vehicle selected.</p></div>
+                    </div>
+                  </div>
+                </section>
+
+                <div class="detail-rail">
+                  <section class="panel" id="vehicle-detail-panel">
+                    <div class="panel-heading">
+                      <div><span class="section-kicker"><i></i> Detail view</span><h3>Selected vehicle</h3></div>
+                      <div class="customers-form-actions">
+                        <button class="text-button" type="button" id="vehicle-open-customer">Open customer</button>
+                        <button class="text-button" type="button" id="vehicle-archive">Archive</button>
+                      </div>
+                    </div>
+                    <div id="vehicle-detail" class="customer-detail-card">
+                      <p>Select a vehicle from the list or create a new record.</p>
+                    </div>
+                  </section>
                 </div>
-                <div id="vehicle-detail" class="customer-detail-card">
-                  <p>Select a vehicle from the list or create a new record.</p>
-                </div>
-              </section>
+              </div>
 
               <form class="panel estimate-form-panel" id="vehicle-form">
                 <div class="panel-heading">
@@ -809,6 +961,15 @@
             </section>
 
             <aside class="chat-context">
+              <section class="panel detail-rail-card">
+                <span>Active context</span>
+                <div class="customer-detail-grid">
+                  <div><span>Customer</span><strong id="chat-context-customer">None selected</strong></div>
+                  <div><span>Vehicle</span><strong id="chat-context-vehicle">None selected</strong></div>
+                  <div><span>Estimate</span><strong id="chat-context-estimate">None selected</strong></div>
+                  <div><span>Work order</span><strong id="chat-context-work-order">None selected</strong></div>
+                </div>
+              </section>
               <section class="panel">
                 <span class="section-kicker"><i></i> Quick commands</span>
                 <div class="stacked-actions">
@@ -949,13 +1110,12 @@
           <div class="system-grid">
             <section class="panel system-hero">
               <div><span class="section-kicker"><i></i> Technician workspace</span><h2>My Day</h2><p>Clock in and out, and see what's assigned to you today.</p></div>
-              <div class="server-stack" aria-hidden="true"><span></span><span></span><span></span><i></i></div>
             </section>
 
             <section class="panel access-panel">
               <div class="panel-heading"><div><span class="section-kicker"><i></i> Shift</span><h3 id="my-day-status-title">Checking status…</h3></div></div>
               <div class="location-display">
-                <div class="location-radar"><span></span></div>
+                <div class="status-marker" aria-hidden="true"></div>
                 <div>
                   <strong id="my-day-clock-state">Loading…</strong>
                   <p id="my-day-clock-detail">Checking your clock-in status.</p>
@@ -1287,7 +1447,7 @@
 
         <section class="app-view" id="view-notifications" data-view-panel="notifications" hidden>
           <div class="customers-layout">
-            <section class="panel customers-list-panel">
+            <section class="panel customers-list-panel list-panel-full notifications-panel">
               <div class="panel-heading">
                 <div><span class="section-kicker"><i></i> Owner alerts</span><h2>Notifications</h2><p>Estimate approvals and declines, invoice activity, and work-order status changes.</p></div>
                 <div class="customers-form-actions">
@@ -1302,7 +1462,7 @@
                 </label>
               </div>
 
-              <div id="notifications-list" class="customers-list" aria-live="polite">
+              <div id="notifications-list" class="customers-list notification-list" aria-live="polite">
                 <p>No notifications yet.</p>
               </div>
 
@@ -1332,6 +1492,67 @@
               </div>
             </section>
           </div>
+        </section>
+
+        <section class="app-view" id="view-reports" data-view-panel="reports" hidden>
+          <section class="panel">
+            <div class="panel-heading">
+              <div><span class="section-kicker"><i></i> Owner reporting</span><h2>Reports</h2><p>Built from the same live records as the Overview dashboard and invoice ledger &mdash; nothing here is estimated or fabricated.</p></div>
+              <button class="secondary-button compact" type="button" id="reports-refresh">Refresh</button>
+            </div>
+
+            <div id="reports-content" class="reports-grid" aria-live="polite">
+              <section class="report-card">
+                <h3>Revenue &amp; sales summary</h3>
+                <p class="report-card-note" id="reports-period-note">Loading current period…</p>
+                <table class="report-table">
+                  <tbody id="reports-revenue-table"><tr><td colspan="2">Loading…</td></tr></tbody>
+                </table>
+              </section>
+
+              <section class="report-card">
+                <h3>Work order status summary</h3>
+                <table class="report-table">
+                  <tbody id="reports-work-order-table"><tr><td colspan="2">Loading…</td></tr></tbody>
+                </table>
+              </section>
+
+              <section class="report-card">
+                <h3>Invoice status summary</h3>
+                <table class="report-table">
+                  <tbody id="reports-invoice-status-table"><tr><td colspan="2">Loading…</td></tr></tbody>
+                </table>
+              </section>
+
+              <section class="report-card">
+                <h3>Outstanding balances</h3>
+                <table class="report-table">
+                  <tbody id="reports-balances-table"><tr><td colspan="2">Loading…</td></tr></tbody>
+                </table>
+              </section>
+            </div>
+
+            <div class="empty-card report-gap-note">
+              <strong>Not yet available: payment activity, technician time, and commission reports</strong>
+              <p>These require dedicated backend aggregation endpoints (a payments-by-date-range listing and a technician time/commission summary) that do not exist today. Rather than compute them from fabricated or partial data, they are intentionally left out of this report pending that backend work.</p>
+            </div>
+          </section>
+        </section>
+
+        <section class="app-view" id="view-scheduling" data-view-panel="scheduling" hidden>
+          <section class="panel">
+            <div class="panel-heading">
+              <div><span class="section-kicker"><i></i> Not yet built</span><h2>Scheduling</h2><p>Appointment and calendar scheduling has no backend data model yet.</p></div>
+            </div>
+            <div class="empty-card">
+              <strong>What's here today</strong>
+              <p>Work orders already carry a single "Scheduled for" date/time (visible on each work order's detail rail). There is no calendar view, no appointment/technician-availability model, and no conflict detection yet.</p>
+            </div>
+            <div class="empty-card report-gap-note">
+              <strong>What real scheduling would require</strong>
+              <p>An appointment data model (start/end time, technician, bay, status), availability rules, and API endpoints to create/move/cancel appointments &mdash; none of which exist in the backend today. This page is a placeholder so the navigation structure is honest about what's built versus planned.</p>
+            </div>
+          </section>
         </section>
 
         <section class="app-view" id="view-estimate" data-view-panel="estimate" hidden>
@@ -1432,8 +1653,8 @@
                 <div><strong>Evidence standard</strong><p>Unknown price or inventory stays unknown. Optimus does not manufacture availability.</p></div>
               </section>
             </aside>
+            <section id="result" class="estimate-result panel" hidden aria-live="polite"></section>
           </div>
-          <section id="result" class="estimate-result panel" hidden aria-live="polite"></section>
         </section>
 
         <section class="app-view" id="view-approval" data-view-panel="approval" hidden>
@@ -1452,13 +1673,12 @@
           <div class="system-grid">
             <section class="panel system-hero">
               <div><span class="section-kicker"><i></i> Configuration</span><h2>System bay</h2><p>Control local access, location services, and verify the Optimus runtime.</p></div>
-              <div class="server-stack" aria-hidden="true"><span></span><span></span><span></span><i></i></div>
             </section>
 
             <section class="panel access-panel">
               <div class="panel-heading"><div><span class="section-kicker"><i></i> Local security</span><h3>Owner session</h3></div><span class="security-badge">HttpOnly cookie</span></div>
               <div class="location-display">
-                <div class="location-radar"><span></span></div>
+                <div class="status-marker" aria-hidden="true"></div>
                 <div>
                   <strong id="system-auth-state">Checking authentication…</strong>
                   <p id="system-auth-detail">Loading current session state.</p>
@@ -1472,7 +1692,7 @@
 
             <section class="panel location-panel">
               <div class="panel-heading"><div><span class="section-kicker"><i></i> Parts radius</span><h3>Service location</h3></div><button class="secondary-button compact" type="button" id="use-location">Use current location</button></div>
-              <div class="location-display"><div class="location-radar"><span></span></div><div><strong id="location-status">Location not supplied</strong><p>Used for nearby stores. Coordinates are not persisted by the server.</p></div></div>
+              <div class="location-display"><div class="status-marker" aria-hidden="true"></div><div><strong id="location-status">Location not supplied</strong><p>Used for nearby stores. Coordinates are not persisted by the server.</p></div></div>
               <div class="form-grid three">
                 <label class="field">ZIP <input id="postal-code" inputmode="numeric" maxlength="10" placeholder="95677"></label>
                 <label class="field">City <input id="city" placeholder="Rocklin"></label>
@@ -1512,6 +1732,8 @@
     <button type="button" data-view="notifications" data-owner-only="true"><span>🔔</span>Alerts</button>
     <button type="button" data-view="square" data-owner-only="true"><span>◧</span>Square</button>
     <button type="button" data-view="my-day" data-technician-only="true" hidden><span>◉</span>My Day</button>
+    <button type="button" data-view="reports" data-owner-only="true"><span>▤</span>Reports</button>
+    <button type="button" data-view="chat"><span>◆</span>Optimus</button>
     <button type="button" data-view="system"><span>⚙</span>System</button>
   </nav>
 
