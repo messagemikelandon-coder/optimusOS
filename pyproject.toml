@@ -42,6 +42,11 @@ norecursedirs = [
   ".ruff_cache",
   ".mypy_cache",
   "*.egg-info",
+  # Real-browser, real-server E2E tests: excluded from the default fast
+  # unit-test run (in-memory SQLite, no live server) and run separately
+  # against a real Postgres + Redis + live app instance -- see
+  # tests/e2e/README.md and the dedicated CI job.
+  "tests/e2e",
 ]
 
 [tool.ruff]

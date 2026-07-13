@@ -183,3 +183,30 @@ jobs:
       - name: Remove placeholder env file
         if: always()
         run: rm -f .env
+
+  e2e-core-workflow:
+    name: Authenticated E2E (real browser, real Postgres, real sessions)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Python dependencies
+        run: uv sync --extra dev
+
+      - name: Install Playwright Chromium
+        run: uv run playwright install --with-deps chromium
+
+      # tests/e2e's own conftest.py manages its Postgres container and the
+      # live uvicorn process it drives -- same docker-run pattern as every
+      # other job here, just started from Python instead of a workflow
+      # step. Excluded from the "pytest" step above via norecursedirs.
+      - name: Run authenticated E2E suite
+        run: uv run pytest tests/e2e -v
