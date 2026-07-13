@@ -181,6 +181,9 @@ from app.models import (
     ScheduleBlockListResponse,
     ScheduleBlockRead,
     ScheduleBlockUpdate,
+    SyntheticAccountResponse,
+    SyntheticCleanupResponse,
+    SyntheticTechnicianRequest,
     TechnicianArchiveResponse,
     TechnicianClockResponse,
     TechnicianCreate,
@@ -280,6 +283,16 @@ from app.technician_store import (
     list_technicians,
     provision_login,
     update_technician,
+)
+from app.test_support_store import (
+    SyntheticOwnerNotFoundError,
+    TestSupportDisabledError,
+    TestSupportError,
+    cleanup_all_synthetic_accounts,
+    cleanup_synthetic_account,
+    provision_synthetic_owner,
+    provision_synthetic_technician,
+    provisioning_enabled,
 )
 from app.vehicle_store import (
     VehicleNotFoundError,
@@ -522,6 +535,134 @@ async def auth_me(auth: AuthContextDep) -> AuthMeResponse:
         user=auth_user_response(auth.user),
         expires_at=auth.session.expires_at,
     )
+
+
+def _require_test_support_enabled(settings: Settings) -> None:
+    # Returns 404, not 403 -- when disabled (the default in every real
+    # deployment), these routes should not even reveal they exist.
+    if not provisioning_enabled(settings):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
+
+
+@app.post("/api/test-support/synthetic-owner", response_model=SyntheticAccountResponse)
+async def create_synthetic_owner(
+    db: DbSessionDep,
+    settings: SettingsDep,
+) -> SyntheticAccountResponse:
+    """Provision a synthetic owner account for automated/CI end-to-end tests.
+
+    Disabled unless OPTIMUS_TEST_ACCOUNT_PROVISIONING is true and APP_ENV is
+    not "production" -- see app/test_support_store.py.
+    """
+    _require_test_support_enabled(settings)
+    try:
+        account = provision_synthetic_owner(db=db, settings=settings)
+    except TestSupportDisabledError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Synthetic owner provisioning failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Synthetic account storage is unavailable.",
+        ) from exc
+    return SyntheticAccountResponse(
+        user_id=account.user_id,
+        username=account.username,
+        password=account.password,
+        role=account.role,
+        technician_id=account.technician_id,
+    )
+
+
+@app.post("/api/test-support/synthetic-technician", response_model=SyntheticAccountResponse)
+async def create_synthetic_technician(
+    payload: SyntheticTechnicianRequest,
+    db: DbSessionDep,
+    settings: SettingsDep,
+) -> SyntheticAccountResponse:
+    """Provision a synthetic technician under an existing synthetic owner."""
+    _require_test_support_enabled(settings)
+    try:
+        account = provision_synthetic_technician(
+            db=db, settings=settings, owner_username=payload.owner_username
+        )
+    except TestSupportDisabledError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND) from exc
+    except SyntheticOwnerNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+        ) from exc
+    except TestSupportError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+        ) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Synthetic technician provisioning failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Synthetic account storage is unavailable.",
+        ) from exc
+    return SyntheticAccountResponse(
+        user_id=account.user_id,
+        username=account.username,
+        password=account.password,
+        role=account.role,
+        technician_id=account.technician_id,
+    )
+
+
+@app.delete(
+    "/api/test-support/synthetic-accounts/{user_id}", status_code=status.HTTP_204_NO_CONTENT
+)
+async def delete_synthetic_account(
+    user_id: int,
+    db: DbSessionDep,
+    settings: SettingsDep,
+) -> Response:
+    """Delete one synthetic account (and everything it owns, via cascade).
+
+    Refuses to delete anything that isn't flagged as a synthetic test
+    account, even if the id belongs to a real user -- this can never be used
+    to delete a real owner or technician account.
+    """
+    _require_test_support_enabled(settings)
+    try:
+        deleted = cleanup_synthetic_account(db=db, settings=settings, user_id=user_id)
+    except TestSupportDisabledError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Synthetic account cleanup failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Synthetic account storage is unavailable.",
+        ) from exc
+    if not deleted:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@app.delete("/api/test-support/synthetic-accounts", response_model=SyntheticCleanupResponse)
+async def delete_all_synthetic_accounts(
+    db: DbSessionDep,
+    settings: SettingsDep,
+) -> SyntheticCleanupResponse:
+    """Sweep-cleanup every synthetic owner account (and everything cascaded from it).
+
+    Intended for CI teardown so a failed test run can't leave synthetic data
+    behind even if individual per-account cleanup was skipped.
+    """
+    _require_test_support_enabled(settings)
+    try:
+        count = cleanup_all_synthetic_accounts(db=db, settings=settings)
+    except TestSupportDisabledError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Synthetic account sweep-cleanup failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Synthetic account storage is unavailable.",
+        ) from exc
+    return SyntheticCleanupResponse(deleted_count=count)
 
 
 @app.post("/api/customers", response_model=CustomerRead)

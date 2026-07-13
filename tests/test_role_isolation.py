@@ -29,6 +29,16 @@ _NOT_ROLE_GATED_ROUTES = {
     ("POST", "/api/estimate-approval/view"),
     ("POST", "/api/estimate-approval/approve"),
     ("POST", "/api/estimate-approval/decline"),
+    # Synthetic test-account provisioning (Phase 6 Part B) must work before
+    # any session exists at all, so it cannot sit behind a session-based auth
+    # dependency. It has its own equally strict guard instead: every route
+    # 404s unless OPTIMUS_TEST_ACCOUNT_PROVISIONING is true AND app_env is
+    # not "production" (see app/test_support_store.py::provisioning_enabled),
+    # off by default in every real deployment including local dev and CI.
+    ("POST", "/api/test-support/synthetic-owner"),
+    ("POST", "/api/test-support/synthetic-technician"),
+    ("DELETE", "/api/test-support/synthetic-accounts/{user_id}"),
+    ("DELETE", "/api/test-support/synthetic-accounts"),
 }
 
 # Routes deliberately opened to BOTH owner and technician (Phase 5.6

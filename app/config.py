@@ -81,6 +81,11 @@ class Settings(BaseSettings):
     max_agent_consultations: int = Field(default=2, ge=0, le=8)
     allow_public_https_parts_links: bool = True
 
+    # Synthetic test-account provisioning (Phase 6 Part B). Off by default in
+    # every environment, including local dev and CI, unless both this flag and
+    # app_env are explicitly overridden -- see app/test_support_store.py.
+    optimus_test_account_provisioning: bool = False
+
     parts_retailer_hosts: Annotated[tuple[str, ...], NoDecode] = (
         "autozone.com",
         "www.autozone.com",
