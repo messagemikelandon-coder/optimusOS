@@ -15,9 +15,8 @@ from app.models import (
     AuthLoginRequest,
     ChatRequest,
     ConversationMode,
-    EstimateRequest,
+    EstimateCreate,
     LocationInput,
-    VehicleInput,
 )
 
 
@@ -132,7 +131,7 @@ async def test_logout_revokes_session(settings, db_session: Session) -> None:  #
 
 def test_estimate_requires_authenticated_session(settings, db_session: Session) -> None:  # type: ignore[no-untyped-def]
     with pytest.raises(HTTPException) as excinfo:
-        get_current_auth_context(request_for("/api/estimate"), db_session, settings)
+        get_current_auth_context(request_for("/api/estimates"), db_session, settings)
     assert excinfo.value.status_code == 401
 
 
@@ -143,17 +142,18 @@ async def test_estimate_requires_api_key_after_authentication(
     settings.openai_api_key = ""
     _, response = await login(settings, db_session)
     raw_cookie = response.headers["set-cookie"].split("optimus_session=", 1)[1].split(";", 1)[0]
-    current_user = auth_context(settings, db_session, raw_cookie).user
+    auth = auth_context(settings, db_session, raw_cookie)
     with pytest.raises(HTTPException) as excinfo:
-        await main.estimate(
-            EstimateRequest(
-                vehicle=VehicleInput(year=2018, make="Honda", model="CR-V"),
+        await main.create_estimate_record(
+            EstimateCreate(
+                customer_id=1,
+                vehicle_id=1,
                 job="Oil change",
                 location=LocationInput(postal_code="66442"),
             ),
-            request_for("/api/estimate", method="POST"),
+            db_session,
             settings,
-            current_user,
+            auth,
         )
     assert excinfo.value.status_code == 503
 
@@ -180,6 +180,7 @@ async def test_estimate_returns_safe_structured_upstream_error(
 ) -> None:  # type: ignore[no-untyped-def]
     from app.errors import EstimatorResearchError
     from app.orchestrator import OptimusResearchOrchestrator
+    from tests.test_vehicles_api import create_customer_for_auth, vehicle_payload
 
     async def fail_estimate(self, request):  # type: ignore[no-untyped-def]
         del self, request
@@ -194,17 +195,20 @@ async def test_estimate_returns_safe_structured_upstream_error(
     monkeypatch.setattr(OptimusResearchOrchestrator, "estimate_job", fail_estimate)
     _, response = await login(settings, db_session)
     raw_cookie = response.headers["set-cookie"].split("optimus_session=", 1)[1].split(";", 1)[0]
-    current_user = auth_context(settings, db_session, raw_cookie).user
+    auth = auth_context(settings, db_session, raw_cookie)
+    customer_id = await create_customer_for_auth(settings, db_session, auth)
+    vehicle = await main.create_vehicle_record(customer_id, vehicle_payload(), db_session, auth)
     with pytest.raises(HTTPException) as excinfo:
-        await main.estimate(
-            EstimateRequest(
-                vehicle=VehicleInput(year=2018, make="Honda", model="CR-V"),
+        await main.create_estimate_record(
+            EstimateCreate(
+                customer_id=customer_id,
+                vehicle_id=vehicle.id,
                 job="Replace front brakes",
                 location=LocationInput(postal_code="95677"),
             ),
-            request_for("/api/estimate", method="POST"),
+            db_session,
             settings,
-            current_user,
+            auth,
         )
     assert excinfo.value.status_code == 504
     detail = excinfo.value.detail

@@ -41,6 +41,74 @@ const state = {
     archivedOnly: false,
     customerFilterId: null,
   },
+  technicians: {
+    items: [],
+    selectedTechnicianId: null,
+    selectedTechnician: null,
+    page: 1,
+    pageSize: 20,
+    total: 0,
+    hasMore: false,
+    search: "",
+    archivedOnly: false,
+  },
+  myDay: {
+    profile: null,
+  },
+  serviceDesk: {
+    items: [],
+    selectedRequestId: null,
+    selectedRequest: null,
+    page: 1,
+    pageSize: 20,
+    total: 0,
+    hasMore: false,
+    search: "",
+    statusFilter: "",
+  },
+  diagnostics: {
+    items: [],
+    selectedFindingId: null,
+    selectedFinding: null,
+    page: 1,
+    pageSize: 20,
+    total: 0,
+    hasMore: false,
+    vehicleFilterId: null,
+  },
+  inspections: {
+    items: [],
+    selectedInspectionId: null,
+    selectedInspection: null,
+    page: 1,
+    pageSize: 20,
+    total: 0,
+    hasMore: false,
+    vehicleFilterId: null,
+    draftItems: [],
+  },
+  parts: {
+    items: [],
+    selectedPartId: null,
+    selectedPart: null,
+    page: 1,
+    pageSize: 20,
+    total: 0,
+    hasMore: false,
+    search: "",
+    archivedOnly: false,
+  },
+  vendors: {
+    items: [],
+    selectedVendorId: null,
+    selectedVendor: null,
+    page: 1,
+    pageSize: 20,
+    total: 0,
+    hasMore: false,
+    search: "",
+    archivedOnly: false,
+  },
   estimates: {
     selectedEstimateId: null,
     selectedEstimate: null,
@@ -56,6 +124,62 @@ const state = {
     search: "",
     statusFilter: "",
   },
+  invoices: {
+    items: [],
+    selectedInvoiceId: null,
+    selectedInvoice: null,
+    selectionVersion: 0,
+    page: 1,
+    pageSize: 20,
+    total: 0,
+    hasMore: false,
+    search: "",
+    statusFilter: "",
+  },
+  notifications: {
+    items: [],
+    page: 1,
+    pageSize: 20,
+    total: 0,
+    hasMore: false,
+    unreadOnly: false,
+    unreadCount: 0,
+  },
+  square: {
+    items: [],
+    loading: false,
+  },
+  dashboard: {
+    summary: null,
+    rangePreset: "30",
+    dateFrom: null,
+    dateTo: null,
+    revenueChart: null,
+    workOrderChart: null,
+    sparklineCharts: {},
+  },
+  approvalQueue: {
+    items: [],
+    selectedEstimateId: null,
+    selectedEstimate: null,
+    page: 1,
+    pageSize: 20,
+    total: 0,
+    hasMore: false,
+  },
+  scheduling: {
+    view: "day",
+    anchorDate: new Date(),
+    items: [],
+    blocks: [],
+    technicianFilterId: null,
+    technicians: [],
+    bays: [],
+    selectedAppointmentId: null,
+    selectedAppointment: null,
+    workingHoursTechnicianId: null,
+    workingHours: [],
+  },
   currentView: "dashboard",
   health: null,
   lastEstimate: null,
@@ -63,10 +187,23 @@ const state = {
 
 const viewMeta = {
   login: { eyebrow: "Authentication", title: "Sign in" },
-  dashboard: { eyebrow: "Operations", title: "Command deck" },
+  dashboard: { eyebrow: "Operations", title: "Overview" },
   customers: { eyebrow: "Records", title: "Customers" },
   vehicles: { eyebrow: "Fleet", title: "Vehicles" },
+  technicians: { eyebrow: "Staff", title: "Technicians" },
+  "my-day": { eyebrow: "Technician workspace", title: "My Day" },
   "work-orders": { eyebrow: "Repair execution", title: "Work orders" },
+  "approval-queue": { eyebrow: "Customer decisions", title: "Approval Queue" },
+  invoices: { eyebrow: "Customer billing", title: "Invoices" },
+  notifications: { eyebrow: "Owner alerts", title: "Notifications" },
+  square: { eyebrow: "Payment integration", title: "Square" },
+  reports: { eyebrow: "Owner reporting", title: "Reports" },
+  scheduling: { eyebrow: "Appointments", title: "Scheduling" },
+  "service-desk": { eyebrow: "Intake queue", title: "Service Desk" },
+  diagnostics: { eyebrow: "Findings", title: "Diagnostics" },
+  inspections: { eyebrow: "Digital inspections", title: "Inspections" },
+  parts: { eyebrow: "Inventory", title: "Parts" },
+  vendors: { eyebrow: "Vendor directory", title: "Vendors" },
   chat: { eyebrow: "Owner channel", title: "Talk to Optimus" },
   estimate: { eyebrow: "Pricing workflow", title: "Job estimator" },
   approval: { eyebrow: "Customer authorization", title: "Estimate approval" },
@@ -124,8 +261,25 @@ function apiError(response, data, fallback) {
   return new Error(`${fallback} (HTTP ${response.status})`);
 }
 
+function isTechnicianSession() {
+  return state.auth.authenticated && state.auth.user?.role === "technician";
+}
+
+function applyRoleNavVisibility() {
+  const technician = isTechnicianSession();
+  $$("[data-owner-only]").forEach((el) => {
+    el.hidden = technician;
+  });
+  $$("[data-technician-only]").forEach((el) => {
+    el.hidden = !technician;
+  });
+}
+
 function setAuthState(authenticated, user = null, expiresAt = null) {
+  const wasAuthenticated = state.auth.authenticated;
   state.auth = { authenticated, user, expiresAt };
+  applyRoleNavVisibility();
+  if (authenticated && !wasAuthenticated && user?.role === "owner") void refreshNotificationsBadge();
   $("topbar-login-link").hidden = authenticated;
   $("topbar-logout").hidden = !authenticated;
   $("system-login-link").hidden = authenticated;
@@ -196,10 +350,14 @@ async function handleLoginSubmit(event) {
     if (!response.ok || !data) throw apiError(response, data, "Sign-in failed");
     setAuthState(true, data.user, data.expires_at);
     $("login-password").value = "";
-    void loadCustomerOptions();
-    void restoreSelectionsFromContext();
     showToast("Signed in.", "success");
-    navigate("dashboard");
+    if (data.user.role === "technician") {
+      navigate("my-day");
+    } else {
+      void loadCustomerOptions();
+      void restoreSelectionsFromContext();
+      navigate("dashboard");
+    }
   } catch (error) {
     setAuthState(false);
     showToast(`Sign-in failed: ${error.message}`, "error");
@@ -227,6 +385,9 @@ async function performLogout() {
     state.vehicles.customerFilterId = null;
     state.workOrders.selectedWorkOrderId = null;
     state.workOrders.selectedWorkOrder = null;
+    state.notifications.items = [];
+    state.notifications.unreadCount = 0;
+    updateNotificationsBadge(0);
     navigate("login");
   }
 }
@@ -259,11 +420,46 @@ function navigate(view) {
   else if (view === "approval") history.replaceState(null, "", "/approval" + window.location.hash);
   else if (window.location.pathname === "/login") history.replaceState(null, "", "/");
   window.scrollTo({ top: 0, behavior: "smooth" });
+  if (view === "dashboard" && state.auth.authenticated) void loadDashboardSummary();
   if (view === "customers" && state.auth.authenticated) void loadCustomers();
   if (view === "vehicles" && state.auth.authenticated) void loadVehicles();
-  if (view === "work-orders" && state.auth.authenticated) void loadWorkOrders();
-  if (view === "chat") window.setTimeout(() => $("chat-message").focus(), 180);
+  if (view === "work-orders" && state.auth.authenticated) {
+    void loadWorkOrders();
+    if (!isTechnicianSession()) {
+      void loadTechnicianOptions().catch(() => {
+        // Owner-only convenience dropdown; a failure here shouldn't block work-order browsing.
+      });
+    }
+  }
+  if (view === "approval-queue" && state.auth.authenticated) void loadApprovalQueue();
+  if (view === "invoices" && state.auth.authenticated) void loadInvoices();
+  if (view === "notifications" && state.auth.authenticated) void loadNotifications();
+  if (view === "square" && state.auth.authenticated) void loadSquareDashboard();
+  if (view === "reports" && state.auth.authenticated) void loadReports();
+  if (view === "service-desk" && state.auth.authenticated) void loadServiceDesk();
+  if (view === "diagnostics" && state.auth.authenticated) void loadDiagnostics();
+  if (view === "inspections" && state.auth.authenticated) void loadInspections();
+  if (view === "parts" && state.auth.authenticated) void loadParts();
+  if (view === "vendors" && state.auth.authenticated) void loadVendors();
+  if (view === "technicians" && state.auth.authenticated) void loadTechnicians();
+  if (view === "scheduling" && state.auth.authenticated) void loadScheduling();
+  if (view === "my-day" && state.auth.authenticated) void loadMyDay();
+  if (view === "chat") {
+    renderChatContextSummary();
+    window.setTimeout(() => $("chat-message").focus(), 180);
+  }
   if (view === "login") window.setTimeout(() => $("login-username").focus(), 180);
+}
+
+function renderChatContextSummary() {
+  const customerEl = $("chat-context-customer");
+  if (!customerEl) return;
+  customerEl.textContent = state.customers.selectedCustomer?.display_name || "None selected";
+  $("chat-context-vehicle").textContent = state.vehicles.selectedVehicle?.display_name || "None selected";
+  $("chat-context-estimate").textContent = state.approvalQueue.selectedEstimate?.estimate_number || "None selected";
+  $("chat-context-work-order").textContent = state.workOrders.selectedWorkOrder
+    ? `${state.workOrders.selectedWorkOrder.estimate_number} · ${workOrderStatusLabel(state.workOrders.selectedWorkOrder.status)}`
+    : "None selected";
 }
 
 function initializeNavigation() {
@@ -293,24 +489,6 @@ function initializeNavigation() {
       $("sidebar").classList.remove("is-open");
       $("mobile-menu").setAttribute("aria-expanded", "false");
     }
-  });
-}
-
-function initializeTilt() {
-  if (window.matchMedia("(pointer: coarse)").matches || window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
-  const tiltClasses = ["tilt-nw", "tilt-n", "tilt-ne", "tilt-w", "tilt-e", "tilt-sw", "tilt-s", "tilt-se"];
-  $$("[data-tilt-strength]").forEach((card) => {
-    card.addEventListener("pointermove", (event) => {
-      const rect = card.getBoundingClientRect();
-      const x = (event.clientX - rect.left) / rect.width;
-      const y = (event.clientY - rect.top) / rect.height;
-      const horizontal = x < .34 ? "w" : x > .66 ? "e" : "";
-      const vertical = y < .34 ? "n" : y > .66 ? "s" : "";
-      card.classList.remove(...tiltClasses);
-      const key = `tilt-${vertical}${horizontal}`;
-      if (tiltClasses.includes(key)) card.classList.add(key);
-    });
-    card.addEventListener("pointerleave", () => card.classList.remove(...tiltClasses));
   });
 }
 
@@ -685,6 +863,7 @@ function renderEstimate(data) {
       <button class="secondary-button compact" type="button" id="print-estimate">Print estimate</button>
       <button class="secondary-button compact" type="button" id="send-estimate-approval"${data.status === "approved" ? " disabled" : ""}>Send for approval</button>
       <button class="secondary-button compact" type="button" id="create-work-order"${canCreateWorkOrder ? "" : " disabled"}>Create work order</button>
+      <button class="text-button" type="button" id="refresh-estimate-record" title="Reload this estimate's current status from the server">Refresh status</button>
       <button class="text-button" type="button" id="new-estimate">Start another</button>
     </div>
     <div class="money-grid">
@@ -716,6 +895,7 @@ function renderEstimate(data) {
       ${estimate.research.request_id ? `<section class="result-section"><h3>Research trace</h3><p>${escapeHtml(estimate.research.request_id)} · ${escapeHtml(estimate.research.research_mode || "standard")}</p></section>` : ""}
     </div>`;
   result.hidden = false;
+  $("estimate-form").hidden = true;
   result.scrollIntoView({ behavior: "smooth", block: "start" });
   $("copy-estimate").addEventListener("click", async () => {
     try {
@@ -732,8 +912,14 @@ function renderEstimate(data) {
   $("create-work-order").addEventListener("click", () => {
     void createWorkOrderFromSelectedEstimate();
   });
+  $("refresh-estimate-record").addEventListener("click", () => {
+    void openEstimateRecord(data.id).then(() => {
+      showToast("Estimate status refreshed.", "info");
+    });
+  });
   $("new-estimate").addEventListener("click", () => {
     result.hidden = true;
+    $("estimate-form").hidden = false;
     $("vin").focus();
     window.scrollTo({ top: 0, behavior: "smooth" });
   });
@@ -819,9 +1005,32 @@ async function sendSelectedEstimateForApproval() {
   }
 }
 
+function setEstimateRailCollapsed(collapsed) {
+  const layout = $("estimate-layout");
+  const toggle = $("estimate-side-rail-toggle");
+  layout.classList.toggle("rail-collapsed", collapsed);
+  toggle.setAttribute("aria-expanded", String(!collapsed));
+  toggle.title = collapsed ? "Expand evidence standard panel" : "Collapse evidence standard panel";
+  try {
+    localStorage.setItem("estimateRailCollapsed", collapsed ? "1" : "0");
+  } catch {
+    // Collapse preference is a convenience only; ignore storage failures (e.g. private browsing).
+  }
+}
+
 function initializeEstimate() {
   ["labor-rate", "mobile-fee", "supplies", "tax-rate"].forEach((id) => $(id).addEventListener("input", savePricingPreferences));
   syncEstimateRecordSummary();
+  let railCollapsed = false;
+  try {
+    railCollapsed = localStorage.getItem("estimateRailCollapsed") === "1";
+  } catch {
+    // Ignore storage access failures and default to expanded.
+  }
+  setEstimateRailCollapsed(railCollapsed);
+  $("estimate-side-rail-toggle").addEventListener("click", () => {
+    setEstimateRailCollapsed(!$("estimate-layout").classList.contains("rail-collapsed"));
+  });
   $("estimate-open-customer").addEventListener("click", () => navigate("customers"));
   $("estimate-open-vehicle").addEventListener("click", () => navigate("vehicles"));
   $("estimate-form").addEventListener("submit", async (event) => {
@@ -1059,6 +1268,73 @@ async function loadCustomerVehiclePreview(customerId) {
   }
 }
 
+function historyStatusLabel(status) {
+  return String(status || "").replace(/_/g, " ");
+}
+
+function renderCustomerHistory(data) {
+  const estimatesEl = $("customer-history-estimates");
+  const workOrdersEl = $("customer-history-work-orders");
+  const invoicesEl = $("customer-history-invoices");
+  if (!estimatesEl || !workOrdersEl || !invoicesEl) return;
+
+  estimatesEl.innerHTML = data.estimates.items.length
+    ? data.estimates.items.map((item) => `
+      <button type="button" class="vehicle-preview-item" data-history-estimate-id="${item.id}">
+        <strong>${escapeHtml(item.estimate_number)} · ${escapeHtml(historyStatusLabel(item.status))}</strong>
+        <span>${escapeHtml(item.vehicle_display_name)}${item.estimate_total != null ? ` · $${item.estimate_total.toFixed(2)}` : ""} · ${new Date(item.updated_at).toLocaleString()}</span>
+      </button>`).join("") + (data.estimates.total > data.estimates.items.length ? `<p class="history-more">Showing ${data.estimates.items.length} of ${data.estimates.total}.</p>` : "")
+    : "<p>No estimates recorded for this customer yet.</p>";
+
+  workOrdersEl.innerHTML = data.work_orders.items.length
+    ? data.work_orders.items.map((item) => `
+      <button type="button" class="vehicle-preview-item" data-history-work-order-id="${item.id}">
+        <strong>${escapeHtml(item.estimate_number)} · ${escapeHtml(historyStatusLabel(item.status))}</strong>
+        <span>${escapeHtml(item.title)} · ${new Date(item.updated_at).toLocaleString()}</span>
+      </button>`).join("") + (data.work_orders.total > data.work_orders.items.length ? `<p class="history-more">Showing ${data.work_orders.items.length} of ${data.work_orders.total}.</p>` : "")
+    : "<p>No work orders for this customer yet.</p>";
+
+  invoicesEl.innerHTML = data.invoices.items.length
+    ? data.invoices.items.map((item) => `
+      <button type="button" class="vehicle-preview-item" data-history-invoice-id="${item.id}">
+        <strong>${escapeHtml(item.invoice_number)} · ${escapeHtml(historyStatusLabel(item.status))}${item.is_overdue ? " · OVERDUE" : ""}</strong>
+        <span>Total $${item.invoice_total.toFixed(2)} · Balance $${item.balance_due.toFixed(2)}${item.due_at ? ` · Due ${new Date(item.due_at).toLocaleDateString()}` : ""}</span>
+      </button>`).join("") + (data.invoices.total > data.invoices.items.length ? `<p class="history-more">Showing ${data.invoices.items.length} of ${data.invoices.total}.</p>` : "")
+    : "<p>No invoices for this customer yet.</p>";
+
+  $$("[data-history-estimate-id]", estimatesEl).forEach((button) => {
+    button.addEventListener("click", () => {
+      void openEstimateRecord(Number(button.dataset.historyEstimateId));
+    });
+  });
+  $$("[data-history-work-order-id]", workOrdersEl).forEach((button) => {
+    button.addEventListener("click", () => {
+      navigate("work-orders");
+      void selectWorkOrder(Number(button.dataset.historyWorkOrderId));
+    });
+  });
+  $$("[data-history-invoice-id]", invoicesEl).forEach((button) => {
+    button.addEventListener("click", () => {
+      navigate("invoices");
+      void selectInvoice(Number(button.dataset.historyInvoiceId));
+    });
+  });
+}
+
+async function loadCustomerHistory(customerId) {
+  const estimatesEl = $("customer-history-estimates");
+  if (!estimatesEl) return;
+  estimatesEl.innerHTML = '<div class="loading-panel"><span class="loading-spinner"></span><div><strong>Loading history</strong><br><small>Reading linked estimates, work orders, and invoices.</small></div></div>';
+  try {
+    const response = await apiFetch(`/api/customers/${customerId}/history?limit=20`);
+    const data = await readApiPayload(response);
+    if (!response.ok || !data) throw apiError(response, data, "Customer history failed");
+    renderCustomerHistory(data);
+  } catch (error) {
+    estimatesEl.innerHTML = `<div class="error-card"><strong>Customer history failed</strong><p>${escapeHtml(error.message)}</p></div>`;
+  }
+}
+
 async function selectCustomer(customerId, options = {}) {
   const { remember = true, refreshVehicles = true, suppressErrors = false } = options;
   try {
@@ -1072,6 +1348,7 @@ async function selectCustomer(customerId, options = {}) {
     renderCustomersList();
     syncEstimateRecordSummary();
     if (refreshVehicles) void loadCustomerVehiclePreview(data.id);
+    void loadCustomerHistory(data.id);
     if (remember) void rememberSelectedCustomer(data);
     return data;
   } catch (error) {
@@ -1272,6 +1549,396 @@ function initializeCustomers() {
   renderCustomerVehiclePreview();
 }
 
+function technicianPayloadFromForm() {
+  return {
+    first_name: $("technician-first-name").value.trim() || null,
+    last_name: $("technician-last-name").value.trim() || null,
+    job_title: $("technician-job-title").value.trim() || null,
+    email: $("technician-email").value.trim() || null,
+    phone: $("technician-phone").value.trim() || null,
+    employment_status: $("technician-employment-status").value.trim() || null,
+    hire_date: $("technician-hire-date").value || null,
+    hourly_cost: $("technician-hourly-cost").value ? Number($("technician-hourly-cost").value) : null,
+    certifications: $("technician-certifications").value.trim() || null,
+    certification_expiration: $("technician-certification-expiration").value || null,
+    specialties: $("technician-specialties").value.trim() || null,
+    driver_license_valid: $("technician-driver-license-valid").checked,
+    insurance_verified: $("technician-insurance-verified").checked,
+    normal_availability: $("technician-normal-availability").value.trim() || null,
+    safety_notes: $("technician-safety-notes").value.trim() || null,
+  };
+}
+
+function populateTechnicianForm(technician = null) {
+  $("technician-id").value = technician?.id ?? "";
+  $("technician-first-name").value = technician?.first_name ?? "";
+  $("technician-last-name").value = technician?.last_name ?? "";
+  $("technician-job-title").value = technician?.job_title ?? "";
+  $("technician-email").value = technician?.email ?? "";
+  $("technician-phone").value = technician?.phone ?? "";
+  $("technician-employment-status").value = technician?.employment_status ?? "";
+  $("technician-hire-date").value = technician?.hire_date ?? "";
+  $("technician-hourly-cost").value = technician?.hourly_cost ?? "";
+  $("technician-certifications").value = technician?.certifications ?? "";
+  $("technician-certification-expiration").value = technician?.certification_expiration ?? "";
+  $("technician-specialties").value = technician?.specialties ?? "";
+  $("technician-driver-license-valid").checked = Boolean(technician?.driver_license_valid);
+  $("technician-insurance-verified").checked = Boolean(technician?.insurance_verified);
+  $("technician-normal-availability").value = technician?.normal_availability ?? "";
+  $("technician-safety-notes").value = technician?.safety_notes ?? "";
+  $("technician-form-title").textContent = technician ? "Edit technician" : "Create technician";
+  $("technician-form-mode").textContent = technician ? "EDIT" : "CREATE";
+  $("technician-archive").hidden = !technician;
+  renderTechnicianLoginPanel(technician);
+}
+
+function technicianSummaryLine(technician) {
+  return [technician.job_title, technician.email, technician.phone].filter(Boolean).join(" · ");
+}
+
+function renderTechnicianLoginPanel(technician) {
+  const status = $("technician-login-status");
+  const form = $("technician-login-form");
+  if (!technician) {
+    status.innerHTML = "<p>Select a technician to manage their login.</p>";
+    form.hidden = true;
+    return;
+  }
+  if (technician.has_login) {
+    status.innerHTML = `<div class="empty-card"><strong>Login active</strong><p>${escapeHtml(technician.display_name)} already has a login. Logins cannot be reissued once created.</p></div>`;
+    form.hidden = true;
+    return;
+  }
+  status.innerHTML = "";
+  form.hidden = false;
+  $("technician-login-username").value = "";
+  $("technician-login-password").value = "";
+}
+
+function renderTechnicianDetail(technician = null) {
+  const detail = $("technician-detail");
+  if (!technician) {
+    detail.innerHTML = "<p>Select a technician from the list or create a new record.</p>";
+    $("technician-archive").hidden = true;
+    return;
+  }
+  detail.innerHTML = `
+    <div class="customer-detail-header">
+      <strong>${escapeHtml(technician.display_name)}</strong>
+      <span>${technician.is_archived ? "Archived" : "Active"}</span>
+    </div>
+    <p>${escapeHtml(technicianSummaryLine(technician) || "No details provided.")}</p>
+    <div class="customer-detail-grid">
+      <div><span>Login</span><strong>${technician.has_login ? "Provisioned" : "Not provisioned"}</strong></div>
+      <div><span>Clocked in</span><strong>${technician.is_clocked_in ? "Yes" : "No"}</strong></div>
+      <div><span>Hourly cost</span><strong>${technician.hourly_cost != null ? `$${technician.hourly_cost.toFixed(2)}` : "Not set"}</strong></div>
+      <div><span>Comebacks</span><strong>${technician.comeback_count}</strong></div>
+    </div>
+    <div class="customer-detail-notes">
+      <span>Certifications</span>
+      <p>${escapeHtml(technician.certifications || "None recorded.")}</p>
+    </div>
+    <div class="customer-detail-notes">
+      <span>Safety / training notes</span>
+      <p>${escapeHtml(technician.safety_notes || "No notes recorded.")}</p>
+    </div>`;
+  $("technician-archive").hidden = false;
+}
+
+function renderTechniciansList() {
+  const container = $("technicians-list");
+  if (!state.technicians.items.length) {
+    const emptyMessage = state.technicians.search || state.technicians.archivedOnly
+      ? "No technicians matched this filter."
+      : "No technicians yet. Create the first technician record.";
+    container.innerHTML = `<div class="empty-card"><strong>No results</strong><p>${escapeHtml(emptyMessage)}</p></div>`;
+  } else {
+    container.innerHTML = state.technicians.items.map((technician) => `
+      <button type="button" class="customer-list-item${state.technicians.selectedTechnicianId === technician.id ? " is-active" : ""}" data-technician-id="${technician.id}">
+        <strong>${escapeHtml(technician.display_name)}</strong>
+        <span>${escapeHtml(technicianSummaryLine(technician) || "No details")}</span>
+      </button>`).join("");
+    $$("[data-technician-id]", container).forEach((button) => {
+      button.addEventListener("click", () => {
+        void selectTechnician(Number(button.dataset.technicianId));
+      });
+    });
+  }
+  $("technicians-page-status").textContent = `Page ${state.technicians.page} · ${state.technicians.total} total`;
+  $("technicians-prev").disabled = state.technicians.page <= 1;
+  $("technicians-next").disabled = !state.technicians.hasMore;
+}
+
+async function selectTechnician(technicianId) {
+  try {
+    const response = await apiFetch(`/api/technicians/${technicianId}`);
+    const data = await readApiPayload(response);
+    if (!response.ok || !data) throw apiError(response, data, "Technician lookup failed");
+    state.technicians.selectedTechnicianId = data.id;
+    state.technicians.selectedTechnician = data;
+    renderTechnicianDetail(data);
+    populateTechnicianForm(data);
+    renderTechniciansList();
+    return data;
+  } catch (error) {
+    showToast(`Technician lookup failed: ${error.message}`, "error");
+    return null;
+  }
+}
+
+async function loadTechnicians() {
+  if (!await requireAuthenticated("login")) return;
+  const list = $("technicians-list");
+  list.innerHTML = '<div class="loading-panel"><span class="loading-spinner"></span><div><strong>Loading technicians</strong><br><small>Reading PostgreSQL technician records.</small></div></div>';
+  const searchParams = new URLSearchParams({
+    page: String(state.technicians.page),
+    page_size: String(state.technicians.pageSize),
+    archived: String(state.technicians.archivedOnly),
+  });
+  if (state.technicians.search.trim()) searchParams.set("search", state.technicians.search.trim());
+  try {
+    const response = await apiFetch(`/api/technicians?${searchParams.toString()}`);
+    const data = await readApiPayload(response);
+    if (!response.ok || !data) throw apiError(response, data, "Technician list failed");
+    state.technicians.items = data.items;
+    state.technicians.total = data.total;
+    state.technicians.hasMore = data.has_more;
+    renderTechniciansList();
+    if (state.technicians.selectedTechnicianId) {
+      const selected = data.items.find((item) => item.id === state.technicians.selectedTechnicianId);
+      if (selected) {
+        state.technicians.selectedTechnician = selected;
+        renderTechnicianDetail(selected);
+        populateTechnicianForm(selected);
+      } else {
+        state.technicians.selectedTechnicianId = null;
+        state.technicians.selectedTechnician = null;
+        populateTechnicianForm(null);
+        renderTechnicianDetail(null);
+      }
+    }
+  } catch (error) {
+    list.innerHTML = `<div class="error-card"><strong>Technician list failed</strong><p>${escapeHtml(error.message)}</p></div>`;
+    showToast(`Technician list failed: ${error.message}`, "error");
+  }
+}
+
+async function submitTechnicianForm(event) {
+  event.preventDefault();
+  if (!await requireAuthenticated("login")) return;
+  const technicianId = $("technician-id").value.trim();
+  const submit = $("technician-save");
+  submit.disabled = true;
+  submit.textContent = technicianId ? "Saving…" : "Creating…";
+  try {
+    const response = await apiFetch(technicianId ? `/api/technicians/${technicianId}` : "/api/technicians", {
+      method: technicianId ? "PATCH" : "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(technicianPayloadFromForm()),
+    });
+    const data = await readApiPayload(response);
+    if (!response.ok || !data) throw apiError(response, data, "Technician save failed");
+    state.technicians.selectedTechnicianId = data.id;
+    state.technicians.selectedTechnician = data;
+    populateTechnicianForm(data);
+    renderTechnicianDetail(data);
+    state.technicians.page = 1;
+    await loadTechnicians();
+    showToast(technicianId ? "Technician updated." : "Technician created.", "success");
+  } catch (error) {
+    showToast(`Technician save failed: ${error.message}`, "error");
+  } finally {
+    submit.disabled = false;
+    submit.textContent = "Save technician";
+  }
+}
+
+async function archiveSelectedTechnician() {
+  const technician = state.technicians.selectedTechnician;
+  if (!technician) return;
+  if (!window.confirm(`Archive ${technician.display_name}?`)) return;
+  try {
+    const response = await apiFetch(`/api/technicians/${technician.id}`, { method: "DELETE" });
+    const data = await readApiPayload(response);
+    if (!response.ok || !data) throw apiError(response, data, "Technician archive failed");
+    state.technicians.selectedTechnicianId = null;
+    state.technicians.selectedTechnician = null;
+    populateTechnicianForm(null);
+    renderTechnicianDetail(null);
+    await loadTechnicians();
+    showToast("Technician archived.", "success");
+  } catch (error) {
+    showToast(`Technician archive failed: ${error.message}`, "error");
+  }
+}
+
+async function submitTechnicianLoginForm(event) {
+  event.preventDefault();
+  const technician = state.technicians.selectedTechnician;
+  if (!technician) return;
+  const username = $("technician-login-username").value.trim();
+  const password = $("technician-login-password").value;
+  if (!username || password.length < 8) {
+    showToast("Enter a username and an 8+ character password.", "error");
+    return;
+  }
+  const submit = $("technician-login-submit");
+  submit.disabled = true;
+  submit.textContent = "Creating…";
+  try {
+    const response = await apiFetch(`/api/technicians/${technician.id}/provision-login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username, password }),
+    });
+    const data = await readApiPayload(response);
+    if (!response.ok || !data) throw apiError(response, data, "Login provisioning failed");
+    state.technicians.selectedTechnician = data.technician;
+    renderTechnicianDetail(data.technician);
+    renderTechnicianLoginPanel(data.technician);
+    await loadTechnicians();
+    showToast(`Login created for ${data.username}.`, "success");
+  } catch (error) {
+    showToast(`Login provisioning failed: ${error.message}`, "error");
+  } finally {
+    submit.disabled = false;
+    submit.textContent = "Create login";
+  }
+}
+
+function initializeTechnicians() {
+  $("technician-form").addEventListener("submit", (event) => {
+    void submitTechnicianForm(event);
+  });
+  $("technician-login-form").addEventListener("submit", (event) => {
+    void submitTechnicianLoginForm(event);
+  });
+  $("technician-cancel").addEventListener("click", () => {
+    state.technicians.selectedTechnicianId = null;
+    state.technicians.selectedTechnician = null;
+    populateTechnicianForm(null);
+    renderTechnicianDetail(null);
+  });
+  $("technicians-new").addEventListener("click", () => {
+    navigate("technicians");
+    state.technicians.selectedTechnicianId = null;
+    state.technicians.selectedTechnician = null;
+    populateTechnicianForm(null);
+    renderTechnicianDetail(null);
+    $("technician-first-name").focus();
+  });
+  $("technicians-refresh").addEventListener("click", () => {
+    void loadTechnicians();
+  });
+  $("technicians-search").addEventListener("input", () => {
+    state.technicians.search = $("technicians-search").value;
+    state.technicians.page = 1;
+    void loadTechnicians();
+  });
+  $("technicians-archived-only").addEventListener("change", () => {
+    state.technicians.archivedOnly = $("technicians-archived-only").checked;
+    state.technicians.page = 1;
+    state.technicians.selectedTechnicianId = null;
+    state.technicians.selectedTechnician = null;
+    populateTechnicianForm(null);
+    renderTechnicianDetail(null);
+    void loadTechnicians();
+  });
+  $("technicians-prev").addEventListener("click", () => {
+    state.technicians.page = Math.max(1, state.technicians.page - 1);
+    void loadTechnicians();
+  });
+  $("technicians-next").addEventListener("click", () => {
+    if (!state.technicians.hasMore) return;
+    state.technicians.page += 1;
+    void loadTechnicians();
+  });
+  $("technician-archive").addEventListener("click", () => {
+    void archiveSelectedTechnician();
+  });
+  populateTechnicianForm(null);
+  renderTechnicianDetail(null);
+}
+
+function renderMyDayClockState() {
+  const profile = state.myDay.profile;
+  const clockedIn = Boolean(profile?.technician?.is_clocked_in);
+  $("my-day-status-title").textContent = profile ? profile.technician.display_name : "Checking status…";
+  $("my-day-clock-state").textContent = clockedIn ? "Clocked in" : "Clocked out";
+  $("my-day-clock-detail").textContent = clockedIn
+    ? "You're on the clock. Clock out when your shift ends."
+    : "You're off the clock. Clock in to start your shift.";
+  $("my-day-clock-in").hidden = clockedIn;
+  $("my-day-clock-out").hidden = !clockedIn;
+}
+
+function renderMyDayWorkOrders() {
+  const container = $("my-day-work-orders");
+  const ids = state.myDay.profile?.assigned_work_order_ids ?? [];
+  if (!ids.length) {
+    container.innerHTML = "<p>No work orders are assigned to you right now.</p>";
+    return;
+  }
+  container.innerHTML = `<p>${ids.length} work order${ids.length === 1 ? "" : "s"} assigned. Open Work Orders to view status and details.</p>`;
+}
+
+function renderMyDayTimeEntries() {
+  const container = $("my-day-time-entries");
+  const entries = state.myDay.profile?.recent_time_entries ?? [];
+  if (!entries.length) {
+    container.innerHTML = "<p>No shifts recorded yet.</p>";
+    return;
+  }
+  container.innerHTML = entries.map((entry) => `
+    <div class="empty-card">
+      <strong>${new Date(entry.clock_in_at).toLocaleString()}</strong>
+      <p>${entry.clock_out_at ? `Out ${new Date(entry.clock_out_at).toLocaleString()} · ${entry.duration_minutes} min` : "Still clocked in"}</p>
+    </div>`).join("");
+}
+
+async function loadMyDay() {
+  if (!await requireAuthenticated("login")) return;
+  try {
+    const response = await apiFetch("/api/technicians/me");
+    const data = await readApiPayload(response);
+    if (!response.ok || !data) throw apiError(response, data, "My Day failed to load");
+    state.myDay.profile = data;
+    renderMyDayClockState();
+    renderMyDayWorkOrders();
+    renderMyDayTimeEntries();
+  } catch (error) {
+    $("my-day-status-title").textContent = "My Day";
+    $("my-day-clock-state").textContent = "Unavailable";
+    $("my-day-clock-detail").textContent = error.message;
+    showToast(`My Day failed to load: ${error.message}`, "error");
+  }
+}
+
+async function submitMyDayClock(action) {
+  const button = action === "in" ? $("my-day-clock-in") : $("my-day-clock-out");
+  button.disabled = true;
+  try {
+    const response = await apiFetch(`/api/technicians/me/clock-${action}`, { method: "POST" });
+    const data = await readApiPayload(response);
+    if (!response.ok || !data) throw apiError(response, data, `Clock ${action} failed`);
+    showToast(action === "in" ? "Clocked in." : "Clocked out.", "success");
+    await loadMyDay();
+  } catch (error) {
+    showToast(`Clock ${action} failed: ${error.message}`, "error");
+  } finally {
+    button.disabled = false;
+  }
+}
+
+function initializeMyDay() {
+  $("my-day-clock-in").addEventListener("click", () => {
+    void submitMyDayClock("in");
+  });
+  $("my-day-clock-out").addEventListener("click", () => {
+    void submitMyDayClock("out");
+  });
+}
+
 function vehiclePayloadFromForm() {
   return {
     vin: $("vehicle-vin").value.trim() || null,
@@ -1338,12 +2005,70 @@ function populateVehicleForm(vehicle = null, options = {}) {
   $("vehicle-customer-id").disabled = Boolean(vehicle);
 }
 
+function renderVehicleHistory(data) {
+  const estimatesEl = $("vehicle-history-estimates");
+  const workOrdersEl = $("vehicle-history-work-orders");
+  if (!estimatesEl || !workOrdersEl) return;
+
+  estimatesEl.innerHTML = data.estimates.items.length
+    ? data.estimates.items.map((item) => `
+      <button type="button" class="vehicle-preview-item" data-history-estimate-id="${item.id}">
+        <strong>${escapeHtml(item.estimate_number)} · ${escapeHtml(historyStatusLabel(item.status))}</strong>
+        <span>${item.estimate_total != null ? `$${item.estimate_total.toFixed(2)} · ` : ""}${new Date(item.updated_at).toLocaleString()}</span>
+      </button>`).join("") + (data.estimates.total > data.estimates.items.length ? `<p class="history-more">Showing ${data.estimates.items.length} of ${data.estimates.total}.</p>` : "")
+    : "<p>No estimates recorded for this vehicle yet.</p>";
+
+  workOrdersEl.innerHTML = data.work_orders.items.length
+    ? data.work_orders.items.map((item) => `
+      <button type="button" class="vehicle-preview-item" data-history-work-order-id="${item.id}">
+        <strong>${escapeHtml(item.estimate_number)} · ${escapeHtml(historyStatusLabel(item.status))}</strong>
+        <span>${escapeHtml(item.title)} · ${new Date(item.updated_at).toLocaleString()}</span>
+      </button>`).join("") + (data.work_orders.total > data.work_orders.items.length ? `<p class="history-more">Showing ${data.work_orders.items.length} of ${data.work_orders.total}.</p>` : "")
+    : "<p>No work orders for this vehicle yet.</p>";
+
+  $$("[data-history-estimate-id]", estimatesEl).forEach((button) => {
+    button.addEventListener("click", () => {
+      void openEstimateRecord(Number(button.dataset.historyEstimateId));
+    });
+  });
+  $$("[data-history-work-order-id]", workOrdersEl).forEach((button) => {
+    button.addEventListener("click", () => {
+      navigate("work-orders");
+      void selectWorkOrder(Number(button.dataset.historyWorkOrderId));
+    });
+  });
+}
+
+async function loadVehicleHistory(vehicleId) {
+  const estimatesEl = $("vehicle-history-estimates");
+  const workOrdersEl = $("vehicle-history-work-orders");
+  if (!estimatesEl || !workOrdersEl) return;
+  estimatesEl.innerHTML = '<div class="loading-panel"><span class="loading-spinner"></span><div><strong>Loading history</strong><br><small>Reading linked estimates and work orders.</small></div></div>';
+  workOrdersEl.innerHTML = "";
+  try {
+    const [estimatesResponse, workOrdersResponse] = await Promise.all([
+      apiFetch(`/api/estimates?vehicle_id=${vehicleId}&page_size=20`),
+      apiFetch(`/api/work-orders?vehicle_id=${vehicleId}&page_size=20`),
+    ]);
+    const estimatesData = await readApiPayload(estimatesResponse);
+    const workOrdersData = await readApiPayload(workOrdersResponse);
+    if (!estimatesResponse.ok || !estimatesData) throw apiError(estimatesResponse, estimatesData, "Vehicle estimate history failed");
+    if (!workOrdersResponse.ok || !workOrdersData) throw apiError(workOrdersResponse, workOrdersData, "Vehicle work-order history failed");
+    renderVehicleHistory({ estimates: estimatesData, work_orders: workOrdersData });
+  } catch (error) {
+    estimatesEl.innerHTML = `<div class="error-card"><strong>Vehicle history failed</strong><p>${escapeHtml(error.message)}</p></div>`;
+    workOrdersEl.innerHTML = "";
+  }
+}
+
 function renderVehicleDetail(vehicle = null) {
   const detail = $("vehicle-detail");
   if (!vehicle) {
     detail.innerHTML = "<p>Select a vehicle from the list or create a new record.</p>";
     $("vehicle-open-customer").hidden = true;
     $("vehicle-archive").hidden = true;
+    if ($("vehicle-history-estimates")) $("vehicle-history-estimates").innerHTML = "<p>Select a vehicle to load history.</p>";
+    if ($("vehicle-history-work-orders")) $("vehicle-history-work-orders").innerHTML = "<p>No vehicle selected.</p>";
     return;
   }
   detail.innerHTML = `
@@ -1425,6 +2150,7 @@ async function selectVehicle(vehicleId, options = {}) {
     populateVehicleForm(data);
     renderVehiclesList();
     syncEstimateRecordSummary();
+    void loadVehicleHistory(data.id);
     if (remember) void rememberSelectedVehicle(data);
     return data;
   } catch (error) {
@@ -1906,8 +2632,11 @@ function renderWorkOrderDetail(workOrder = null) {
     $("work-order-authorization-confirmed").checked = false;
     $("work-order-open-estimate").disabled = true;
     $("work-order-open-vehicle").disabled = true;
+    $("work-order-open-invoice").disabled = true;
     $("work-order-blocked-status").innerHTML = "<strong>No blockers</strong><p>Select a work order to see blocked transitions and prerequisites.</p>";
     populateWorkOrderStatusOptions(null);
+    if ($("work-order-assign-technician")) $("work-order-assign-technician").value = "";
+    if ($("work-order-is-comeback")) $("work-order-is-comeback").checked = false;
     return;
   }
   const notes = workOrder.notes.map((note) => `
@@ -1923,19 +2652,18 @@ function renderWorkOrderDetail(workOrder = null) {
       <span>${escapeHtml(workOrderStatusLabel(workOrder.status))}</span>
     </div>
     <p>${escapeHtml(workOrder.complaint)}</p>
-    <div class="customer-detail-grid">
-      <div><span>Customer</span><strong>${escapeHtml(workOrder.customer_display_name)}</strong></div>
-      <div><span>Vehicle</span><strong>${escapeHtml(workOrder.vehicle_display_name)}</strong></div>
-      <div><span>Estimate total</span><strong>${money(workOrder.estimate_total)}</strong></div>
-      <div><span>Labor estimate</span><strong>${escapeHtml(`${workOrder.labor_hours_estimate ?? 0} hr`)}</strong></div>
-      <div><span>Payment option</span><strong>${escapeHtml(workOrder.payment_option_selected || "Not selected")}</strong></div>
-      <div><span>Scheduled for</span><strong>${escapeHtml(workOrder.scheduled_for ? new Date(workOrder.scheduled_for).toLocaleString() : "Not scheduled")}</strong></div>
-    </div>
-    <div class="result-grid">
-      <section class="result-section"><h3>Approved revision</h3><p>${escapeHtml(workOrder.source_revision.request.job)}</p><p>${money(workOrder.source_revision.estimate.totals.estimated_total)} · revision ${workOrder.source_revision.revision_number}</p></section>
-      <section class="result-section"><h3>Status history</h3><ul>${history}</ul></section>
-      <section class="result-section"><h3>Notes</h3><ul>${notes}</ul></section>
-      <section class="result-section"><h3>Blocked transitions</h3><ul>${blocked.map(([status, reason]) => `<li><strong>${escapeHtml(workOrderStatusLabel(status))}</strong> · ${escapeHtml(reason)}</li>`).join("") || "<li>None.</li>"}</ul></section>
+    <div class="detail-split">
+      <div class="detail-main">
+        <section class="result-section"><h3>Approved revision</h3><p>${escapeHtml(workOrder.source_revision.request.job)}</p><p>${money(workOrder.source_revision.estimate.totals.estimated_total)} · revision ${workOrder.source_revision.revision_number}</p></section>
+        <section class="result-section"><h3>Status history</h3><ul>${history}</ul></section>
+        <section class="result-section"><h3>Notes</h3><ul>${notes}</ul></section>
+        <section class="result-section"><h3>Blocked transitions</h3><ul>${blocked.map(([status, reason]) => `<li><strong>${escapeHtml(workOrderStatusLabel(status))}</strong> · ${escapeHtml(reason)}</li>`).join("") || "<li>None.</li>"}</ul></section>
+      </div>
+      <div class="detail-rail">
+        <div class="detail-rail-card"><span>Customer &amp; vehicle</span><div class="customer-detail-grid"><div><span>Customer</span><strong>${escapeHtml(workOrder.customer_display_name)}</strong></div><div><span>Vehicle</span><strong>${escapeHtml(workOrder.vehicle_display_name)}</strong></div><div><span>Technician</span><strong>${escapeHtml(workOrder.assigned_technician_display_name || "Unassigned")}</strong></div><div><span>Comeback</span><strong>${workOrder.is_comeback ? "Yes" : "No"}</strong></div></div></div>
+        <div class="detail-rail-card"><span>Appointment</span><div class="customer-detail-grid"><div><span>Scheduled for</span><strong>${escapeHtml(workOrder.scheduled_for ? new Date(workOrder.scheduled_for).toLocaleString() : "Not scheduled")}</strong></div></div></div>
+        <div class="detail-rail-card"><span>Totals &amp; invoice</span><div class="detail-totals"><div><span>Estimate total</span><strong>${money(workOrder.estimate_total)}</strong></div><div><span>Labor estimate</span><strong>${escapeHtml(`${workOrder.labor_hours_estimate ?? 0} hr`)}</strong></div><div><span>Payment option</span><strong>${escapeHtml(workOrder.payment_option_selected || "Not selected")}</strong></div><div class="detail-total-emphasis"><span>Invoice</span><strong>${escapeHtml(workOrder.invoice_number || "Not generated yet")}</strong></div><div><span>Invoice status</span><strong>${escapeHtml(workOrder.invoice_status ? workOrder.invoice_status.replaceAll("_", " ") : "Not generated")}</strong></div></div></div>
+      </div>
     </div>`;
   $("work-order-id").value = String(workOrder.id);
   $("work-order-diagnosis").value = workOrder.diagnosis || "";
@@ -1944,6 +2672,7 @@ function renderWorkOrderDetail(workOrder = null) {
   $("work-order-authorization-confirmed").checked = Boolean(workOrder.authorization_confirmed);
   $("work-order-open-estimate").disabled = false;
   $("work-order-open-vehicle").disabled = false;
+  $("work-order-open-invoice").disabled = !workOrder.invoice_id;
   $("work-order-form-status-detail").textContent = blocked.length
     ? blocked.map(([, reason]) => reason).join(" ")
     : "Work order is ready for the allowed next status transitions.";
@@ -1951,6 +2680,10 @@ function renderWorkOrderDetail(workOrder = null) {
     ? `<strong>Blocked transitions</strong><p>${blocked.map(([status, reason]) => `${workOrderStatusLabel(status)}: ${reason}`).join(" ")}</p>`
     : "<strong>No blockers</strong><p>The current prerequisites are satisfied for the available next status choices.</p>";
   populateWorkOrderStatusOptions(workOrder);
+  if ($("work-order-assign-technician")) {
+    $("work-order-assign-technician").value = workOrder.assigned_technician_id ? String(workOrder.assigned_technician_id) : "";
+  }
+  if ($("work-order-is-comeback")) $("work-order-is-comeback").checked = Boolean(workOrder.is_comeback);
 }
 
 function renderWorkOrderList() {
@@ -2088,6 +2821,52 @@ async function submitWorkOrderUpdate(event) {
   }
 }
 
+async function loadTechnicianOptions() {
+  const response = await apiFetch("/api/technicians?page=1&page_size=100&archived=false");
+  const data = await readApiPayload(response);
+  if (!response.ok || !data) throw apiError(response, data, "Technician options failed");
+  const select = $("work-order-assign-technician");
+  if (!select) return;
+  const currentValue = select.value;
+  select.innerHTML = ['<option value="">Unassigned</option>', ...data.items.map((technician) => (
+    `<option value="${technician.id}">${escapeHtml(technician.display_name)}</option>`
+  ))].join("");
+  if (currentValue) select.value = currentValue;
+}
+
+async function submitWorkOrderAssignment(event) {
+  event.preventDefault();
+  const workOrderId = $("work-order-id").value.trim();
+  if (!workOrderId) {
+    showToast("Select a work order before assigning a technician.", "error");
+    return;
+  }
+  const technicianId = $("work-order-assign-technician").value;
+  try {
+    const assignResponse = await apiFetch(`/api/work-orders/${workOrderId}/assign-technician`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ technician_id: technicianId ? Number(technicianId) : null }),
+    });
+    const assignData = await readApiPayload(assignResponse);
+    if (!assignResponse.ok || !assignData) throw apiError(assignResponse, assignData, "Technician assignment failed");
+    const patchResponse = await apiFetch(`/api/work-orders/${workOrderId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ is_comeback: $("work-order-is-comeback").checked }),
+    });
+    const patchData = await readApiPayload(patchResponse);
+    if (!patchResponse.ok || !patchData) throw apiError(patchResponse, patchData, "Comeback flag update failed");
+    state.workOrders.selectedWorkOrder = patchData;
+    state.workOrders.selectedWorkOrderId = patchData.id;
+    renderWorkOrderDetail(patchData);
+    void loadWorkOrders();
+    showToast("Assignment saved.", "success");
+  } catch (error) {
+    showToast(`Assignment save failed: ${error.message}`, "error");
+  }
+}
+
 async function submitWorkOrderStatus(event) {
   event.preventDefault();
   const workOrderId = $("work-order-id").value.trim();
@@ -2171,6 +2950,16 @@ function openVehicleForSelectedWorkOrder() {
   void selectVehicle(vehicleId, { remember: true, suppressErrors: false });
 }
 
+async function openInvoiceForSelectedWorkOrder() {
+  const invoiceId = state.workOrders.selectedWorkOrder?.invoice_id;
+  if (!invoiceId) {
+    showToast("This work order does not have an invoice yet.", "error");
+    return;
+  }
+  navigate("invoices");
+  await selectInvoice(invoiceId);
+}
+
 function initializeWorkOrders() {
   $("work-orders-create").addEventListener("click", () => {
     void createWorkOrderFromSelectedEstimate();
@@ -2200,6 +2989,9 @@ function initializeWorkOrders() {
   $("work-order-update-form").addEventListener("submit", (event) => {
     void submitWorkOrderUpdate(event);
   });
+  $("work-order-assign-form").addEventListener("submit", (event) => {
+    void submitWorkOrderAssignment(event);
+  });
   $("work-order-status-form").addEventListener("submit", (event) => {
     void submitWorkOrderStatus(event);
   });
@@ -2210,7 +3002,2514 @@ function initializeWorkOrders() {
     void openEstimateForSelectedWorkOrder();
   });
   $("work-order-open-vehicle").addEventListener("click", openVehicleForSelectedWorkOrder);
+  $("work-order-open-invoice").addEventListener("click", () => {
+    void openInvoiceForSelectedWorkOrder();
+  });
   renderWorkOrderDetail(null);
+}
+
+function invoiceStatusLabel(status) {
+  return String(status || "").replaceAll("_", " ");
+}
+
+function invoicePaymentAppliesToLabel(appliesTo) {
+  return String(appliesTo || "").replaceAll("_", " ");
+}
+
+function renderInvoiceDetail(invoice = null) {
+  const detail = $("invoice-detail");
+  if (!invoice) {
+    detail.innerHTML = "<p>Select a completed-work-order invoice from the list.</p>";
+    $("invoice-id").value = "";
+    $("invoice-form-mode").textContent = "DRAFT";
+    $("invoice-due-days").value = "30";
+    $("invoice-open-work-order").disabled = true;
+    $("invoice-open-html").disabled = true;
+    $("invoice-open-pdf").disabled = true;
+    $("invoice-issue-save").disabled = true;
+    $("invoice-payment-save").disabled = true;
+    $("invoice-square-push").hidden = true;
+    $("invoice-square-refresh").hidden = true;
+    return;
+  }
+  const lineItems = invoice.line_items.map((item) => `
+    <li><strong>${escapeHtml(item.kind.replaceAll("_", " "))}</strong> · ${escapeHtml(item.description)} · ${escapeHtml(String(item.quantity))} × ${money(item.unit_amount)} = ${money(item.line_total)}</li>
+  `).join("") || "<li>No line items.</li>";
+
+  const reversedIds = new Set(
+    invoice.payments.filter((payment) => payment.reversal_of_payment_id !== null).map((payment) => payment.reversal_of_payment_id)
+  );
+  const paymentRows = invoice.payments.map((payment) => {
+    const isVoided = reversedIds.has(payment.id);
+    const tags = [];
+    if (payment.is_reversal) tags.push("Void");
+    if (isVoided) tags.push("Voided");
+    const canVoid = !payment.is_reversal && !isVoided;
+    return `
+    <li>
+      <strong>${money(payment.amount)}</strong> · ${escapeHtml(invoicePaymentAppliesToLabel(payment.applies_to))} · ${escapeHtml(payment.method_label)}
+      · ${escapeHtml(new Date(payment.recorded_at).toLocaleString())}
+      ${tags.length ? `<span class="estimate-number">${tags.map((tag) => escapeHtml(tag)).join(" ")}</span>` : ""}
+      ${payment.note ? `<br><small>${escapeHtml(payment.note)}</small>` : ""}
+      ${canVoid ? `<button type="button" class="text-button" data-void-payment-id="${payment.id}">Void</button>` : ""}
+    </li>`;
+  }).join("") || "<li>No payments recorded yet.</li>";
+
+  const scheduleRows = invoice.schedule.map((entry) => `
+    <li><strong>${escapeHtml(entry.label)}</strong> · ${escapeHtml(entry.due_at ? new Date(entry.due_at).toLocaleDateString() : "No due date")} · ${money(entry.amount)}</li>
+  `).join("");
+
+  detail.innerHTML = `
+    <div class="customer-detail-header">
+      <strong>${escapeHtml(invoice.invoice_number)} · ${escapeHtml(invoice.title)}</strong>
+      <span>${escapeHtml(invoiceStatusLabel(invoice.status))}${invoice.is_overdue ? ' <span class="badge">Overdue</span>' : ""}</span>
+    </div>
+    <p>${escapeHtml(invoice.complaint)}</p>
+    <div class="detail-split">
+      <div class="detail-main">
+        <section class="result-section"><h3>Line items</h3><ul>${lineItems}</ul></section>
+        <section class="result-section"><h3>Payment history</h3><ul>${paymentRows}</ul></section>
+        ${invoice.schedule.length ? `<section class="result-section"><h3>Payment schedule</h3><ul>${scheduleRows}</ul></section>` : ""}
+      </div>
+      <div class="detail-rail">
+        <div class="detail-rail-card"><span>Customer &amp; vehicle</span><div class="customer-detail-grid"><div><span>Customer</span><strong>${escapeHtml(invoice.customer.display_name)}</strong></div><div><span>Vehicle</span><strong>${escapeHtml(invoice.vehicle.display_name)}</strong></div></div></div>
+        <div class="detail-rail-card"><span>Dates</span><div class="customer-detail-grid"><div><span>Issued</span><strong>${escapeHtml(invoice.issued_at ? new Date(invoice.issued_at).toLocaleString() : "Draft")}</strong></div><div><span>Due</span><strong>${escapeHtml(invoice.due_at ? new Date(invoice.due_at).toLocaleString() : "Not issued")}</strong></div></div></div>
+        <div class="detail-rail-card"><span>Financial summary</span><div class="detail-totals">
+          <div><span>Labor total</span><strong>${money(invoice.labor_total)}</strong></div>
+          <div><span>Parts total</span><strong>${money(invoice.parts_total)}</strong></div>
+          <div><span>Fees total</span><strong>${money(invoice.fees_total)}</strong></div>
+          <div class="detail-total-emphasis"><span>Invoice total</span><strong>${money(invoice.invoice_total)}</strong></div>
+          <div><span>Total paid</span><strong>${money(invoice.total_paid)}</strong></div>
+          <div class="detail-total-emphasis"><span>Balance due</span><strong>${money(invoice.balance_due)}</strong></div>
+        </div></div>
+        ${invoice.square_invoice_id || invoice.square_payment_url ? `<div class="detail-rail-card"><span>Square</span><div class="customer-detail-grid">${invoice.square_invoice_id ? `<div><span>Square status</span><strong>${escapeHtml(invoice.square_status || "unknown")}</strong></div>` : ""}${invoice.square_payment_url ? `<div><span>Pay link</span><strong><a href="${escapeHtml(invoice.square_payment_url)}" target="_blank" rel="noopener">Open payment page</a></strong></div>` : ""}</div></div>` : ""}
+      </div>
+    </div>
+  `;
+  $$("[data-void-payment-id]", detail).forEach((button) => {
+    button.addEventListener("click", () => {
+      void voidPayment(Number(button.dataset.voidPaymentId));
+    });
+  });
+  $("invoice-id").value = String(invoice.id);
+  $("invoice-form-mode").textContent = invoice.status.toUpperCase();
+  $("invoice-open-work-order").disabled = false;
+  $("invoice-open-html").disabled = false;
+  $("invoice-open-pdf").disabled = false;
+  $("invoice-issue-save").disabled = invoice.status !== "draft";
+  $("invoice-payment-save").disabled = invoice.status === "draft" || invoice.status === "void";
+  const squareConfigured = Boolean(state.health?.square_configured);
+  const pushable = squareConfigured && !invoice.square_invoice_id
+    && invoice.status !== "draft" && invoice.status !== "void";
+  $("invoice-square-push").hidden = !squareConfigured;
+  $("invoice-square-push").disabled = !pushable;
+  $("invoice-square-refresh").hidden = !squareConfigured;
+  $("invoice-square-refresh").disabled = !invoice.square_invoice_id;
+}
+
+function renderInvoiceList() {
+  const container = $("invoices-list");
+  if (!state.invoices.items.length) {
+    container.innerHTML = '<div class="empty-card"><strong>No invoices found</strong><p>Complete a work order to generate a draft invoice.</p></div>';
+  } else {
+    container.innerHTML = state.invoices.items.map((item) => `
+      <button type="button" class="customer-list-item${state.invoices.selectedInvoiceId === item.id ? " is-active" : ""}" data-invoice-id="${item.id}">
+        <strong>${escapeHtml(item.invoice_number)} · ${escapeHtml(item.title)}</strong>
+        <span>${escapeHtml(item.customer.display_name)} · ${escapeHtml(invoiceStatusLabel(item.status))} · ${money(item.invoice_total)}</span>
+      </button>
+    `).join("");
+    $$("[data-invoice-id]", container).forEach((button) => {
+      button.addEventListener("click", () => {
+        void selectInvoice(Number(button.dataset.invoiceId));
+      });
+    });
+  }
+  $("invoices-page-status").textContent = `Page ${state.invoices.page} · ${state.invoices.total} total`;
+  $("invoices-prev").disabled = state.invoices.page <= 1;
+  $("invoices-next").disabled = !state.invoices.hasMore;
+}
+
+async function selectInvoice(invoiceId) {
+  const version = ++state.invoices.selectionVersion;
+  try {
+    const response = await apiFetch(`/api/invoices/${invoiceId}`);
+    const data = await readApiPayload(response);
+    if (!response.ok || !data) throw apiError(response, data, "Invoice load failed");
+    if (version !== state.invoices.selectionVersion) return;
+    state.invoices.selectedInvoiceId = data.id;
+    state.invoices.selectedInvoice = data;
+    renderInvoiceList();
+    renderInvoiceDetail(data);
+  } catch (error) {
+    showToast(`Invoice load failed: ${error.message}`, "error");
+  }
+}
+
+async function loadInvoices() {
+  const version = state.invoices.selectionVersion;
+  const list = $("invoices-list");
+  list.innerHTML = '<div class="loading-panel"><span class="loading-spinner"></span><div><strong>Loading invoices</strong><br><small>Reading completed-work-order billing records.</small></div></div>';
+  const searchParams = new URLSearchParams({
+    page: String(state.invoices.page),
+    page_size: String(state.invoices.pageSize),
+  });
+  if (state.invoices.search.trim()) searchParams.set("search", state.invoices.search.trim());
+  if (state.invoices.statusFilter) searchParams.set("status", state.invoices.statusFilter);
+  try {
+    const response = await apiFetch(`/api/invoices?${searchParams.toString()}`);
+    const data = await readApiPayload(response);
+    if (!response.ok || !data) throw apiError(response, data, "Invoice listing failed");
+    state.invoices.items = data.items;
+    state.invoices.total = data.total;
+    state.invoices.hasMore = data.has_more;
+    if (state.invoices.selectedInvoiceId) {
+      const selected = data.items.find((item) => item.id === state.invoices.selectedInvoiceId);
+      if (selected) {
+        state.invoices.selectedInvoice = selected;
+      } else if (version === state.invoices.selectionVersion) {
+        // Only clear the selection if no newer selectInvoice() call has
+        // started since this list fetch began -- otherwise this slower,
+        // now-stale response would clobber a more recent selection (e.g.
+        // opening an invoice from a work order races this list refresh).
+        state.invoices.selectedInvoiceId = null;
+        state.invoices.selectedInvoice = null;
+      }
+    }
+    renderInvoiceList();
+    renderInvoiceDetail(state.invoices.selectedInvoice);
+  } catch (error) {
+    state.invoices.items = [];
+    state.invoices.total = 0;
+    state.invoices.hasMore = false;
+    renderInvoiceList();
+    renderInvoiceDetail(null);
+    showToast(`Invoice listing failed: ${error.message}`, "error");
+  }
+}
+
+async function submitInvoiceIssue(event) {
+  event.preventDefault();
+  const invoiceId = $("invoice-id").value.trim();
+  if (!invoiceId) {
+    showToast("Select an invoice before issuing it.", "error");
+    return;
+  }
+  try {
+    const response = await apiFetch(`/api/invoices/${invoiceId}/issue`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        due_in_days: Number($("invoice-due-days").value || "30"),
+      }),
+    });
+    const data = await readApiPayload(response);
+    if (!response.ok || !data) throw apiError(response, data, "Invoice issue failed");
+    state.invoices.selectedInvoice = data;
+    state.invoices.selectedInvoiceId = data.id;
+    renderInvoiceDetail(data);
+    void loadInvoices();
+    showToast("Invoice issued.", "success");
+  } catch (error) {
+    showToast(`Invoice issue failed: ${error.message}`, "error");
+  }
+}
+
+async function pushInvoiceToSquare() {
+  const invoice = state.invoices.selectedInvoice;
+  if (!invoice) {
+    showToast("Select an invoice before sending it to Square.", "error");
+    return;
+  }
+  if (!window.confirm(`Send invoice ${invoice.invoice_number} to the customer through Square?`)) return;
+  try {
+    const response = await apiFetch(`/api/invoices/${invoice.id}/square/push`, { method: "POST" });
+    const data = await readApiPayload(response);
+    if (!response.ok || !data) throw apiError(response, data, "Square send failed");
+    state.invoices.selectedInvoice = data;
+    state.invoices.selectedInvoiceId = data.id;
+    renderInvoiceDetail(data);
+    showToast("Invoice sent through Square.", "success");
+  } catch (error) {
+    showToast(`Square send failed: ${error.message}`, "error");
+  }
+}
+
+async function refreshSquareInvoice() {
+  const invoice = state.invoices.selectedInvoice;
+  if (!invoice || !invoice.square_invoice_id) return;
+  try {
+    const response = await apiFetch(`/api/invoices/${invoice.id}/square/refresh`, { method: "POST" });
+    const data = await readApiPayload(response);
+    if (!response.ok || !data) throw apiError(response, data, "Square refresh failed");
+    state.invoices.selectedInvoice = data;
+    renderInvoiceDetail(data);
+    showToast(`Square status: ${data.square_status || "unknown"}.`, "info");
+  } catch (error) {
+    showToast(`Square refresh failed: ${error.message}`, "error");
+  }
+}
+
+async function submitRecordPayment(event) {
+  event.preventDefault();
+  const invoiceId = $("invoice-id").value.trim();
+  const amount = Number($("invoice-payment-amount").value || "0");
+  const methodLabel = $("invoice-payment-method").value.trim();
+  if (!invoiceId || !amount || amount <= 0 || !methodLabel) {
+    showToast("Select an invoice and enter an amount and method before recording a payment.", "error");
+    return;
+  }
+  const recordedAtValue = $("invoice-payment-recorded-at").value;
+  try {
+    const response = await apiFetch(`/api/invoices/${invoiceId}/payments`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        amount,
+        method_label: methodLabel,
+        applies_to: $("invoice-payment-applies-to").value,
+        note: $("invoice-payment-note").value.trim() || null,
+        recorded_at: recordedAtValue ? new Date(recordedAtValue).toISOString() : null,
+      }),
+    });
+    const data = await readApiPayload(response);
+    if (!response.ok || !data) throw apiError(response, data, "Payment recording failed");
+    state.invoices.selectedInvoice = data;
+    state.invoices.selectedInvoiceId = data.id;
+    $("invoice-payment-amount").value = "";
+    $("invoice-payment-method").value = "";
+    $("invoice-payment-note").value = "";
+    $("invoice-payment-recorded-at").value = "";
+    $("invoice-payment-applies-to").value = "other";
+    renderInvoiceDetail(data);
+    void loadInvoices();
+    showToast("Payment recorded.", "success");
+  } catch (error) {
+    showToast(`Payment recording failed: ${error.message}`, "error");
+  }
+}
+
+async function voidPayment(paymentId) {
+  const invoiceId = state.invoices.selectedInvoice?.id;
+  if (!invoiceId || !paymentId) return;
+  if (!window.confirm("Void this payment? This cannot be undone and creates a reversal entry.")) return;
+  try {
+    const response = await apiFetch(`/api/invoices/${invoiceId}/payments/${paymentId}/void`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ reason: null }),
+    });
+    const data = await readApiPayload(response);
+    if (!response.ok || !data) throw apiError(response, data, "Payment void failed");
+    state.invoices.selectedInvoice = data;
+    state.invoices.selectedInvoiceId = data.id;
+    renderInvoiceDetail(data);
+    void loadInvoices();
+    showToast("Payment voided.", "success");
+  } catch (error) {
+    showToast(`Payment void failed: ${error.message}`, "error");
+  }
+}
+
+async function openWorkOrderForSelectedInvoice() {
+  const workOrderId = state.invoices.selectedInvoice?.work_order_id;
+  if (!workOrderId) return;
+  navigate("work-orders");
+  await selectWorkOrder(workOrderId);
+}
+
+function openInvoiceDocument(kind) {
+  const invoiceId = state.invoices.selectedInvoice?.id;
+  if (!invoiceId) return;
+  window.open(`/api/invoices/${invoiceId}/${kind}`, "_blank", "noopener");
+}
+
+function initializeInvoices() {
+  $("invoices-refresh").addEventListener("click", () => {
+    void loadInvoices();
+  });
+  $("invoice-square-push").addEventListener("click", () => {
+    void pushInvoiceToSquare();
+  });
+  $("invoice-square-refresh").addEventListener("click", () => {
+    void refreshSquareInvoice();
+  });
+  $("invoices-search").addEventListener("input", () => {
+    state.invoices.search = $("invoices-search").value;
+    state.invoices.page = 1;
+    void loadInvoices();
+  });
+  $("invoices-status-filter").addEventListener("change", () => {
+    state.invoices.statusFilter = $("invoices-status-filter").value;
+    state.invoices.page = 1;
+    void loadInvoices();
+  });
+  $("invoices-prev").addEventListener("click", () => {
+    state.invoices.page = Math.max(1, state.invoices.page - 1);
+    void loadInvoices();
+  });
+  $("invoices-next").addEventListener("click", () => {
+    if (!state.invoices.hasMore) return;
+    state.invoices.page += 1;
+    void loadInvoices();
+  });
+  $("invoice-issue-form").addEventListener("submit", (event) => {
+    void submitInvoiceIssue(event);
+  });
+  $("invoice-payment-form").addEventListener("submit", (event) => {
+    void submitRecordPayment(event);
+  });
+  $("invoice-open-work-order").addEventListener("click", () => {
+    void openWorkOrderForSelectedInvoice();
+  });
+  $("invoice-open-html").addEventListener("click", () => {
+    openInvoiceDocument("html");
+  });
+  $("invoice-open-pdf").addEventListener("click", () => {
+    openInvoiceDocument("pdf");
+  });
+  renderInvoiceDetail(null);
+}
+
+function updateNotificationsBadge(count) {
+  const badge = $("nav-notifications-badge");
+  if (!badge) return;
+  state.notifications.unreadCount = count;
+  badge.textContent = count > 99 ? "99+" : String(count);
+  badge.hidden = count === 0;
+}
+
+async function refreshNotificationsBadge() {
+  try {
+    const response = await apiFetch("/api/notifications?page=1&page_size=1&unread=true");
+    const data = await readApiPayload(response);
+    if (!response.ok || !data) return;
+    updateNotificationsBadge(data.unread_count);
+  } catch {
+    // Badge refresh is best-effort background polling; never toast on failure.
+  }
+}
+
+function notificationTargetLabel(entityType) {
+  if (entityType === "estimate") return "Open estimate";
+  if (entityType === "work_order") return "Open work order";
+  return "Open invoice";
+}
+
+function openNotificationTarget(notification) {
+  if (notification.entity_type === "estimate") {
+    void openEstimateRecord(notification.entity_id);
+  } else if (notification.entity_type === "work_order") {
+    navigate("work-orders");
+    void selectWorkOrder(notification.entity_id);
+  } else {
+    navigate("invoices");
+    void selectInvoice(notification.entity_id);
+  }
+}
+
+function renderNotificationsList() {
+  const list = $("notifications-list");
+  const { items, page, total, hasMore } = state.notifications;
+  $("notifications-page-status").textContent = `Page ${page} · ${total} total`;
+  $("notifications-prev").disabled = page <= 1;
+  $("notifications-next").disabled = !hasMore;
+  if (!items.length) {
+    list.innerHTML = state.notifications.unreadOnly
+      ? "<p>No unread notifications.</p>"
+      : "<p>No notifications yet.</p>";
+    return;
+  }
+  list.innerHTML = items.map((item) => `
+    <button type="button" class="customer-list-item notification-item${item.read_at ? "" : " is-unread"}" data-notification-id="${item.id}" data-notification-entity="${escapeHtml(item.entity_type)}">
+      <strong>${item.read_at ? "" : "● "}${escapeHtml(item.title)}</strong>
+      <span>${escapeHtml(item.body || notificationTargetLabel(item.entity_type))}</span>
+      <span>${new Date(item.created_at).toLocaleString()}</span>
+    </button>`).join("");
+  $$("[data-notification-id]", list).forEach((button) => {
+    button.addEventListener("click", () => {
+      const notification = state.notifications.items.find(
+        (item) => item.id === Number(button.dataset.notificationId),
+      );
+      if (!notification) return;
+      if (!notification.read_at) void markNotificationRead(notification.id);
+      openNotificationTarget(notification);
+    });
+  });
+}
+
+async function loadNotifications() {
+  if (!await requireAuthenticated("login")) return;
+  const list = $("notifications-list");
+  list.innerHTML = '<div class="loading-panel"><span class="loading-spinner"></span><div><strong>Loading notifications</strong><br><small>Reading status-change alerts.</small></div></div>';
+  const searchParams = new URLSearchParams({
+    page: String(state.notifications.page),
+    page_size: String(state.notifications.pageSize),
+    unread: String(state.notifications.unreadOnly),
+  });
+  try {
+    const response = await apiFetch(`/api/notifications?${searchParams.toString()}`);
+    const data = await readApiPayload(response);
+    if (!response.ok || !data) throw apiError(response, data, "Notification list failed");
+    state.notifications.items = data.items;
+    state.notifications.total = data.total;
+    state.notifications.hasMore = data.has_more;
+    updateNotificationsBadge(data.unread_count);
+    renderNotificationsList();
+  } catch (error) {
+    state.notifications.items = [];
+    state.notifications.total = 0;
+    state.notifications.hasMore = false;
+    renderNotificationsList();
+    showToast(`Notification list failed: ${error.message}`, "error");
+  }
+}
+
+async function markNotificationRead(notificationId) {
+  try {
+    const response = await apiFetch(`/api/notifications/${notificationId}/read`, { method: "POST" });
+    const data = await readApiPayload(response);
+    if (!response.ok || !data) throw apiError(response, data, "Mark read failed");
+    updateNotificationsBadge(data.unread_count);
+    const item = state.notifications.items.find((entry) => entry.id === notificationId);
+    if (item && !item.read_at) item.read_at = new Date().toISOString();
+    renderNotificationsList();
+  } catch (error) {
+    showToast(`Mark read failed: ${error.message}`, "error");
+  }
+}
+
+async function markAllNotificationsRead() {
+  try {
+    const response = await apiFetch("/api/notifications/read-all", { method: "POST" });
+    const data = await readApiPayload(response);
+    if (!response.ok || !data) throw apiError(response, data, "Mark all read failed");
+    updateNotificationsBadge(data.unread_count);
+    showToast("All notifications marked read.", "success");
+    void loadNotifications();
+  } catch (error) {
+    showToast(`Mark all read failed: ${error.message}`, "error");
+  }
+}
+
+function initializeNotifications() {
+  $("notifications-refresh").addEventListener("click", () => {
+    void loadNotifications();
+  });
+  $("notifications-mark-all").addEventListener("click", () => {
+    void markAllNotificationsRead();
+  });
+  $("notifications-unread-filter").addEventListener("change", () => {
+    state.notifications.unreadOnly = $("notifications-unread-filter").checked;
+    state.notifications.page = 1;
+    void loadNotifications();
+  });
+  $("notifications-prev").addEventListener("click", () => {
+    if (state.notifications.page > 1) {
+      state.notifications.page -= 1;
+      void loadNotifications();
+    }
+  });
+  $("notifications-next").addEventListener("click", () => {
+    if (state.notifications.hasMore) {
+      state.notifications.page += 1;
+      void loadNotifications();
+    }
+  });
+}
+
+function renderSquareStatusBanner() {
+  const banner = $("square-status-banner");
+  const configured = Boolean(state.health?.square_configured);
+  const environment = state.health?.square_environment || "sandbox";
+  if (configured) {
+    banner.innerHTML = `<strong>Square is connected (${escapeHtml(environment)}).</strong><p>Issued invoices can be sent to Square for online card payment below.</p>`;
+  } else {
+    banner.innerHTML = `<strong>Square is not configured yet.</strong><p>Add <code>SQUARE_ACCESS_TOKEN</code> and <code>SQUARE_LOCATION_ID</code> to this server's environment and restart the backend to enable sending invoices to Square. Until then, invoices stay local-only.</p>`;
+  }
+}
+
+function squareRowStatusLabel(item) {
+  if (!item.square_invoice_id) return "Not sent to Square";
+  return `Square: ${item.square_status || "unknown"}`;
+}
+
+function renderSquareInvoicesList() {
+  const list = $("square-invoices-list");
+  const configured = Boolean(state.health?.square_configured);
+  const items = state.square.items;
+  if (!items.length) {
+    list.innerHTML = "<p>No issued invoices yet. Invoices become eligible for Square once they're issued.</p>";
+    return;
+  }
+  list.innerHTML = items.map((item) => {
+    const pushable = configured && !item.square_invoice_id && item.status !== "draft" && item.status !== "void";
+    const refreshable = configured && Boolean(item.square_invoice_id);
+    return `
+    <div class="customer-list-item square-invoice-row" data-square-invoice-id="${item.id}">
+      <strong>${escapeHtml(item.invoice_number)} · ${escapeHtml(item.customer.display_name)}</strong>
+      <span>${escapeHtml(invoiceStatusLabel(item.status))} · ${money(item.invoice_total)} · ${escapeHtml(squareRowStatusLabel(item))}</span>
+      ${item.square_payment_url ? `<span><a href="${escapeHtml(item.square_payment_url)}" target="_blank" rel="noopener">Open Square pay link</a></span>` : ""}
+      <div class="customers-form-actions">
+        <button type="button" class="secondary-button compact" data-square-push="${item.id}"${pushable ? "" : " disabled"}>Send with Square</button>
+        <button type="button" class="secondary-button compact" data-square-refresh="${item.id}"${refreshable ? "" : " disabled"}>Refresh status</button>
+      </div>
+    </div>`;
+  }).join("");
+  $$("[data-square-push]", list).forEach((button) => {
+    button.addEventListener("click", () => {
+      void pushInvoiceToSquareFromDashboard(Number(button.dataset.squarePush));
+    });
+  });
+  $$("[data-square-refresh]", list).forEach((button) => {
+    button.addEventListener("click", () => {
+      void refreshSquareInvoiceFromDashboard(Number(button.dataset.squareRefresh));
+    });
+  });
+}
+
+async function loadSquareDashboard() {
+  if (!await requireAuthenticated("login")) return;
+  renderSquareStatusBanner();
+  const list = $("square-invoices-list");
+  list.innerHTML = '<div class="loading-panel"><span class="loading-spinner"></span><div><strong>Loading invoices</strong><br><small>Reading issued invoices and Square status.</small></div></div>';
+  try {
+    const response = await apiFetch("/api/invoices?page=1&page_size=50");
+    const data = await readApiPayload(response);
+    if (!response.ok || !data) throw apiError(response, data, "Invoice list failed");
+    state.square.items = data.items.filter((item) => item.status !== "draft");
+    renderSquareInvoicesList();
+  } catch (error) {
+    state.square.items = [];
+    list.innerHTML = `<div class="error-card"><strong>Square dashboard failed</strong><p>${escapeHtml(error.message)}</p></div>`;
+  }
+}
+
+async function pushInvoiceToSquareFromDashboard(invoiceId) {
+  const item = state.square.items.find((entry) => entry.id === invoiceId);
+  if (!item) return;
+  if (!window.confirm(`Send invoice ${item.invoice_number} to the customer through Square?`)) return;
+  try {
+    const response = await apiFetch(`/api/invoices/${invoiceId}/square/push`, { method: "POST" });
+    const data = await readApiPayload(response);
+    if (!response.ok || !data) throw apiError(response, data, "Square send failed");
+    const index = state.square.items.findIndex((entry) => entry.id === invoiceId);
+    if (index !== -1) state.square.items[index] = data;
+    renderSquareInvoicesList();
+    showToast("Invoice sent through Square.", "success");
+  } catch (error) {
+    showToast(`Square send failed: ${error.message}`, "error");
+  }
+}
+
+async function refreshSquareInvoiceFromDashboard(invoiceId) {
+  try {
+    const response = await apiFetch(`/api/invoices/${invoiceId}/square/refresh`, { method: "POST" });
+    const data = await readApiPayload(response);
+    if (!response.ok || !data) throw apiError(response, data, "Square refresh failed");
+    const index = state.square.items.findIndex((entry) => entry.id === invoiceId);
+    if (index !== -1) state.square.items[index] = data;
+    renderSquareInvoicesList();
+    showToast(`Square status: ${data.square_status || "unknown"}.`, "info");
+  } catch (error) {
+    showToast(`Square refresh failed: ${error.message}`, "error");
+  }
+}
+
+function initializeSquareDashboard() {
+  $("square-refresh-all").addEventListener("click", () => {
+    void loadSquareDashboard();
+  });
+}
+
+function initializeReports() {
+  $("reports-refresh").addEventListener("click", () => {
+    void loadReports();
+  });
+}
+
+async function loadVehicleOptionsInto(selectId, placeholder) {
+  const select = $(selectId);
+  if (!select) return;
+  const currentValue = select.value;
+  try {
+    const response = await apiFetch("/api/vehicles?page=1&page_size=100&archived=false");
+    const data = await readApiPayload(response);
+    if (!response.ok || !data) throw apiError(response, data, "Vehicle options failed");
+    select.innerHTML = [`<option value="">${escapeHtml(placeholder)}</option>`, ...data.items.map((vehicle) => (
+      `<option value="${vehicle.id}">${escapeHtml(vehicle.display_name)}</option>`
+    ))].join("");
+    if (currentValue) select.value = currentValue;
+  } catch {
+    // Dropdown population is a convenience; a failure here shouldn't block the view.
+  }
+}
+
+// ---- Service Desk (intake queue) ----
+
+function renderServiceDeskList() {
+  const container = $("service-desk-list");
+  if (!state.serviceDesk.items.length) {
+    container.innerHTML = '<div class="empty-card"><strong>No intake requests</strong><p>New customer contacts will appear here.</p></div>';
+  } else {
+    container.innerHTML = state.serviceDesk.items.map((item) => `
+      <button type="button" class="customer-list-item${state.serviceDesk.selectedRequestId === item.id ? " is-active" : ""}" data-service-desk-id="${item.id}">
+        <strong>${escapeHtml(item.customer_name)}</strong>
+        <span>${escapeHtml(item.vehicle_description || "No vehicle noted")} · ${escapeHtml(item.status)}</span>
+      </button>`).join("");
+    $$("[data-service-desk-id]", container).forEach((button) => {
+      button.addEventListener("click", () => {
+        void selectServiceDeskRequest(Number(button.dataset.serviceDeskId));
+      });
+    });
+  }
+  $("service-desk-page-status").textContent = `Page ${state.serviceDesk.page} · ${state.serviceDesk.total} total`;
+  $("service-desk-prev").disabled = state.serviceDesk.page <= 1;
+  $("service-desk-next").disabled = !state.serviceDesk.hasMore;
+}
+
+async function loadServiceDesk() {
+  if (!await requireAuthenticated("login")) return;
+  const list = $("service-desk-list");
+  list.innerHTML = '<div class="loading-panel"><span class="loading-spinner"></span><div><strong>Loading intake requests</strong></div></div>';
+  const searchParams = new URLSearchParams({
+    page: String(state.serviceDesk.page),
+    page_size: String(state.serviceDesk.pageSize),
+  });
+  if (state.serviceDesk.search.trim()) searchParams.set("search", state.serviceDesk.search.trim());
+  if (state.serviceDesk.statusFilter) searchParams.set("status", state.serviceDesk.statusFilter);
+  try {
+    const response = await apiFetch(`/api/intake-requests?${searchParams.toString()}`);
+    const data = await readApiPayload(response);
+    if (!response.ok || !data) throw apiError(response, data, "Intake request listing failed");
+    state.serviceDesk.items = data.items;
+    state.serviceDesk.total = data.total;
+    state.serviceDesk.hasMore = data.has_more;
+    renderServiceDeskList();
+  } catch (error) {
+    list.innerHTML = `<div class="error-card"><strong>Intake request listing failed</strong><p>${escapeHtml(error.message)}</p></div>`;
+    showToast(`Intake request listing failed: ${error.message}`, "error");
+  }
+}
+
+function renderServiceDeskDetail(request = null) {
+  const detail = $("service-desk-detail");
+  const convertForm = $("service-desk-convert-form");
+  if (!request) {
+    detail.innerHTML = "<p>Select an intake request from the list or create a new one.</p>";
+    convertForm.hidden = true;
+    return;
+  }
+  detail.innerHTML = `
+    <div class="customer-detail-header">
+      <strong>${escapeHtml(request.customer_name)}</strong>
+      <span>${escapeHtml(request.status)}</span>
+    </div>
+    <p>${escapeHtml(request.complaint)}</p>
+    <div class="customer-detail-grid">
+      <div><span>Phone</span><strong>${escapeHtml(request.phone || "Not set")}</strong></div>
+      <div><span>Email</span><strong>${escapeHtml(request.email || "Not set")}</strong></div>
+      <div><span>Vehicle</span><strong>${escapeHtml(request.vehicle_description || "Not noted")}</strong></div>
+      <div><span>Source</span><strong>${escapeHtml(request.source)}</strong></div>
+    </div>
+    ${request.notes ? `<div class="customer-detail-notes"><span>Internal notes</span><p>${escapeHtml(request.notes)}</p></div>` : ""}
+    ${request.converted_customer_id ? `<div class="customer-detail-notes"><span>Converted</span><p>Linked to customer #${request.converted_customer_id}${request.converted_vehicle_id ? ` and vehicle #${request.converted_vehicle_id}` : ""}.</p></div>` : ""}`;
+  convertForm.hidden = request.status === "converted";
+}
+
+async function selectServiceDeskRequest(requestId) {
+  try {
+    const response = await apiFetch(`/api/intake-requests/${requestId}`);
+    const data = await readApiPayload(response);
+    if (!response.ok || !data) throw apiError(response, data, "Intake request load failed");
+    state.serviceDesk.selectedRequestId = data.id;
+    state.serviceDesk.selectedRequest = data;
+    renderServiceDeskDetail(data);
+    populateServiceDeskForm(data);
+    renderServiceDeskList();
+  } catch (error) {
+    showToast(`Intake request load failed: ${error.message}`, "error");
+  }
+}
+
+function populateServiceDeskForm(request = null) {
+  $("service-desk-id").value = request ? String(request.id) : "";
+  $("service-desk-customer-name").value = request ? request.customer_name : "";
+  $("service-desk-phone").value = request ? request.phone || "" : "";
+  $("service-desk-email").value = request ? request.email || "" : "";
+  $("service-desk-vehicle-description").value = request ? request.vehicle_description || "" : "";
+  $("service-desk-source").value = request ? request.source : "phone";
+  $("service-desk-complaint").value = request ? request.complaint : "";
+  $("service-desk-notes").value = request ? request.notes || "" : "";
+  $("service-desk-form-title").textContent = request ? "Edit intake request" : "Create intake request";
+  $("service-desk-form-mode").textContent = request ? "EDIT" : "CREATE";
+}
+
+async function submitServiceDeskForm(event) {
+  event.preventDefault();
+  if (!await requireAuthenticated("login")) return;
+  const requestId = $("service-desk-id").value.trim();
+  const submit = $("service-desk-save");
+  submit.disabled = true;
+  submit.textContent = requestId ? "Saving…" : "Creating…";
+  const payload = {
+    customer_name: $("service-desk-customer-name").value.trim(),
+    phone: $("service-desk-phone").value.trim() || null,
+    email: $("service-desk-email").value.trim() || null,
+    vehicle_description: $("service-desk-vehicle-description").value.trim() || null,
+    source: $("service-desk-source").value,
+    complaint: $("service-desk-complaint").value.trim(),
+    notes: $("service-desk-notes").value.trim() || null,
+  };
+  try {
+    const response = await apiFetch(requestId ? `/api/intake-requests/${requestId}` : "/api/intake-requests", {
+      method: requestId ? "PATCH" : "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const data = await readApiPayload(response);
+    if (!response.ok || !data) throw apiError(response, data, "Intake request save failed");
+    state.serviceDesk.selectedRequestId = data.id;
+    state.serviceDesk.selectedRequest = data;
+    populateServiceDeskForm(data);
+    renderServiceDeskDetail(data);
+    state.serviceDesk.page = 1;
+    await loadServiceDesk();
+    showToast(requestId ? "Intake request updated." : "Intake request created.", "success");
+  } catch (error) {
+    showToast(`Intake request save failed: ${error.message}`, "error");
+  } finally {
+    submit.disabled = false;
+    submit.textContent = "Save request";
+  }
+}
+
+async function submitServiceDeskConvert(event) {
+  event.preventDefault();
+  const request = state.serviceDesk.selectedRequest;
+  if (!request) return;
+  const submit = $("service-desk-convert-save");
+  submit.disabled = true;
+  try {
+    const payload = {
+      vehicle_year: $("service-desk-convert-vehicle-year").value ? Number($("service-desk-convert-vehicle-year").value) : null,
+      vehicle_make: $("service-desk-convert-vehicle-make").value.trim() || null,
+      vehicle_model: $("service-desk-convert-vehicle-model").value.trim() || null,
+    };
+    const response = await apiFetch(`/api/intake-requests/${request.id}/convert`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const data = await readApiPayload(response);
+    if (!response.ok || !data) throw apiError(response, data, "Conversion failed");
+    state.serviceDesk.selectedRequest = data.intake_request;
+    renderServiceDeskDetail(data.intake_request);
+    await loadServiceDesk();
+    showToast(`Converted to customer ${data.customer.display_name}.`, "success");
+  } catch (error) {
+    showToast(`Conversion failed: ${error.message}`, "error");
+  } finally {
+    submit.disabled = false;
+  }
+}
+
+function initializeServiceDesk() {
+  $("service-desk-new").addEventListener("click", () => {
+    state.serviceDesk.selectedRequestId = null;
+    state.serviceDesk.selectedRequest = null;
+    populateServiceDeskForm(null);
+    renderServiceDeskDetail(null);
+    renderServiceDeskList();
+  });
+  $("service-desk-cancel").addEventListener("click", () => {
+    populateServiceDeskForm(state.serviceDesk.selectedRequest);
+  });
+  $("service-desk-form").addEventListener("submit", submitServiceDeskForm);
+  $("service-desk-convert-form").addEventListener("submit", submitServiceDeskConvert);
+  $("service-desk-refresh").addEventListener("click", () => void loadServiceDesk());
+  $("service-desk-search").addEventListener("input", () => {
+    state.serviceDesk.search = $("service-desk-search").value;
+    state.serviceDesk.page = 1;
+    void loadServiceDesk();
+  });
+  $("service-desk-status-filter").addEventListener("change", () => {
+    state.serviceDesk.statusFilter = $("service-desk-status-filter").value;
+    state.serviceDesk.page = 1;
+    void loadServiceDesk();
+  });
+  $("service-desk-prev").addEventListener("click", () => {
+    if (state.serviceDesk.page > 1) {
+      state.serviceDesk.page -= 1;
+      void loadServiceDesk();
+    }
+  });
+  $("service-desk-next").addEventListener("click", () => {
+    if (state.serviceDesk.hasMore) {
+      state.serviceDesk.page += 1;
+      void loadServiceDesk();
+    }
+  });
+}
+
+// ---- Diagnostics ----
+
+function renderDiagnosticsList() {
+  const container = $("diagnostics-list");
+  if (!state.diagnostics.items.length) {
+    container.innerHTML = '<div class="empty-card"><strong>No findings</strong><p>Create a diagnostic finding for a vehicle.</p></div>';
+  } else {
+    container.innerHTML = state.diagnostics.items.map((item) => `
+      <button type="button" class="customer-list-item${state.diagnostics.selectedFindingId === item.id ? " is-active" : ""}" data-diagnostics-id="${item.id}">
+        <strong>${escapeHtml(item.vehicle_display_name || "Vehicle")}</strong>
+        <span>${escapeHtml(item.symptoms.slice(0, 80))}</span>
+      </button>`).join("");
+    $$("[data-diagnostics-id]", container).forEach((button) => {
+      button.addEventListener("click", () => {
+        void selectDiagnosticFinding(Number(button.dataset.diagnosticsId));
+      });
+    });
+  }
+  $("diagnostics-page-status").textContent = `Page ${state.diagnostics.page} · ${state.diagnostics.total} total`;
+  $("diagnostics-prev").disabled = state.diagnostics.page <= 1;
+  $("diagnostics-next").disabled = !state.diagnostics.hasMore;
+}
+
+async function loadDiagnostics() {
+  if (!await requireAuthenticated("login")) return;
+  void loadVehicleOptionsInto("diagnostics-vehicle-filter", "All vehicles");
+  void loadVehicleOptionsInto("diagnostics-vehicle-id", "Select a vehicle");
+  const list = $("diagnostics-list");
+  list.innerHTML = '<div class="loading-panel"><span class="loading-spinner"></span><div><strong>Loading findings</strong></div></div>';
+  const searchParams = new URLSearchParams({
+    page: String(state.diagnostics.page),
+    page_size: String(state.diagnostics.pageSize),
+  });
+  if (state.diagnostics.vehicleFilterId) searchParams.set("vehicle_id", String(state.diagnostics.vehicleFilterId));
+  try {
+    const response = await apiFetch(`/api/diagnostic-findings?${searchParams.toString()}`);
+    const data = await readApiPayload(response);
+    if (!response.ok || !data) throw apiError(response, data, "Diagnostic finding listing failed");
+    state.diagnostics.items = data.items;
+    state.diagnostics.total = data.total;
+    state.diagnostics.hasMore = data.has_more;
+    renderDiagnosticsList();
+  } catch (error) {
+    list.innerHTML = `<div class="error-card"><strong>Diagnostic finding listing failed</strong><p>${escapeHtml(error.message)}</p></div>`;
+    showToast(`Diagnostic finding listing failed: ${error.message}`, "error");
+  }
+}
+
+function renderDiagnosticsDetail(finding = null) {
+  const detail = $("diagnostics-detail");
+  $("diagnostics-delete").hidden = !finding;
+  if (!finding) {
+    detail.innerHTML = "<p>Select a finding from the list or create a new one.</p>";
+    return;
+  }
+  detail.innerHTML = `
+    <div class="customer-detail-header">
+      <strong>${escapeHtml(finding.vehicle_display_name || "Vehicle")}</strong>
+      <span>${new Date(finding.updated_at).toLocaleString()}</span>
+    </div>
+    <div class="customer-detail-grid">
+      <div><span>Codes</span><strong>${escapeHtml(finding.codes || "None recorded")}</strong></div>
+      <div><span>Technician</span><strong>${escapeHtml(finding.technician_display_name || "Unassigned")}</strong></div>
+      <div><span>Work order</span><strong>${finding.work_order_id ? `#${finding.work_order_id}` : "None"}</strong></div>
+    </div>
+    <div class="customer-detail-notes"><span>Symptoms</span><p>${escapeHtml(finding.symptoms)}</p></div>
+    ${finding.tests_performed ? `<div class="customer-detail-notes"><span>Tests performed</span><p>${escapeHtml(finding.tests_performed)}</p></div>` : ""}
+    ${finding.conclusion ? `<div class="customer-detail-notes"><span>Conclusion</span><p>${escapeHtml(finding.conclusion)}</p></div>` : ""}`;
+}
+
+async function selectDiagnosticFinding(findingId) {
+  try {
+    const response = await apiFetch(`/api/diagnostic-findings/${findingId}`);
+    const data = await readApiPayload(response);
+    if (!response.ok || !data) throw apiError(response, data, "Finding load failed");
+    state.diagnostics.selectedFindingId = data.id;
+    state.diagnostics.selectedFinding = data;
+    renderDiagnosticsDetail(data);
+    populateDiagnosticsForm(data);
+    renderDiagnosticsList();
+  } catch (error) {
+    showToast(`Finding load failed: ${error.message}`, "error");
+  }
+}
+
+function populateDiagnosticsForm(finding = null) {
+  $("diagnostics-id").value = finding ? String(finding.id) : "";
+  $("diagnostics-vehicle-id").value = finding ? String(finding.vehicle_id) : "";
+  $("diagnostics-work-order-id").value = finding && finding.work_order_id ? String(finding.work_order_id) : "";
+  $("diagnostics-codes").value = finding ? finding.codes || "" : "";
+  $("diagnostics-symptoms").value = finding ? finding.symptoms : "";
+  $("diagnostics-tests-performed").value = finding ? finding.tests_performed || "" : "";
+  $("diagnostics-conclusion").value = finding ? finding.conclusion || "" : "";
+  $("diagnostics-form-title").textContent = finding ? "Edit finding" : "Create finding";
+  $("diagnostics-form-mode").textContent = finding ? "EDIT" : "CREATE";
+}
+
+async function submitDiagnosticsForm(event) {
+  event.preventDefault();
+  if (!await requireAuthenticated("login")) return;
+  const vehicleId = $("diagnostics-vehicle-id").value;
+  if (!vehicleId) {
+    showToast("Select a vehicle first.", "error");
+    return;
+  }
+  const findingId = $("diagnostics-id").value.trim();
+  const submit = $("diagnostics-save");
+  submit.disabled = true;
+  submit.textContent = findingId ? "Saving…" : "Creating…";
+  const workOrderId = $("diagnostics-work-order-id").value.trim();
+  const payload = {
+    vehicle_id: Number(vehicleId),
+    work_order_id: workOrderId ? Number(workOrderId) : null,
+    codes: $("diagnostics-codes").value.trim() || null,
+    symptoms: $("diagnostics-symptoms").value.trim(),
+    tests_performed: $("diagnostics-tests-performed").value.trim() || null,
+    conclusion: $("diagnostics-conclusion").value.trim() || null,
+  };
+  if (findingId) delete payload.vehicle_id;
+  try {
+    const response = await apiFetch(findingId ? `/api/diagnostic-findings/${findingId}` : "/api/diagnostic-findings", {
+      method: findingId ? "PATCH" : "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const data = await readApiPayload(response);
+    if (!response.ok || !data) throw apiError(response, data, "Finding save failed");
+    state.diagnostics.selectedFindingId = data.id;
+    state.diagnostics.selectedFinding = data;
+    populateDiagnosticsForm(data);
+    renderDiagnosticsDetail(data);
+    state.diagnostics.page = 1;
+    await loadDiagnostics();
+    showToast(findingId ? "Finding updated." : "Finding created.", "success");
+  } catch (error) {
+    showToast(`Finding save failed: ${error.message}`, "error");
+  } finally {
+    submit.disabled = false;
+    submit.textContent = "Save finding";
+  }
+}
+
+async function deleteSelectedDiagnosticFinding() {
+  const finding = state.diagnostics.selectedFinding;
+  if (!finding) return;
+  if (!window.confirm("Delete this diagnostic finding?")) return;
+  try {
+    const response = await apiFetch(`/api/diagnostic-findings/${finding.id}`, { method: "DELETE" });
+    if (!response.ok) throw apiError(response, await readApiPayload(response), "Finding delete failed");
+    state.diagnostics.selectedFindingId = null;
+    state.diagnostics.selectedFinding = null;
+    populateDiagnosticsForm(null);
+    renderDiagnosticsDetail(null);
+    await loadDiagnostics();
+    showToast("Finding deleted.", "success");
+  } catch (error) {
+    showToast(`Finding delete failed: ${error.message}`, "error");
+  }
+}
+
+function initializeDiagnostics() {
+  $("diagnostics-new").addEventListener("click", () => {
+    state.diagnostics.selectedFindingId = null;
+    state.diagnostics.selectedFinding = null;
+    populateDiagnosticsForm(null);
+    renderDiagnosticsDetail(null);
+    renderDiagnosticsList();
+  });
+  $("diagnostics-cancel").addEventListener("click", () => {
+    populateDiagnosticsForm(state.diagnostics.selectedFinding);
+  });
+  $("diagnostics-form").addEventListener("submit", submitDiagnosticsForm);
+  $("diagnostics-delete").addEventListener("click", () => void deleteSelectedDiagnosticFinding());
+  $("diagnostics-refresh").addEventListener("click", () => void loadDiagnostics());
+  $("diagnostics-vehicle-filter").addEventListener("change", () => {
+    const value = $("diagnostics-vehicle-filter").value;
+    state.diagnostics.vehicleFilterId = value ? Number(value) : null;
+    state.diagnostics.page = 1;
+    void loadDiagnostics();
+  });
+  $("diagnostics-prev").addEventListener("click", () => {
+    if (state.diagnostics.page > 1) {
+      state.diagnostics.page -= 1;
+      void loadDiagnostics();
+    }
+  });
+  $("diagnostics-next").addEventListener("click", () => {
+    if (state.diagnostics.hasMore) {
+      state.diagnostics.page += 1;
+      void loadDiagnostics();
+    }
+  });
+}
+
+// ---- Inspections ----
+
+function renderInspectionsList() {
+  const container = $("inspections-list");
+  if (!state.inspections.items.length) {
+    container.innerHTML = '<div class="empty-card"><strong>No inspections</strong><p>Create an inspection for a vehicle.</p></div>';
+  } else {
+    container.innerHTML = state.inspections.items.map((item) => `
+      <button type="button" class="customer-list-item${state.inspections.selectedInspectionId === item.id ? " is-active" : ""}" data-inspections-id="${item.id}">
+        <strong>${escapeHtml(item.vehicle_display_name || "Vehicle")}</strong>
+        <span>${escapeHtml(item.inspection_type || "Inspection")}${item.has_failed_items ? " · Failed items" : item.has_attention_items ? " · Needs attention" : ""}</span>
+      </button>`).join("");
+    $$("[data-inspections-id]", container).forEach((button) => {
+      button.addEventListener("click", () => {
+        void selectInspection(Number(button.dataset.inspectionsId));
+      });
+    });
+  }
+  $("inspections-page-status").textContent = `Page ${state.inspections.page} · ${state.inspections.total} total`;
+  $("inspections-prev").disabled = state.inspections.page <= 1;
+  $("inspections-next").disabled = !state.inspections.hasMore;
+}
+
+async function loadInspections() {
+  if (!await requireAuthenticated("login")) return;
+  void loadVehicleOptionsInto("inspections-vehicle-filter", "All vehicles");
+  void loadVehicleOptionsInto("inspections-vehicle-id", "Select a vehicle");
+  const list = $("inspections-list");
+  list.innerHTML = '<div class="loading-panel"><span class="loading-spinner"></span><div><strong>Loading inspections</strong></div></div>';
+  const searchParams = new URLSearchParams({
+    page: String(state.inspections.page),
+    page_size: String(state.inspections.pageSize),
+  });
+  if (state.inspections.vehicleFilterId) searchParams.set("vehicle_id", String(state.inspections.vehicleFilterId));
+  try {
+    const response = await apiFetch(`/api/inspections?${searchParams.toString()}`);
+    const data = await readApiPayload(response);
+    if (!response.ok || !data) throw apiError(response, data, "Inspection listing failed");
+    state.inspections.items = data.items;
+    state.inspections.total = data.total;
+    state.inspections.hasMore = data.has_more;
+    renderInspectionsList();
+  } catch (error) {
+    list.innerHTML = `<div class="error-card"><strong>Inspection listing failed</strong><p>${escapeHtml(error.message)}</p></div>`;
+    showToast(`Inspection listing failed: ${error.message}`, "error");
+  }
+}
+
+function renderInspectionsDetail(inspection = null) {
+  const detail = $("inspections-detail");
+  $("inspections-delete").hidden = !inspection;
+  if (!inspection) {
+    detail.innerHTML = "<p>Select an inspection from the list or create a new one.</p>";
+    return;
+  }
+  const itemRows = inspection.items.map((item) => `
+    <li><strong>${escapeHtml(item.label)}</strong> · ${escapeHtml(item.status)}${item.note ? ` · ${escapeHtml(item.note)}` : ""}</li>
+  `).join("") || "<li>No checklist items recorded.</li>";
+  detail.innerHTML = `
+    <div class="customer-detail-header">
+      <strong>${escapeHtml(inspection.vehicle_display_name || "Vehicle")}</strong>
+      <span>${escapeHtml(inspection.inspection_type || "Inspection")}</span>
+    </div>
+    <div class="customer-detail-grid">
+      <div><span>Technician</span><strong>${escapeHtml(inspection.technician_display_name || "Unassigned")}</strong></div>
+      <div><span>Work order</span><strong>${inspection.work_order_id ? `#${inspection.work_order_id}` : "None"}</strong></div>
+    </div>
+    <div class="customer-history-section"><h4>Checklist</h4><ul>${itemRows}</ul></div>
+    ${inspection.overall_notes ? `<div class="customer-detail-notes"><span>Overall notes</span><p>${escapeHtml(inspection.overall_notes)}</p></div>` : ""}`;
+}
+
+function renderInspectionsDraftItems() {
+  const container = $("inspections-items-list");
+  if (!state.inspections.draftItems.length) {
+    container.innerHTML = "<p>No items added yet.</p>";
+    return;
+  }
+  container.innerHTML = state.inspections.draftItems.map((item, index) => `
+    <div class="customer-detail-grid">
+      <div><span>${escapeHtml(item.label)}</span><strong>${escapeHtml(item.status)}${item.note ? ` · ${escapeHtml(item.note)}` : ""}</strong></div>
+      <button type="button" class="text-button" data-remove-item-index="${index}">Remove</button>
+    </div>`).join("");
+  $$("[data-remove-item-index]", container).forEach((button) => {
+    button.addEventListener("click", () => {
+      state.inspections.draftItems.splice(Number(button.dataset.removeItemIndex), 1);
+      renderInspectionsDraftItems();
+    });
+  });
+}
+
+async function selectInspection(inspectionId) {
+  try {
+    const response = await apiFetch(`/api/inspections/${inspectionId}`);
+    const data = await readApiPayload(response);
+    if (!response.ok || !data) throw apiError(response, data, "Inspection load failed");
+    state.inspections.selectedInspectionId = data.id;
+    state.inspections.selectedInspection = data;
+    renderInspectionsDetail(data);
+    populateInspectionsForm(data);
+    renderInspectionsList();
+  } catch (error) {
+    showToast(`Inspection load failed: ${error.message}`, "error");
+  }
+}
+
+function populateInspectionsForm(inspection = null) {
+  $("inspections-id").value = inspection ? String(inspection.id) : "";
+  $("inspections-vehicle-id").value = inspection ? String(inspection.vehicle_id) : "";
+  $("inspections-work-order-id").value = inspection && inspection.work_order_id ? String(inspection.work_order_id) : "";
+  $("inspections-type").value = inspection ? inspection.inspection_type || "" : "";
+  $("inspections-overall-notes").value = inspection ? inspection.overall_notes || "" : "";
+  state.inspections.draftItems = inspection ? inspection.items.map((item) => ({ ...item })) : [];
+  renderInspectionsDraftItems();
+  $("inspections-form-title").textContent = inspection ? "Edit inspection" : "Create inspection";
+  $("inspections-form-mode").textContent = inspection ? "EDIT" : "CREATE";
+}
+
+function addInspectionDraftItem() {
+  const label = $("inspections-item-label").value.trim();
+  if (!label) {
+    showToast("Enter an item label first.", "error");
+    return;
+  }
+  state.inspections.draftItems.push({
+    label,
+    status: $("inspections-item-status").value,
+    note: $("inspections-item-note").value.trim() || null,
+  });
+  $("inspections-item-label").value = "";
+  $("inspections-item-note").value = "";
+  renderInspectionsDraftItems();
+}
+
+async function submitInspectionsForm(event) {
+  event.preventDefault();
+  if (!await requireAuthenticated("login")) return;
+  const vehicleId = $("inspections-vehicle-id").value;
+  if (!vehicleId) {
+    showToast("Select a vehicle first.", "error");
+    return;
+  }
+  const inspectionId = $("inspections-id").value.trim();
+  const submit = $("inspections-save");
+  submit.disabled = true;
+  submit.textContent = inspectionId ? "Saving…" : "Creating…";
+  const workOrderId = $("inspections-work-order-id").value.trim();
+  const payload = {
+    vehicle_id: Number(vehicleId),
+    work_order_id: workOrderId ? Number(workOrderId) : null,
+    inspection_type: $("inspections-type").value.trim() || null,
+    items: state.inspections.draftItems,
+    overall_notes: $("inspections-overall-notes").value.trim() || null,
+  };
+  if (inspectionId) delete payload.vehicle_id;
+  try {
+    const response = await apiFetch(inspectionId ? `/api/inspections/${inspectionId}` : "/api/inspections", {
+      method: inspectionId ? "PATCH" : "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const data = await readApiPayload(response);
+    if (!response.ok || !data) throw apiError(response, data, "Inspection save failed");
+    state.inspections.selectedInspectionId = data.id;
+    state.inspections.selectedInspection = data;
+    populateInspectionsForm(data);
+    renderInspectionsDetail(data);
+    state.inspections.page = 1;
+    await loadInspections();
+    showToast(inspectionId ? "Inspection updated." : "Inspection created.", "success");
+  } catch (error) {
+    showToast(`Inspection save failed: ${error.message}`, "error");
+  } finally {
+    submit.disabled = false;
+    submit.textContent = "Save inspection";
+  }
+}
+
+async function deleteSelectedInspection() {
+  const inspection = state.inspections.selectedInspection;
+  if (!inspection) return;
+  if (!window.confirm("Delete this inspection?")) return;
+  try {
+    const response = await apiFetch(`/api/inspections/${inspection.id}`, { method: "DELETE" });
+    if (!response.ok) throw apiError(response, await readApiPayload(response), "Inspection delete failed");
+    state.inspections.selectedInspectionId = null;
+    state.inspections.selectedInspection = null;
+    populateInspectionsForm(null);
+    renderInspectionsDetail(null);
+    await loadInspections();
+    showToast("Inspection deleted.", "success");
+  } catch (error) {
+    showToast(`Inspection delete failed: ${error.message}`, "error");
+  }
+}
+
+function initializeInspections() {
+  $("inspections-new").addEventListener("click", () => {
+    state.inspections.selectedInspectionId = null;
+    state.inspections.selectedInspection = null;
+    populateInspectionsForm(null);
+    renderInspectionsDetail(null);
+    renderInspectionsList();
+  });
+  $("inspections-cancel").addEventListener("click", () => {
+    populateInspectionsForm(state.inspections.selectedInspection);
+  });
+  $("inspections-form").addEventListener("submit", submitInspectionsForm);
+  $("inspections-item-add").addEventListener("click", addInspectionDraftItem);
+  $("inspections-delete").addEventListener("click", () => void deleteSelectedInspection());
+  $("inspections-refresh").addEventListener("click", () => void loadInspections());
+  $("inspections-vehicle-filter").addEventListener("change", () => {
+    const value = $("inspections-vehicle-filter").value;
+    state.inspections.vehicleFilterId = value ? Number(value) : null;
+    state.inspections.page = 1;
+    void loadInspections();
+  });
+  $("inspections-prev").addEventListener("click", () => {
+    if (state.inspections.page > 1) {
+      state.inspections.page -= 1;
+      void loadInspections();
+    }
+  });
+  $("inspections-next").addEventListener("click", () => {
+    if (state.inspections.hasMore) {
+      state.inspections.page += 1;
+      void loadInspections();
+    }
+  });
+}
+
+// ---- Vendors ----
+
+function renderVendorsList() {
+  const container = $("vendors-list");
+  if (!state.vendors.items.length) {
+    container.innerHTML = '<div class="empty-card"><strong>No vendors</strong><p>Create the first vendor record.</p></div>';
+  } else {
+    container.innerHTML = state.vendors.items.map((item) => `
+      <button type="button" class="customer-list-item${state.vendors.selectedVendorId === item.id ? " is-active" : ""}" data-vendor-id="${item.id}">
+        <strong>${escapeHtml(item.name)}</strong>
+        <span>${escapeHtml(item.contact_name || "No contact set")} · ${item.part_count} part${item.part_count === 1 ? "" : "s"}</span>
+      </button>`).join("");
+    $$("[data-vendor-id]", container).forEach((button) => {
+      button.addEventListener("click", () => {
+        void selectVendor(Number(button.dataset.vendorId));
+      });
+    });
+  }
+  $("vendors-page-status").textContent = `Page ${state.vendors.page} · ${state.vendors.total} total`;
+  $("vendors-prev").disabled = state.vendors.page <= 1;
+  $("vendors-next").disabled = !state.vendors.hasMore;
+}
+
+async function loadVendors() {
+  if (!await requireAuthenticated("login")) return;
+  const list = $("vendors-list");
+  list.innerHTML = '<div class="loading-panel"><span class="loading-spinner"></span><div><strong>Loading vendors</strong></div></div>';
+  const searchParams = new URLSearchParams({
+    page: String(state.vendors.page),
+    page_size: String(state.vendors.pageSize),
+    archived: String(state.vendors.archivedOnly),
+  });
+  if (state.vendors.search.trim()) searchParams.set("search", state.vendors.search.trim());
+  try {
+    const response = await apiFetch(`/api/vendors?${searchParams.toString()}`);
+    const data = await readApiPayload(response);
+    if (!response.ok || !data) throw apiError(response, data, "Vendor listing failed");
+    state.vendors.items = data.items;
+    state.vendors.total = data.total;
+    state.vendors.hasMore = data.has_more;
+    renderVendorsList();
+  } catch (error) {
+    list.innerHTML = `<div class="error-card"><strong>Vendor listing failed</strong><p>${escapeHtml(error.message)}</p></div>`;
+    showToast(`Vendor listing failed: ${error.message}`, "error");
+  }
+}
+
+function renderVendorsDetail(vendor = null) {
+  const detail = $("vendors-detail");
+  $("vendors-archive").hidden = !vendor;
+  if (!vendor) {
+    detail.innerHTML = "<p>Select a vendor from the list or create a new record.</p>";
+    return;
+  }
+  const address = [vendor.address_line_1, vendor.address_line_2, [vendor.city, vendor.state, vendor.postal_code].filter(Boolean).join(", ")]
+    .filter(Boolean).map((line) => escapeHtml(line)).join("<br>");
+  detail.innerHTML = `
+    <div class="customer-detail-header">
+      <strong>${escapeHtml(vendor.name)}</strong>
+      <span>${vendor.is_archived ? "Archived" : "Active"}</span>
+    </div>
+    <div class="customer-detail-grid">
+      <div><span>Contact</span><strong>${escapeHtml(vendor.contact_name || "Not set")}</strong></div>
+      <div><span>Phone</span><strong>${escapeHtml(vendor.phone || "Not set")}</strong></div>
+      <div><span>Email</span><strong>${escapeHtml(vendor.email || "Not set")}</strong></div>
+      <div><span>Active parts</span><strong>${vendor.part_count}</strong></div>
+    </div>
+    ${address ? `<div class="customer-detail-notes"><span>Address</span><p>${address}</p></div>` : ""}
+    ${vendor.notes ? `<div class="customer-detail-notes"><span>Notes</span><p>${escapeHtml(vendor.notes)}</p></div>` : ""}`;
+}
+
+async function selectVendor(vendorId) {
+  try {
+    const response = await apiFetch(`/api/vendors/${vendorId}`);
+    const data = await readApiPayload(response);
+    if (!response.ok || !data) throw apiError(response, data, "Vendor load failed");
+    state.vendors.selectedVendorId = data.id;
+    state.vendors.selectedVendor = data;
+    renderVendorsDetail(data);
+    populateVendorsForm(data);
+    renderVendorsList();
+  } catch (error) {
+    showToast(`Vendor load failed: ${error.message}`, "error");
+  }
+}
+
+function populateVendorsForm(vendor = null) {
+  $("vendors-id").value = vendor ? String(vendor.id) : "";
+  $("vendors-name").value = vendor ? vendor.name : "";
+  $("vendors-contact-name").value = vendor ? vendor.contact_name || "" : "";
+  $("vendors-phone").value = vendor ? vendor.phone || "" : "";
+  $("vendors-email").value = vendor ? vendor.email || "" : "";
+  $("vendors-address-line-1").value = vendor ? vendor.address_line_1 || "" : "";
+  $("vendors-address-line-2").value = vendor ? vendor.address_line_2 || "" : "";
+  $("vendors-city").value = vendor ? vendor.city || "" : "";
+  $("vendors-state").value = vendor ? vendor.state || "" : "";
+  $("vendors-postal-code").value = vendor ? vendor.postal_code || "" : "";
+  $("vendors-notes").value = vendor ? vendor.notes || "" : "";
+  $("vendors-form-title").textContent = vendor ? "Edit vendor" : "Create vendor";
+  $("vendors-form-mode").textContent = vendor ? "EDIT" : "CREATE";
+}
+
+async function submitVendorsForm(event) {
+  event.preventDefault();
+  if (!await requireAuthenticated("login")) return;
+  const vendorId = $("vendors-id").value.trim();
+  const submit = $("vendors-save");
+  submit.disabled = true;
+  submit.textContent = vendorId ? "Saving…" : "Creating…";
+  const payload = {
+    name: $("vendors-name").value.trim(),
+    contact_name: $("vendors-contact-name").value.trim() || null,
+    phone: $("vendors-phone").value.trim() || null,
+    email: $("vendors-email").value.trim() || null,
+    address_line_1: $("vendors-address-line-1").value.trim() || null,
+    address_line_2: $("vendors-address-line-2").value.trim() || null,
+    city: $("vendors-city").value.trim() || null,
+    state: $("vendors-state").value.trim() || null,
+    postal_code: $("vendors-postal-code").value.trim() || null,
+    notes: $("vendors-notes").value.trim() || null,
+  };
+  try {
+    const response = await apiFetch(vendorId ? `/api/vendors/${vendorId}` : "/api/vendors", {
+      method: vendorId ? "PATCH" : "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const data = await readApiPayload(response);
+    if (!response.ok || !data) throw apiError(response, data, "Vendor save failed");
+    state.vendors.selectedVendorId = data.id;
+    state.vendors.selectedVendor = data;
+    populateVendorsForm(data);
+    renderVendorsDetail(data);
+    state.vendors.page = 1;
+    await loadVendors();
+    showToast(vendorId ? "Vendor updated." : "Vendor created.", "success");
+  } catch (error) {
+    showToast(`Vendor save failed: ${error.message}`, "error");
+  } finally {
+    submit.disabled = false;
+    submit.textContent = "Save vendor";
+  }
+}
+
+async function archiveSelectedVendor() {
+  const vendor = state.vendors.selectedVendor;
+  if (!vendor) return;
+  if (!window.confirm(`Archive ${vendor.name}?`)) return;
+  try {
+    const response = await apiFetch(`/api/vendors/${vendor.id}`, { method: "DELETE" });
+    const data = await readApiPayload(response);
+    if (!response.ok || !data) throw apiError(response, data, "Vendor archive failed");
+    state.vendors.selectedVendorId = null;
+    state.vendors.selectedVendor = null;
+    populateVendorsForm(null);
+    renderVendorsDetail(null);
+    await loadVendors();
+    showToast("Vendor archived.", "success");
+  } catch (error) {
+    showToast(`Vendor archive failed: ${error.message}`, "error");
+  }
+}
+
+function initializeVendors() {
+  $("vendors-new").addEventListener("click", () => {
+    state.vendors.selectedVendorId = null;
+    state.vendors.selectedVendor = null;
+    populateVendorsForm(null);
+    renderVendorsDetail(null);
+    renderVendorsList();
+  });
+  $("vendors-cancel").addEventListener("click", () => {
+    populateVendorsForm(state.vendors.selectedVendor);
+  });
+  $("vendors-form").addEventListener("submit", submitVendorsForm);
+  $("vendors-archive").addEventListener("click", () => void archiveSelectedVendor());
+  $("vendors-refresh").addEventListener("click", () => void loadVendors());
+  $("vendors-search").addEventListener("input", () => {
+    state.vendors.search = $("vendors-search").value;
+    state.vendors.page = 1;
+    void loadVendors();
+  });
+  $("vendors-archived-only").addEventListener("change", () => {
+    state.vendors.archivedOnly = $("vendors-archived-only").checked;
+    state.vendors.page = 1;
+    void loadVendors();
+  });
+  $("vendors-prev").addEventListener("click", () => {
+    if (state.vendors.page > 1) {
+      state.vendors.page -= 1;
+      void loadVendors();
+    }
+  });
+  $("vendors-next").addEventListener("click", () => {
+    if (state.vendors.hasMore) {
+      state.vendors.page += 1;
+      void loadVendors();
+    }
+  });
+}
+
+// ---- Parts ----
+
+async function loadVendorOptionsInto(selectId) {
+  const select = $(selectId);
+  if (!select) return;
+  const currentValue = select.value;
+  try {
+    const response = await apiFetch("/api/vendors?page=1&page_size=100&archived=false");
+    const data = await readApiPayload(response);
+    if (!response.ok || !data) throw apiError(response, data, "Vendor options failed");
+    select.innerHTML = ['<option value="">No vendor</option>', ...data.items.map((vendor) => (
+      `<option value="${vendor.id}">${escapeHtml(vendor.name)}</option>`
+    ))].join("");
+    if (currentValue) select.value = currentValue;
+  } catch {
+    // Dropdown population is a convenience; a failure here shouldn't block the view.
+  }
+}
+
+function renderPartsList() {
+  const container = $("parts-list");
+  if (!state.parts.items.length) {
+    container.innerHTML = '<div class="empty-card"><strong>No parts</strong><p>Create the first part record.</p></div>';
+  } else {
+    container.innerHTML = state.parts.items.map((item) => `
+      <button type="button" class="customer-list-item${state.parts.selectedPartId === item.id ? " is-active" : ""}" data-part-id="${item.id}">
+        <strong>${escapeHtml(item.part_number)}${item.is_below_reorder_threshold ? " · Reorder" : ""}</strong>
+        <span>${escapeHtml(item.description)} · Qty ${item.quantity_on_hand}</span>
+      </button>`).join("");
+    $$("[data-part-id]", container).forEach((button) => {
+      button.addEventListener("click", () => {
+        void selectPart(Number(button.dataset.partId));
+      });
+    });
+  }
+  $("parts-page-status").textContent = `Page ${state.parts.page} · ${state.parts.total} total`;
+  $("parts-prev").disabled = state.parts.page <= 1;
+  $("parts-next").disabled = !state.parts.hasMore;
+}
+
+async function loadParts() {
+  if (!await requireAuthenticated("login")) return;
+  void loadVendorOptionsInto("parts-vendor-id");
+  const list = $("parts-list");
+  list.innerHTML = '<div class="loading-panel"><span class="loading-spinner"></span><div><strong>Loading parts</strong></div></div>';
+  const searchParams = new URLSearchParams({
+    page: String(state.parts.page),
+    page_size: String(state.parts.pageSize),
+    archived: String(state.parts.archivedOnly),
+  });
+  if (state.parts.search.trim()) searchParams.set("search", state.parts.search.trim());
+  try {
+    const response = await apiFetch(`/api/parts?${searchParams.toString()}`);
+    const data = await readApiPayload(response);
+    if (!response.ok || !data) throw apiError(response, data, "Part listing failed");
+    state.parts.items = data.items;
+    state.parts.total = data.total;
+    state.parts.hasMore = data.has_more;
+    renderPartsList();
+  } catch (error) {
+    list.innerHTML = `<div class="error-card"><strong>Part listing failed</strong><p>${escapeHtml(error.message)}</p></div>`;
+    showToast(`Part listing failed: ${error.message}`, "error");
+  }
+}
+
+function renderPartsDetail(part = null) {
+  const detail = $("parts-detail");
+  $("parts-archive").hidden = !part;
+  if (!part) {
+    detail.innerHTML = "<p>Select a part from the list or create a new record.</p>";
+    return;
+  }
+  detail.innerHTML = `
+    <div class="customer-detail-header">
+      <strong>${escapeHtml(part.part_number)}</strong>
+      <span>${part.is_archived ? "Archived" : "Active"}</span>
+    </div>
+    <p>${escapeHtml(part.description)}</p>
+    <div class="customer-detail-grid">
+      <div><span>Category</span><strong>${escapeHtml(part.category || "Not set")}</strong></div>
+      <div><span>Vendor</span><strong>${escapeHtml(part.vendor_name || "None")}</strong></div>
+      <div><span>Quantity on hand</span><strong>${part.quantity_on_hand}${part.is_below_reorder_threshold ? " (below reorder threshold)" : ""}</strong></div>
+      <div><span>Reorder threshold</span><strong>${part.reorder_threshold ?? "Not set"}</strong></div>
+      <div><span>Unit cost</span><strong>${part.unit_cost != null ? money(part.unit_cost) : "Not set"}</strong></div>
+      <div><span>Unit price</span><strong>${part.unit_price != null ? money(part.unit_price) : "Not set"}</strong></div>
+      <div><span>Location</span><strong>${escapeHtml(part.location || "Not set")}</strong></div>
+    </div>
+    ${part.notes ? `<div class="customer-detail-notes"><span>Notes</span><p>${escapeHtml(part.notes)}</p></div>` : ""}`;
+}
+
+async function selectPart(partId) {
+  try {
+    const response = await apiFetch(`/api/parts/${partId}`);
+    const data = await readApiPayload(response);
+    if (!response.ok || !data) throw apiError(response, data, "Part load failed");
+    state.parts.selectedPartId = data.id;
+    state.parts.selectedPart = data;
+    renderPartsDetail(data);
+    populatePartsForm(data);
+    renderPartsList();
+  } catch (error) {
+    showToast(`Part load failed: ${error.message}`, "error");
+  }
+}
+
+function populatePartsForm(part = null) {
+  $("parts-id").value = part ? String(part.id) : "";
+  $("parts-part-number").value = part ? part.part_number : "";
+  $("parts-category").value = part ? part.category || "" : "";
+  $("parts-vendor-id").value = part && part.vendor_id ? String(part.vendor_id) : "";
+  $("parts-description").value = part ? part.description : "";
+  $("parts-quantity").value = part ? String(part.quantity_on_hand) : "0";
+  $("parts-reorder-threshold").value = part && part.reorder_threshold != null ? String(part.reorder_threshold) : "";
+  $("parts-unit-cost").value = part && part.unit_cost != null ? String(part.unit_cost) : "";
+  $("parts-unit-price").value = part && part.unit_price != null ? String(part.unit_price) : "";
+  $("parts-location").value = part ? part.location || "" : "";
+  $("parts-notes").value = part ? part.notes || "" : "";
+  $("parts-form-title").textContent = part ? "Edit part" : "Create part";
+  $("parts-form-mode").textContent = part ? "EDIT" : "CREATE";
+}
+
+async function submitPartsForm(event) {
+  event.preventDefault();
+  if (!await requireAuthenticated("login")) return;
+  const partId = $("parts-id").value.trim();
+  const submit = $("parts-save");
+  submit.disabled = true;
+  submit.textContent = partId ? "Saving…" : "Creating…";
+  const vendorId = $("parts-vendor-id").value;
+  const reorderThreshold = $("parts-reorder-threshold").value;
+  const unitCost = $("parts-unit-cost").value;
+  const unitPrice = $("parts-unit-price").value;
+  const payload = {
+    part_number: $("parts-part-number").value.trim(),
+    description: $("parts-description").value.trim(),
+    category: $("parts-category").value.trim() || null,
+    quantity_on_hand: Number($("parts-quantity").value || 0),
+    reorder_threshold: reorderThreshold ? Number(reorderThreshold) : null,
+    unit_cost: unitCost ? Number(unitCost) : null,
+    unit_price: unitPrice ? Number(unitPrice) : null,
+    location: $("parts-location").value.trim() || null,
+    notes: $("parts-notes").value.trim() || null,
+    vendor_id: vendorId ? Number(vendorId) : null,
+  };
+  try {
+    const response = await apiFetch(partId ? `/api/parts/${partId}` : "/api/parts", {
+      method: partId ? "PATCH" : "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const data = await readApiPayload(response);
+    if (!response.ok || !data) throw apiError(response, data, "Part save failed");
+    state.parts.selectedPartId = data.id;
+    state.parts.selectedPart = data;
+    populatePartsForm(data);
+    renderPartsDetail(data);
+    state.parts.page = 1;
+    await loadParts();
+    showToast(partId ? "Part updated." : "Part created.", "success");
+  } catch (error) {
+    showToast(`Part save failed: ${error.message}`, "error");
+  } finally {
+    submit.disabled = false;
+    submit.textContent = "Save part";
+  }
+}
+
+async function archiveSelectedPart() {
+  const part = state.parts.selectedPart;
+  if (!part) return;
+  if (!window.confirm(`Archive ${part.part_number}?`)) return;
+  try {
+    const response = await apiFetch(`/api/parts/${part.id}`, { method: "DELETE" });
+    const data = await readApiPayload(response);
+    if (!response.ok || !data) throw apiError(response, data, "Part archive failed");
+    state.parts.selectedPartId = null;
+    state.parts.selectedPart = null;
+    populatePartsForm(null);
+    renderPartsDetail(null);
+    await loadParts();
+    showToast("Part archived.", "success");
+  } catch (error) {
+    showToast(`Part archive failed: ${error.message}`, "error");
+  }
+}
+
+function initializeParts() {
+  $("parts-new").addEventListener("click", () => {
+    state.parts.selectedPartId = null;
+    state.parts.selectedPart = null;
+    populatePartsForm(null);
+    renderPartsDetail(null);
+    renderPartsList();
+  });
+  $("parts-cancel").addEventListener("click", () => {
+    populatePartsForm(state.parts.selectedPart);
+  });
+  $("parts-form").addEventListener("submit", submitPartsForm);
+  $("parts-archive").addEventListener("click", () => void archiveSelectedPart());
+  $("parts-refresh").addEventListener("click", () => void loadParts());
+  $("parts-search").addEventListener("input", () => {
+    state.parts.search = $("parts-search").value;
+    state.parts.page = 1;
+    void loadParts();
+  });
+  $("parts-archived-only").addEventListener("change", () => {
+    state.parts.archivedOnly = $("parts-archived-only").checked;
+    state.parts.page = 1;
+    void loadParts();
+  });
+  $("parts-prev").addEventListener("click", () => {
+    if (state.parts.page > 1) {
+      state.parts.page -= 1;
+      void loadParts();
+    }
+  });
+  $("parts-next").addEventListener("click", () => {
+    if (state.parts.hasMore) {
+      state.parts.page += 1;
+      void loadParts();
+    }
+  });
+}
+
+// ---- Scheduling ----
+
+const SHOP_TIMEZONE = "America/Chicago";
+
+function shopOffsetMinutesAt(utcMs) {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: SHOP_TIMEZONE,
+    timeZoneName: "shortOffset",
+  }).formatToParts(new Date(utcMs));
+  const offsetPart = parts.find((part) => part.type === "timeZoneName")?.value || "GMT+0";
+  const match = offsetPart.match(/GMT([+-]\d+)(?::(\d+))?/);
+  if (!match) return 0;
+  const hours = Number(match[1]);
+  const minutes = Number(match[2] || 0);
+  return hours * 60 + (hours < 0 ? -minutes : minutes);
+}
+
+// Interprets a <input type="datetime-local"> value as America/Chicago wall-clock
+// time and returns the equivalent UTC ISO instant. A single offset correction
+// (rather than a full tz-aware parser) is sufficient outside DST-transition edge cases.
+function shopLocalInputToUtcIso(value) {
+  if (!value) return null;
+  const [datePart, timePart] = value.split("T");
+  const [year, month, day] = datePart.split("-").map(Number);
+  const [hour, minute] = timePart.split(":").map(Number);
+  const guessUtcMs = Date.UTC(year, month - 1, day, hour, minute);
+  const offsetMinutes = shopOffsetMinutesAt(guessUtcMs);
+  return new Date(guessUtcMs - offsetMinutes * 60000).toISOString();
+}
+
+function utcIsoToShopLocalInput(iso) {
+  if (!iso) return "";
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: SHOP_TIMEZONE,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).formatToParts(new Date(iso));
+  const map = {};
+  for (const part of parts) map[part.type] = part.value;
+  const hour = map.hour === "24" ? "00" : map.hour;
+  return `${map.year}-${map.month}-${map.day}T${hour}:${map.minute}`;
+}
+
+function shopDateKey(date) {
+  return new Intl.DateTimeFormat("en-CA", { timeZone: SHOP_TIMEZONE }).format(date);
+}
+
+function shopTimeLabel(iso) {
+  return new Intl.DateTimeFormat("en-US", {
+    timeZone: SHOP_TIMEZONE,
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(new Date(iso));
+}
+
+function shopDayHeadingLabel(dateKey) {
+  return new Intl.DateTimeFormat("en-US", {
+    timeZone: "UTC",
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+  }).format(new Date(`${dateKey}T00:00:00Z`));
+}
+
+function addDaysToDateKey(dateKey, days) {
+  const [year, month, day] = dateKey.split("-").map(Number);
+  return new Intl.DateTimeFormat("en-CA", { timeZone: "UTC" }).format(
+    new Date(Date.UTC(year, month - 1, day + days)),
+  );
+}
+
+function mondayOfWeek(dateKey) {
+  const dow = new Date(`${dateKey}T00:00:00Z`).getUTCDay();
+  const offset = dow === 0 ? -6 : 1 - dow;
+  return addDaysToDateKey(dateKey, offset);
+}
+
+function schedulingRangeKeys() {
+  const anchorKey = shopDateKey(state.scheduling.anchorDate);
+  if (state.scheduling.view === "day") {
+    return { startKey: anchorKey, endKey: addDaysToDateKey(anchorKey, 1) };
+  }
+  const startKey = mondayOfWeek(anchorKey);
+  return { startKey, endKey: addDaysToDateKey(startKey, 7) };
+}
+
+function schedulingRangeUtc() {
+  const { startKey, endKey } = schedulingRangeKeys();
+  return {
+    dateFrom: shopLocalInputToUtcIso(`${startKey}T00:00`),
+    dateTo: shopLocalInputToUtcIso(`${endKey}T00:00`),
+  };
+}
+
+function schedulingStatusLabel(status) {
+  return String(status || "").replaceAll("_", " ");
+}
+
+function schedulingConflictMessage(data, fallback) {
+  const detail = data?.detail;
+  if (detail && typeof detail === "object" && Array.isArray(detail.conflicts) && detail.conflicts.length) {
+    return detail.conflicts.map((conflict) => conflict.message).join(" ");
+  }
+  if (detail && typeof detail === "object" && typeof detail.message === "string") return detail.message;
+  if (typeof detail === "string") return detail;
+  return fallback;
+}
+
+function renderSchedulingDateLabel() {
+  const { startKey, endKey } = schedulingRangeKeys();
+  if (state.scheduling.view === "day") {
+    $("scheduling-date-label").textContent = shopDayHeadingLabel(startKey);
+  } else {
+    $("scheduling-date-label").textContent = `${shopDayHeadingLabel(startKey)} – ${shopDayHeadingLabel(addDaysToDateKey(endKey, -1))}`;
+  }
+  $("scheduling-view-day").classList.toggle("is-active", state.scheduling.view === "day");
+  $("scheduling-view-week").classList.toggle("is-active", state.scheduling.view === "week");
+}
+
+function renderAppointmentCard(appointment) {
+  const isSelected = state.scheduling.selectedAppointmentId === appointment.id;
+  const locationLabel = appointment.service_location === "mobile" ? "Mobile" : "Shop";
+  const bayLabel = appointment.bay_name ? ` · Bay ${escapeHtml(appointment.bay_name)}` : "";
+  return `
+    <button type="button" class="scheduling-card status-${escapeHtml(appointment.status)}${isSelected ? " is-active" : ""}" data-appointment-id="${appointment.id}">
+      <span class="scheduling-card-time">${shopTimeLabel(appointment.start_time)}&ndash;${shopTimeLabel(appointment.end_time)}</span>
+      <span class="scheduling-card-main">
+        <strong>${escapeHtml(appointment.service_type)}</strong>
+        <span>${escapeHtml(appointment.customer_display_name || "Unknown customer")} · ${escapeHtml(appointment.vehicle_display_name || "No vehicle")}</span>
+        <span class="scheduling-card-meta">${escapeHtml(appointment.technician_display_name || "Unassigned")}${bayLabel} · ${locationLabel}</span>
+      </span>
+      <span class="scheduling-status-badge status-${escapeHtml(appointment.status)}">${escapeHtml(schedulingStatusLabel(appointment.status))}</span>
+    </button>`;
+}
+
+function renderBlockCard(block) {
+  const scope = block.technician_display_name
+    ? escapeHtml(block.technician_display_name)
+    : (block.bay_name ? `Bay ${escapeHtml(block.bay_name)}` : "Shop-wide");
+  return `
+    <div class="scheduling-card is-blocked">
+      <span class="scheduling-card-time">${shopTimeLabel(block.start_time)}&ndash;${shopTimeLabel(block.end_time)}</span>
+      <span class="scheduling-card-main">
+        <strong>Blocked: ${escapeHtml(block.reason)}</strong>
+        <span>${scope}</span>
+      </span>
+    </div>`;
+}
+
+function schedulingEntriesSortedByTime(appointments, blocks) {
+  const entries = [
+    ...appointments.map((appointment) => ({ start: appointment.start_time, html: renderAppointmentCard(appointment) })),
+    ...blocks.map((block) => ({ start: block.start_time, html: renderBlockCard(block) })),
+  ];
+  entries.sort((a, b) => new Date(a.start) - new Date(b.start));
+  return entries.map((entry) => entry.html).join("");
+}
+
+function renderSchedulingAgenda() {
+  renderSchedulingDateLabel();
+  const container = $("scheduling-list");
+  const appointments = state.scheduling.items;
+  const blocks = state.scheduling.blocks;
+
+  if (!state.scheduling.technicians.length) {
+    container.innerHTML = '<div class="empty-card"><strong>No technicians yet</strong><p>Add a technician before scheduling appointments.</p></div>';
+    return;
+  }
+
+  if (state.scheduling.view === "day") {
+    const shopWideBlocks = blocks.filter((block) => !block.technician_id && !block.bay_id);
+    const technicians = state.scheduling.technicians.filter(
+      (technician) => !state.scheduling.technicianFilterId || technician.id === state.scheduling.technicianFilterId,
+    );
+    const groups = technicians.map((technician) => {
+      const items = appointments.filter((appointment) => appointment.technician_id === technician.id);
+      const techBlocks = blocks.filter((block) => block.technician_id === technician.id);
+      const html = schedulingEntriesSortedByTime(items, techBlocks);
+      return `
+        <div class="scheduling-group">
+          <h4>${escapeHtml(technician.display_name)}</h4>
+          ${html || '<div class="empty-card-inline">No appointments.</div>'}
+        </div>`;
+    });
+    const shopWideHtml = shopWideBlocks.length
+      ? `<div class="scheduling-group"><h4>Shop-wide</h4>${shopWideBlocks.map(renderBlockCard).join("")}</div>`
+      : "";
+    container.innerHTML = shopWideHtml + groups.join("");
+  } else {
+    const { startKey } = schedulingRangeKeys();
+    const dayKeys = Array.from({ length: 7 }, (_, index) => addDaysToDateKey(startKey, index));
+    const groups = dayKeys.map((dayKey) => {
+      const dayAppointments = appointments.filter(
+        (appointment) => shopDateKey(new Date(appointment.start_time)) === dayKey
+          && (!state.scheduling.technicianFilterId || appointment.technician_id === state.scheduling.technicianFilterId),
+      );
+      const dayBlocks = blocks.filter((block) => shopDateKey(new Date(block.start_time)) === dayKey);
+      const html = schedulingEntriesSortedByTime(dayAppointments, dayBlocks);
+      return `
+        <div class="scheduling-group">
+          <h4>${shopDayHeadingLabel(dayKey)}</h4>
+          ${html || '<div class="empty-card-inline">Nothing scheduled.</div>'}
+        </div>`;
+    });
+    container.innerHTML = groups.join("");
+  }
+
+  $$("[data-appointment-id]", container).forEach((button) => {
+    button.addEventListener("click", () => void selectAppointment(Number(button.dataset.appointmentId)));
+  });
+}
+
+async function loadSchedulingOptions() {
+  const [technicianResponse, bayResponse, customerResponse, workOrderResponse] = await Promise.all([
+    apiFetch("/api/technicians?page=1&page_size=100&archived=false"),
+    apiFetch("/api/bays?page=1&page_size=100&archived=false"),
+    apiFetch("/api/customers?page=1&page_size=100&archived=false"),
+    apiFetch("/api/work-orders?page=1&page_size=100"),
+  ]);
+  const [technicianData, bayData, customerData, workOrderData] = await Promise.all([
+    readApiPayload(technicianResponse),
+    readApiPayload(bayResponse),
+    readApiPayload(customerResponse),
+    readApiPayload(workOrderResponse),
+  ]);
+  if (!technicianResponse.ok || !technicianData) throw apiError(technicianResponse, technicianData, "Technician options failed");
+  if (!bayResponse.ok || !bayData) throw apiError(bayResponse, bayData, "Bay options failed");
+  if (!customerResponse.ok || !customerData) throw apiError(customerResponse, customerData, "Customer options failed");
+  if (!workOrderResponse.ok || !workOrderData) throw apiError(workOrderResponse, workOrderData, "Work order options failed");
+
+  state.scheduling.technicians = technicianData.items;
+  state.scheduling.bays = bayData.items;
+
+  const technicianOptions = technicianData.items.map((technician) => `<option value="${technician.id}">${escapeHtml(technician.display_name)}</option>`).join("");
+  const bayOptions = bayData.items.map((bay) => `<option value="${bay.id}">${escapeHtml(bay.name)}</option>`).join("");
+
+  $("scheduling-technician-filter").innerHTML = '<option value="">All technicians</option>' + technicianOptions;
+  $("scheduling-technician-id").innerHTML = technicianOptions;
+  $("scheduling-move-technician").innerHTML = technicianOptions;
+  $("scheduling-bay-id").innerHTML = '<option value="">No bay</option>' + bayOptions;
+  $("scheduling-move-bay").innerHTML = '<option value="">No bay</option>' + bayOptions;
+  $("working-hours-technician").innerHTML = technicianOptions;
+  $("schedule-block-technician").innerHTML = '<option value="">Shop-wide</option>' + technicianOptions;
+  $("schedule-block-bay").innerHTML = '<option value="">Any bay</option>' + bayOptions;
+
+  $("scheduling-customer-id").innerHTML = '<option value="">Select a customer</option>'
+    + customerData.items.map((customer) => `<option value="${customer.id}">${escapeHtml(customer.display_name)}</option>`).join("");
+  $("scheduling-work-order-id").innerHTML = '<option value="">No linked work order</option>'
+    + workOrderData.items.map((workOrder) => `<option value="${workOrder.id}">${escapeHtml(workOrder.estimate_number)} · ${escapeHtml(workOrder.title)}</option>`).join("");
+
+  if (!state.scheduling.workingHoursTechnicianId && technicianData.items.length) {
+    state.scheduling.workingHoursTechnicianId = technicianData.items[0].id;
+    $("working-hours-technician").value = String(technicianData.items[0].id);
+  }
+}
+
+async function loadSchedulingVehicleOptions(customerId, preferredVehicleId = null) {
+  const select = $("scheduling-vehicle-id");
+  if (!customerId) {
+    select.innerHTML = '<option value="">Select a customer first</option>';
+    return;
+  }
+  const response = await apiFetch(`/api/customers/${customerId}/vehicles?page=1&page_size=100&archived=false`);
+  const data = await readApiPayload(response);
+  if (!response.ok || !data) throw apiError(response, data, "Vehicle options failed");
+  select.innerHTML = '<option value="">Select a vehicle</option>'
+    + data.items.map((vehicle) => `<option value="${vehicle.id}">${escapeHtml(vehicle.display_name)}</option>`).join("");
+  if (preferredVehicleId) select.value = String(preferredVehicleId);
+}
+
+async function loadScheduling() {
+  const list = $("scheduling-list");
+  list.innerHTML = '<div class="loading-panel"><span class="loading-spinner"></span><div><strong>Loading schedule</strong></div></div>';
+  renderSchedulingDateLabel();
+  try {
+    if (!state.scheduling.technicians.length) await loadSchedulingOptions();
+    const { dateFrom, dateTo } = schedulingRangeUtc();
+    const params = new URLSearchParams({ date_from: dateFrom, date_to: dateTo, page_size: "200" });
+    if (state.scheduling.technicianFilterId) params.set("technician_id", String(state.scheduling.technicianFilterId));
+    const blockParams = new URLSearchParams({ date_from: dateFrom, date_to: dateTo, page_size: "200" });
+    const [appointmentResponse, blockResponse] = await Promise.all([
+      apiFetch(`/api/appointments?${params.toString()}`),
+      apiFetch(`/api/schedule-blocks?${blockParams.toString()}`),
+    ]);
+    const [appointmentData, blockData] = await Promise.all([
+      readApiPayload(appointmentResponse),
+      readApiPayload(blockResponse),
+    ]);
+    if (!appointmentResponse.ok || !appointmentData) throw apiError(appointmentResponse, appointmentData, "Appointment listing failed");
+    if (!blockResponse.ok || !blockData) throw apiError(blockResponse, blockData, "Schedule block listing failed");
+    state.scheduling.items = appointmentData.items;
+    state.scheduling.blocks = blockData.items;
+    renderSchedulingAgenda();
+    void loadBaysList();
+    void loadWorkingHoursList();
+    void loadScheduleBlocksList();
+  } catch (error) {
+    list.innerHTML = `<div class="error-card"><strong>Schedule failed to load</strong><p>${escapeHtml(error.message)}</p></div>`;
+    showToast(`Schedule failed to load: ${error.message}`, "error");
+  }
+}
+
+function renderSchedulingDetail(appointment = null) {
+  const detail = $("scheduling-detail");
+  const actions = $("scheduling-detail-actions");
+  if (!appointment) {
+    detail.innerHTML = "<p>Select an appointment from the calendar or create a new one.</p>";
+    actions.hidden = true;
+    $("scheduling-move-form").hidden = true;
+    $("scheduling-cancel-form").hidden = true;
+    return;
+  }
+  const bayLine = appointment.bay_name ? `<div><span>Bay</span><strong>${escapeHtml(appointment.bay_name)}</strong></div>` : "";
+  const workOrderLine = appointment.work_order_id ? `<div><span>Work order</span><strong>#${appointment.work_order_id}</strong></div>` : "";
+  detail.innerHTML = `
+    <div class="customer-detail-header">
+      <strong>${escapeHtml(appointment.service_type)}</strong>
+      <span class="scheduling-status-badge status-${escapeHtml(appointment.status)}">${escapeHtml(schedulingStatusLabel(appointment.status))}</span>
+    </div>
+    <div class="customer-detail-grid">
+      <div><span>When</span><strong>${shopDayHeadingLabel(shopDateKey(new Date(appointment.start_time)))}, ${shopTimeLabel(appointment.start_time)}&ndash;${shopTimeLabel(appointment.end_time)}</strong></div>
+      <div><span>Customer</span><strong>${escapeHtml(appointment.customer_display_name || "Unknown")}</strong></div>
+      <div><span>Vehicle</span><strong>${escapeHtml(appointment.vehicle_display_name || "Unknown")}</strong></div>
+      <div><span>Technician</span><strong>${escapeHtml(appointment.technician_display_name || "Unassigned")}</strong></div>
+      ${bayLine}
+      <div><span>Location</span><strong>${appointment.service_location === "mobile" ? "Mobile" : "Shop"}</strong></div>
+      <div><span>Travel buffer</span><strong>${appointment.travel_buffer_minutes} min</strong></div>
+      ${workOrderLine}
+    </div>
+    ${appointment.customer_notes ? `<div class="customer-detail-notes"><span>Customer-visible notes</span><p>${escapeHtml(appointment.customer_notes)}</p></div>` : ""}
+    ${appointment.internal_notes ? `<div class="customer-detail-notes"><span>Internal notes</span><p>${escapeHtml(appointment.internal_notes)}</p></div>` : ""}
+    ${appointment.status === "canceled" ? `<div class="customer-detail-notes"><span>Cancellation reason</span><p>${escapeHtml(appointment.cancellation_reason || "")}</p></div>` : ""}`;
+
+  actions.hidden = false;
+  $("scheduling-move-form").hidden = true;
+  $("scheduling-cancel-form").hidden = true;
+  const isCanceled = appointment.status === "canceled";
+  $("scheduling-confirm").hidden = appointment.status !== "tentative";
+  $("scheduling-edit").disabled = isCanceled;
+  $("scheduling-move-toggle").disabled = isCanceled;
+  $("scheduling-cancel-toggle").hidden = isCanceled || appointment.status === "completed";
+}
+
+async function selectAppointment(appointmentId) {
+  try {
+    const response = await apiFetch(`/api/appointments/${appointmentId}`);
+    const data = await readApiPayload(response);
+    if (!response.ok || !data) throw apiError(response, data, "Appointment load failed");
+    state.scheduling.selectedAppointmentId = data.id;
+    state.scheduling.selectedAppointment = data;
+    renderSchedulingDetail(data);
+    renderSchedulingAgenda();
+  } catch (error) {
+    showToast(`Appointment load failed: ${error.message}`, "error");
+  }
+}
+
+async function populateSchedulingForm(appointment = null) {
+  $("scheduling-id").value = appointment ? String(appointment.id) : "";
+  $("scheduling-customer-id").value = appointment ? String(appointment.customer_id) : "";
+  $("scheduling-customer-id").disabled = Boolean(appointment);
+  await loadSchedulingVehicleOptions(appointment ? appointment.customer_id : $("scheduling-customer-id").value, appointment?.vehicle_id);
+  $("scheduling-work-order-id").value = appointment?.work_order_id ? String(appointment.work_order_id) : "";
+  $("scheduling-service-type").value = appointment ? appointment.service_type : "";
+  $("scheduling-service-location").value = appointment ? appointment.service_location : "shop";
+  $("scheduling-technician-id").value = appointment ? String(appointment.technician_id) : "";
+  $("scheduling-bay-id").value = appointment?.bay_id ? String(appointment.bay_id) : "";
+  $("scheduling-start-time").value = appointment ? utcIsoToShopLocalInput(appointment.start_time) : "";
+  $("scheduling-end-time").value = appointment ? utcIsoToShopLocalInput(appointment.end_time) : "";
+  $("scheduling-travel-buffer").value = appointment ? appointment.travel_buffer_minutes : 0;
+  const statusSelect = $("scheduling-status");
+  statusSelect.innerHTML = appointment
+    ? `<option value="tentative">Tentative</option>
+       <option value="confirmed">Confirmed</option>
+       <option value="in_progress">In progress</option>
+       <option value="completed">Completed</option>
+       <option value="no_show">No-show</option>`
+    : `<option value="tentative">Tentative</option>
+       <option value="confirmed">Confirmed</option>`;
+  statusSelect.value = appointment ? appointment.status : "tentative";
+  $("scheduling-customer-notes").value = appointment ? appointment.customer_notes || "" : "";
+  $("scheduling-internal-notes").value = appointment ? appointment.internal_notes || "" : "";
+  $("scheduling-form-title").textContent = appointment ? "Edit appointment" : "Create appointment";
+  $("scheduling-form-mode").textContent = appointment ? "EDIT" : "CREATE";
+}
+
+async function submitSchedulingForm(event) {
+  event.preventDefault();
+  if (!await requireAuthenticated("login")) return;
+  const appointmentId = $("scheduling-id").value.trim();
+  const submit = $("scheduling-save");
+  submit.disabled = true;
+  submit.textContent = appointmentId ? "Saving…" : "Creating…";
+  const payload = {
+    customer_id: Number($("scheduling-customer-id").value),
+    vehicle_id: Number($("scheduling-vehicle-id").value),
+    work_order_id: $("scheduling-work-order-id").value ? Number($("scheduling-work-order-id").value) : null,
+    technician_id: Number($("scheduling-technician-id").value),
+    bay_id: $("scheduling-bay-id").value ? Number($("scheduling-bay-id").value) : null,
+    service_type: $("scheduling-service-type").value.trim(),
+    service_location: $("scheduling-service-location").value,
+    start_time: shopLocalInputToUtcIso($("scheduling-start-time").value),
+    end_time: shopLocalInputToUtcIso($("scheduling-end-time").value),
+    travel_buffer_minutes: Number($("scheduling-travel-buffer").value || 0),
+    status: $("scheduling-status").value,
+    customer_notes: $("scheduling-customer-notes").value.trim() || null,
+    internal_notes: $("scheduling-internal-notes").value.trim() || null,
+  };
+  try {
+    const response = await apiFetch(appointmentId ? `/api/appointments/${appointmentId}` : "/api/appointments", {
+      method: appointmentId ? "PATCH" : "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const data = await readApiPayload(response);
+    if (!response.ok || !data) {
+      if (response.status === 409) throw new Error(schedulingConflictMessage(data, "This time slot is unavailable."));
+      throw apiError(response, data, "Appointment save failed");
+    }
+    state.scheduling.selectedAppointmentId = data.id;
+    state.scheduling.selectedAppointment = data;
+    renderSchedulingDetail(data);
+    await loadScheduling();
+    showToast(appointmentId ? "Appointment updated." : "Appointment created.", "success");
+  } catch (error) {
+    showToast(`Appointment save failed: ${error.message}`, "error");
+  } finally {
+    submit.disabled = false;
+    submit.textContent = "Save appointment";
+  }
+}
+
+async function quickConfirmAppointment() {
+  const appointment = state.scheduling.selectedAppointment;
+  if (!appointment) return;
+  try {
+    const response = await apiFetch(`/api/appointments/${appointment.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status: "confirmed" }),
+    });
+    const data = await readApiPayload(response);
+    if (!response.ok || !data) throw apiError(response, data, "Confirmation failed");
+    state.scheduling.selectedAppointment = data;
+    renderSchedulingDetail(data);
+    await loadScheduling();
+    showToast("Appointment confirmed.", "success");
+  } catch (error) {
+    showToast(`Confirmation failed: ${error.message}`, "error");
+  }
+}
+
+function openMoveForm() {
+  const appointment = state.scheduling.selectedAppointment;
+  if (!appointment) return;
+  $("scheduling-move-start").value = utcIsoToShopLocalInput(appointment.start_time);
+  $("scheduling-move-end").value = utcIsoToShopLocalInput(appointment.end_time);
+  $("scheduling-move-technician").value = String(appointment.technician_id);
+  $("scheduling-move-bay").value = appointment.bay_id ? String(appointment.bay_id) : "";
+  $("scheduling-cancel-form").hidden = true;
+  $("scheduling-move-form").hidden = false;
+}
+
+async function submitMoveForm(event) {
+  event.preventDefault();
+  const appointment = state.scheduling.selectedAppointment;
+  if (!appointment) return;
+  const submit = $("scheduling-move-save");
+  submit.disabled = true;
+  try {
+    const payload = {
+      start_time: shopLocalInputToUtcIso($("scheduling-move-start").value),
+      end_time: shopLocalInputToUtcIso($("scheduling-move-end").value),
+      technician_id: Number($("scheduling-move-technician").value),
+      bay_id: $("scheduling-move-bay").value ? Number($("scheduling-move-bay").value) : null,
+    };
+    const response = await apiFetch(`/api/appointments/${appointment.id}/move`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const data = await readApiPayload(response);
+    if (!response.ok || !data) {
+      if (response.status === 409) throw new Error(schedulingConflictMessage(data, "This time slot is unavailable."));
+      throw apiError(response, data, "Move failed");
+    }
+    state.scheduling.selectedAppointment = data;
+    renderSchedulingDetail(data);
+    await loadScheduling();
+    showToast("Appointment moved.", "success");
+  } catch (error) {
+    showToast(`Move failed: ${error.message}`, "error");
+  } finally {
+    submit.disabled = false;
+  }
+}
+
+async function submitCancelForm(event) {
+  event.preventDefault();
+  const appointment = state.scheduling.selectedAppointment;
+  if (!appointment) return;
+  const submit = $("scheduling-cancel-save");
+  submit.disabled = true;
+  try {
+    const response = await apiFetch(`/api/appointments/${appointment.id}/cancel`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ cancellation_reason: $("scheduling-cancel-reason").value.trim() }),
+    });
+    const data = await readApiPayload(response);
+    if (!response.ok || !data) throw apiError(response, data, "Cancellation failed");
+    state.scheduling.selectedAppointment = data;
+    renderSchedulingDetail(data);
+    await loadScheduling();
+    showToast("Appointment canceled.", "success");
+  } catch (error) {
+    showToast(`Cancellation failed: ${error.message}`, "error");
+  } finally {
+    submit.disabled = false;
+  }
+}
+
+// ---- Scheduling: bays ----
+
+function renderBaysList() {
+  const container = $("bays-list");
+  if (!state.scheduling.bays.length) {
+    container.innerHTML = '<div class="empty-card-inline">No bays yet.</div>';
+    return;
+  }
+  container.innerHTML = state.scheduling.bays.map((bay) => `
+    <div class="scheduling-setup-item">
+      <span>${escapeHtml(bay.name)}</span>
+      <button type="button" class="text-button" data-archive-bay="${bay.id}">Archive</button>
+    </div>`).join("");
+  $$("[data-archive-bay]", container).forEach((button) => {
+    button.addEventListener("click", () => void archiveBay(Number(button.dataset.archiveBay)));
+  });
+}
+
+async function loadBaysList() {
+  try {
+    const response = await apiFetch("/api/bays?page=1&page_size=100&archived=false");
+    const data = await readApiPayload(response);
+    if (!response.ok || !data) throw apiError(response, data, "Bay listing failed");
+    state.scheduling.bays = data.items;
+    renderBaysList();
+  } catch (error) {
+    showToast(`Bay listing failed: ${error.message}`, "error");
+  }
+}
+
+async function submitBayForm(event) {
+  event.preventDefault();
+  const submit = $("bay-save");
+  submit.disabled = true;
+  try {
+    const response = await apiFetch("/api/bays", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: $("bay-name").value.trim(),
+        notes: $("bay-notes").value.trim() || null,
+      }),
+    });
+    const data = await readApiPayload(response);
+    if (!response.ok || !data) throw apiError(response, data, "Bay creation failed");
+    $("bay-form").reset();
+    await loadBaysList();
+    await loadSchedulingOptions();
+    showToast("Bay added.", "success");
+  } catch (error) {
+    showToast(`Bay creation failed: ${error.message}`, "error");
+  } finally {
+    submit.disabled = false;
+  }
+}
+
+async function archiveBay(bayId) {
+  if (!window.confirm("Archive this bay?")) return;
+  try {
+    const response = await apiFetch(`/api/bays/${bayId}`, { method: "DELETE" });
+    const data = await readApiPayload(response);
+    if (!response.ok || !data) throw apiError(response, data, "Bay archive failed");
+    await loadBaysList();
+    await loadSchedulingOptions();
+    showToast("Bay archived.", "success");
+  } catch (error) {
+    showToast(`Bay archive failed: ${error.message}`, "error");
+  }
+}
+
+// ---- Scheduling: working hours ----
+
+function renderWorkingHoursList() {
+  const container = $("working-hours-list");
+  const dayLabels = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+  if (!state.scheduling.workingHours.length) {
+    container.innerHTML = '<div class="empty-card-inline">No working hours configured -- this technician is treated as unrestricted.</div>';
+    return;
+  }
+  container.innerHTML = state.scheduling.workingHours.map((row) => {
+    const startLabel = `${String(Math.floor(row.start_minute / 60)).padStart(2, "0")}:${String(row.start_minute % 60).padStart(2, "0")}`;
+    const endLabel = `${String(Math.floor(row.end_minute / 60)).padStart(2, "0")}:${String(row.end_minute % 60).padStart(2, "0")}`;
+    return `
+      <div class="scheduling-setup-item">
+        <span>${dayLabels[row.day_of_week]}: ${startLabel}–${endLabel}</span>
+        <button type="button" class="text-button" data-delete-hours="${row.id}">Remove</button>
+      </div>`;
+  }).join("");
+  $$("[data-delete-hours]", container).forEach((button) => {
+    button.addEventListener("click", () => void deleteWorkingHours(Number(button.dataset.deleteHours)));
+  });
+}
+
+async function loadWorkingHoursList() {
+  const technicianId = state.scheduling.workingHoursTechnicianId || Number($("working-hours-technician").value);
+  if (!technicianId) return;
+  try {
+    const response = await apiFetch(`/api/working-hours?technician_id=${technicianId}`);
+    const data = await readApiPayload(response);
+    if (!response.ok || !data) throw apiError(response, data, "Working hours listing failed");
+    state.scheduling.workingHours = data.items;
+    renderWorkingHoursList();
+  } catch (error) {
+    showToast(`Working hours listing failed: ${error.message}`, "error");
+  }
+}
+
+async function submitWorkingHoursForm(event) {
+  event.preventDefault();
+  const technicianId = Number($("working-hours-technician").value);
+  if (!technicianId) return;
+  const submit = $("working-hours-save");
+  submit.disabled = true;
+  try {
+    const [startHour, startMinute] = $("working-hours-start").value.split(":").map(Number);
+    const [endHour, endMinute] = $("working-hours-end").value.split(":").map(Number);
+    const response = await apiFetch("/api/working-hours", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        technician_id: technicianId,
+        day_of_week: Number($("working-hours-day").value),
+        start_minute: startHour * 60 + startMinute,
+        end_minute: endHour * 60 + endMinute,
+      }),
+    });
+    const data = await readApiPayload(response);
+    if (!response.ok || !data) throw apiError(response, data, "Working hours creation failed");
+    await loadWorkingHoursList();
+    showToast("Working hours added.", "success");
+  } catch (error) {
+    showToast(`Working hours creation failed: ${error.message}`, "error");
+  } finally {
+    submit.disabled = false;
+  }
+}
+
+async function deleteWorkingHours(workingHoursId) {
+  if (!window.confirm("Remove these working hours?")) return;
+  try {
+    const response = await apiFetch(`/api/working-hours/${workingHoursId}`, { method: "DELETE" });
+    if (!response.ok) throw apiError(response, await readApiPayload(response), "Working hours removal failed");
+    await loadWorkingHoursList();
+    showToast("Working hours removed.", "success");
+  } catch (error) {
+    showToast(`Working hours removal failed: ${error.message}`, "error");
+  }
+}
+
+// ---- Scheduling: schedule blocks ----
+
+function renderScheduleBlocksList() {
+  const container = $("schedule-blocks-list");
+  if (!state.scheduling.blocks.length) {
+    container.innerHTML = '<div class="empty-card-inline">No blocked time in this range.</div>';
+    return;
+  }
+  container.innerHTML = state.scheduling.blocks.map((block) => {
+    const scope = block.technician_display_name || (block.bay_name ? `Bay ${escapeHtml(block.bay_name)}` : "Shop-wide");
+    return `
+      <div class="scheduling-setup-item">
+        <span>${shopDayHeadingLabel(shopDateKey(new Date(block.start_time)))} ${shopTimeLabel(block.start_time)}–${shopTimeLabel(block.end_time)} · ${escapeHtml(scope)} · ${escapeHtml(block.reason)}</span>
+        <button type="button" class="text-button" data-delete-block="${block.id}">Remove</button>
+      </div>`;
+  }).join("");
+  $$("[data-delete-block]", container).forEach((button) => {
+    button.addEventListener("click", () => void deleteScheduleBlock(Number(button.dataset.deleteBlock)));
+  });
+}
+
+async function loadScheduleBlocksList() {
+  renderScheduleBlocksList();
+}
+
+async function submitScheduleBlockForm(event) {
+  event.preventDefault();
+  const submit = $("schedule-block-save");
+  submit.disabled = true;
+  try {
+    const technicianValue = $("schedule-block-technician").value;
+    const bayValue = $("schedule-block-bay").value;
+    const response = await apiFetch("/api/schedule-blocks", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        technician_id: technicianValue ? Number(technicianValue) : null,
+        bay_id: bayValue ? Number(bayValue) : null,
+        start_time: shopLocalInputToUtcIso($("schedule-block-start").value),
+        end_time: shopLocalInputToUtcIso($("schedule-block-end").value),
+        reason: $("schedule-block-reason").value.trim(),
+      }),
+    });
+    const data = await readApiPayload(response);
+    if (!response.ok || !data) throw apiError(response, data, "Schedule block creation failed");
+    $("schedule-block-form").reset();
+    await loadScheduling();
+    showToast("Blocked time added.", "success");
+  } catch (error) {
+    showToast(`Schedule block creation failed: ${error.message}`, "error");
+  } finally {
+    submit.disabled = false;
+  }
+}
+
+async function deleteScheduleBlock(blockId) {
+  if (!window.confirm("Remove this blocked time?")) return;
+  try {
+    const response = await apiFetch(`/api/schedule-blocks/${blockId}`, { method: "DELETE" });
+    if (!response.ok) throw apiError(response, await readApiPayload(response), "Schedule block removal failed");
+    await loadScheduling();
+    showToast("Blocked time removed.", "success");
+  } catch (error) {
+    showToast(`Schedule block removal failed: ${error.message}`, "error");
+  }
+}
+
+function initializeScheduling() {
+  $("scheduling-view-day").addEventListener("click", () => {
+    state.scheduling.view = "day";
+    void loadScheduling();
+  });
+  $("scheduling-view-week").addEventListener("click", () => {
+    state.scheduling.view = "week";
+    void loadScheduling();
+  });
+  $("scheduling-prev").addEventListener("click", () => {
+    const step = state.scheduling.view === "day" ? 1 : 7;
+    state.scheduling.anchorDate = new Date(state.scheduling.anchorDate.getTime() - step * 86400000);
+    void loadScheduling();
+  });
+  $("scheduling-next").addEventListener("click", () => {
+    const step = state.scheduling.view === "day" ? 1 : 7;
+    state.scheduling.anchorDate = new Date(state.scheduling.anchorDate.getTime() + step * 86400000);
+    void loadScheduling();
+  });
+  $("scheduling-today").addEventListener("click", () => {
+    state.scheduling.anchorDate = new Date();
+    void loadScheduling();
+  });
+  $("scheduling-technician-filter").addEventListener("change", () => {
+    const value = $("scheduling-technician-filter").value;
+    state.scheduling.technicianFilterId = value ? Number(value) : null;
+    void loadScheduling();
+  });
+  $("scheduling-refresh").addEventListener("click", () => void loadScheduling());
+  $("scheduling-new").addEventListener("click", () => {
+    state.scheduling.selectedAppointmentId = null;
+    state.scheduling.selectedAppointment = null;
+    void populateSchedulingForm(null);
+    renderSchedulingDetail(null);
+    renderSchedulingAgenda();
+  });
+  $("scheduling-customer-id").addEventListener("change", () => {
+    void loadSchedulingVehicleOptions($("scheduling-customer-id").value);
+  });
+  $("scheduling-clear").addEventListener("click", () => {
+    void populateSchedulingForm(state.scheduling.selectedAppointment);
+  });
+  $("scheduling-form").addEventListener("submit", submitSchedulingForm);
+  $("scheduling-edit").addEventListener("click", () => {
+    void populateSchedulingForm(state.scheduling.selectedAppointment);
+  });
+  $("scheduling-confirm").addEventListener("click", () => void quickConfirmAppointment());
+  $("scheduling-move-toggle").addEventListener("click", openMoveForm);
+  $("scheduling-move-cancel").addEventListener("click", () => {
+    $("scheduling-move-form").hidden = true;
+  });
+  $("scheduling-move-form").addEventListener("submit", submitMoveForm);
+  $("scheduling-cancel-toggle").addEventListener("click", () => {
+    $("scheduling-move-form").hidden = true;
+    $("scheduling-cancel-form").hidden = false;
+  });
+  $("scheduling-cancel-dismiss").addEventListener("click", () => {
+    $("scheduling-cancel-form").hidden = true;
+  });
+  $("scheduling-cancel-form").addEventListener("submit", submitCancelForm);
+
+  $("bay-form").addEventListener("submit", submitBayForm);
+  $("working-hours-technician").addEventListener("change", () => {
+    state.scheduling.workingHoursTechnicianId = Number($("working-hours-technician").value);
+    void loadWorkingHoursList();
+  });
+  $("working-hours-form").addEventListener("submit", submitWorkingHoursForm);
+  $("schedule-block-form").addEventListener("submit", submitScheduleBlockForm);
 }
 
 function setStatus(id, text, online = null) {
@@ -2269,19 +5568,577 @@ function initializeAuth() {
   });
 }
 
+// --- Overview dashboard --------------------------------------------------
+
+const DASHBOARD_METRIC_FORMAT = {
+  revenue: "currency",
+  labor_revenue: "currency",
+  parts_revenue: "currency",
+  average_repair_order: "currency",
+  open_work_orders: "integer",
+  awaiting_customer_approval: "integer",
+  gross_profit: "currency",
+  net_profit: "currency",
+};
+
+const DASHBOARD_SPARKLINE_SERIES = {
+  revenue: "revenue",
+  labor_revenue: "labor",
+  parts_revenue: "parts",
+};
+
+function dashboardDateRangeFromPreset(days) {
+  const to = new Date();
+  const from = new Date(to.getTime() - days * 24 * 60 * 60 * 1000);
+  return { from, to };
+}
+
+function toDateInputValue(date) {
+  return date.toISOString().slice(0, 10);
+}
+
+async function loadDashboardSummary() {
+  if (!(await requireAuthenticated("login"))) return;
+  const preset = state.dashboard.rangePreset;
+  let dateFrom;
+  let dateTo;
+  if (preset === "custom") {
+    const fromValue = $("dashboard-date-from").value;
+    const toValue = $("dashboard-date-to").value;
+    if (!fromValue || !toValue) return;
+    dateFrom = new Date(`${fromValue}T00:00:00Z`);
+    dateTo = new Date(`${toValue}T23:59:59Z`);
+  } else {
+    const range = dashboardDateRangeFromPreset(Number(preset));
+    dateFrom = range.from;
+    dateTo = range.to;
+    $("dashboard-date-from").value = toDateInputValue(dateFrom);
+    $("dashboard-date-to").value = toDateInputValue(dateTo);
+  }
+  state.dashboard.dateFrom = dateFrom;
+  state.dashboard.dateTo = dateTo;
+  try {
+    const searchParams = new URLSearchParams({
+      date_from: dateFrom.toISOString(),
+      date_to: dateTo.toISOString(),
+    });
+    const response = await apiFetch(`/api/dashboard/summary?${searchParams.toString()}`);
+    const data = await readApiPayload(response);
+    if (!response.ok || !data) throw apiError(response, data, "Dashboard summary failed");
+    state.dashboard.summary = data;
+    renderDashboardMetrics(data);
+    renderDashboardGauges(data);
+    renderDashboardCharts(data);
+    renderRevenueBreakdown(data);
+    renderDashboardInsights(data);
+    renderCurrentOperations(data);
+    renderFinancialObligations(data);
+  } catch (error) {
+    showToast(`Dashboard summary failed: ${error.message}`, "error");
+  }
+}
+
+async function loadReports() {
+  if (!(await requireAuthenticated("login"))) return;
+  const revenueTable = $("reports-revenue-table");
+  const workOrderTable = $("reports-work-order-table");
+  const invoiceStatusTable = $("reports-invoice-status-table");
+  const balancesTable = $("reports-balances-table");
+  [revenueTable, workOrderTable, invoiceStatusTable, balancesTable].forEach((el) => {
+    el.innerHTML = "<tr><td colspan=\"2\">Loading…</td></tr>";
+  });
+  const range = dashboardDateRangeFromPreset(30);
+  $("reports-period-note").textContent = `${range.from.toLocaleDateString()} – ${range.to.toLocaleDateString()} (last 30 days, same window as the Overview dashboard default)`;
+  try {
+    const searchParams = new URLSearchParams({
+      date_from: range.from.toISOString(),
+      date_to: range.to.toISOString(),
+    });
+    const [summaryResponse, invoicesResponse] = await Promise.all([
+      apiFetch(`/api/dashboard/summary?${searchParams.toString()}`),
+      apiFetch("/api/invoices?page_size=100"),
+    ]);
+    const summary = await readApiPayload(summaryResponse);
+    const invoicesData = await readApiPayload(invoicesResponse);
+    if (!summaryResponse.ok || !summary) throw apiError(summaryResponse, summary, "Dashboard summary failed");
+    if (!invoicesResponse.ok || !invoicesData) throw apiError(invoicesResponse, invoicesData, "Invoice listing failed");
+
+    const metricsByKey = new Map(summary.metrics.map((metric) => [metric.key, metric]));
+    const revenueRows = [
+      ["revenue", "Revenue"],
+      ["labor_revenue", "Labor revenue"],
+      ["parts_revenue", "Parts revenue"],
+      ["average_repair_order", "Average repair order"],
+    ].map(([key, label]) => {
+      const metric = metricsByKey.get(key);
+      const value = metric && metric.available ? money(metric.value) : "Not available";
+      return `<tr><td>${escapeHtml(label)}</td><td>${value}</td></tr>`;
+    });
+    revenueTable.innerHTML = revenueRows.join("");
+
+    const ops = summary.current_operations;
+    workOrderTable.innerHTML = [
+      ["Open", ops.open_work_orders],
+      ["In progress", ops.in_progress],
+      ["Waiting on parts", ops.waiting_on_parts],
+      ["Awaiting customer approval", ops.awaiting_customer_approval],
+      ["Completed, not yet invoiced", ops.completed_not_invoiced],
+    ].map(([label, count]) => `<tr><td>${escapeHtml(label)}</td><td>${count}</td></tr>`).join("");
+
+    const statusCounts = new Map();
+    invoicesData.items.forEach((invoice) => {
+      statusCounts.set(invoice.status, (statusCounts.get(invoice.status) || 0) + 1);
+    });
+    invoiceStatusTable.innerHTML = statusCounts.size
+      ? [...statusCounts.entries()].map(([status, count]) => `<tr><td>${escapeHtml(invoiceStatusLabel(status))}</td><td>${count}</td></tr>`).join("")
+        + (invoicesData.total > invoicesData.items.length ? `<tr><td colspan="2" class="report-card-note">Showing ${invoicesData.items.length} of ${invoicesData.total} invoices.</td></tr>` : "")
+      : "<tr><td colspan=\"2\">No invoices recorded yet.</td></tr>";
+
+    const obligations = summary.financial_obligations;
+    balancesTable.innerHTML = [
+      ["Outstanding balance", money(obligations.outstanding_balance)],
+      ["Overdue balance", money(obligations.overdue_balance)],
+      ["Overdue invoice count", String(obligations.overdue_invoice_count)],
+      ["Deposits received", money(obligations.deposits_received_total)],
+    ].map(([label, value]) => `<tr><td>${escapeHtml(label)}</td><td>${value}</td></tr>`).join("");
+  } catch (error) {
+    [revenueTable, workOrderTable, invoiceStatusTable, balancesTable].forEach((el) => {
+      el.innerHTML = `<tr><td colspan="2">Failed to load: ${escapeHtml(error.message)}</td></tr>`;
+    });
+    showToast(`Reports load failed: ${error.message}`, "error");
+  }
+}
+
+function renderDashboardMetrics(summary) {
+  const metricsByKey = new Map(summary.metrics.map((metric) => [metric.key, metric]));
+  $$("#dashboard-metrics [data-metric]").forEach((card) => {
+    const key = card.dataset.metric;
+    const metric = metricsByKey.get(key);
+    if (!metric) return;
+    const valueEl = card.querySelector('[data-role="value"]');
+    const deltaEl = card.querySelector('[data-role="delta"]');
+    const unavailableEl = card.querySelector('[data-role="unavailable"]');
+    if (!metric.available) {
+      if (valueEl) valueEl.textContent = "—";
+      if (deltaEl) deltaEl.textContent = "";
+      if (unavailableEl) {
+        unavailableEl.hidden = false;
+        unavailableEl.textContent = metric.unavailable_reason || "Not available yet.";
+      }
+      return;
+    }
+    if (unavailableEl) unavailableEl.hidden = true;
+    const format = DASHBOARD_METRIC_FORMAT[key];
+    if (valueEl) {
+      valueEl.textContent = format === "currency" ? money(metric.value) : String(Math.round(metric.value));
+    }
+    if (deltaEl) {
+      if (metric.change_percent == null) {
+        deltaEl.textContent = "";
+        deltaEl.classList.remove("is-up", "is-down");
+      } else {
+        const change = metric.change_percent;
+        deltaEl.textContent = `${change > 0 ? "+" : ""}${change}% vs prior period`;
+        deltaEl.classList.toggle("is-up", change > 0);
+        deltaEl.classList.toggle("is-down", change < 0);
+      }
+    }
+    const sparklineCanvas = card.querySelector('[data-role="sparkline"]');
+    const seriesKey = DASHBOARD_SPARKLINE_SERIES[key];
+    if (sparklineCanvas && seriesKey) {
+      renderMetricSparkline(sparklineCanvas, key, summary.revenue_trend, seriesKey);
+    }
+  });
+}
+
+function renderMetricSparkline(canvas, chartKey, trend, seriesKey) {
+  const existing = state.dashboard.sparklineCharts[chartKey];
+  if (existing) existing.destroy();
+  if (!trend.length || typeof Chart === "undefined") return;
+  state.dashboard.sparklineCharts[chartKey] = new Chart(canvas, {
+    type: "line",
+    data: {
+      labels: trend.map((point) => point.period_label),
+      datasets: [{
+        data: trend.map((point) => point.values[seriesKey] || 0),
+        borderColor: "#ad4634",
+        backgroundColor: "rgba(173,70,52,.12)",
+        fill: true,
+        tension: 0.35,
+        pointRadius: 0,
+        borderWidth: 2,
+      }],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      animation: false,
+      scales: { x: { display: false }, y: { display: false } },
+      plugins: { legend: { display: false }, tooltip: { enabled: false } },
+    },
+  });
+}
+
+function renderGauge(key, metric) {
+  const card = document.querySelector(`.gauge-card[data-gauge="${key}"]`);
+  if (!card) return;
+  const ring = card.querySelector('[data-role="ring"]');
+  const label = card.querySelector('[data-role="ring-label"]');
+  const unavailableEl = card.querySelector('[data-role="unavailable"]');
+  if (!metric.available) {
+    if (unavailableEl) {
+      unavailableEl.hidden = false;
+      unavailableEl.textContent = metric.unavailable_reason || "Not available yet.";
+    }
+    if (label) label.textContent = "—";
+    if (ring) ring.setAttribute("stroke-dashoffset", "100");
+    return;
+  }
+  if (unavailableEl) unavailableEl.hidden = true;
+  const percent = Math.max(0, Math.min(100, metric.value));
+  if (ring) ring.setAttribute("stroke-dashoffset", String(100 - percent));
+  if (label) label.textContent = `${Math.round(percent)}%`;
+}
+
+function renderDashboardGauges(summary) {
+  renderGauge("gross_profit_margin", summary.gross_profit_margin);
+  renderGauge("approval_conversion_rate", summary.approval_conversion_rate);
+  renderGauge("accounts_receivable_health", summary.accounts_receivable_health);
+}
+
+function renderRevenueTrendChart(trend) {
+  const canvas = $("chart-revenue-trend");
+  const emptyState = $("chart-revenue-trend-empty");
+  if (state.dashboard.revenueChart) {
+    state.dashboard.revenueChart.destroy();
+    state.dashboard.revenueChart = null;
+  }
+  if (!trend.length) {
+    canvas.hidden = true;
+    emptyState.hidden = false;
+    return;
+  }
+  canvas.hidden = false;
+  emptyState.hidden = true;
+  if (typeof Chart === "undefined") return;
+  state.dashboard.revenueChart = new Chart(canvas, {
+    type: "bar",
+    data: {
+      labels: trend.map((point) => point.period_label),
+      datasets: [
+        { label: "Revenue", data: trend.map((point) => point.values.revenue || 0), backgroundColor: "rgba(173,70,52,.55)" },
+        { label: "Labor", data: trend.map((point) => point.values.labor || 0), backgroundColor: "rgba(154,167,173,.6)" },
+        { label: "Parts", data: trend.map((point) => point.values.parts || 0), backgroundColor: "rgba(201,138,58,.55)" },
+      ],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      scales: {
+        x: { ticks: { color: "#a29e93" }, grid: { color: "rgba(198,192,182,.08)" } },
+        y: { ticks: { color: "#a29e93", callback: (value) => money(value) }, grid: { color: "rgba(198,192,182,.08)" } },
+      },
+      plugins: {
+        legend: { labels: { color: "#f1ece3" } },
+        tooltip: { callbacks: { label: (ctx) => `${ctx.dataset.label}: ${money(ctx.parsed.y)}` } },
+      },
+    },
+  });
+}
+
+function renderWorkOrderTrendChart(trend) {
+  const canvas = $("chart-work-order-trend");
+  const emptyState = $("chart-work-order-trend-empty");
+  if (state.dashboard.workOrderChart) {
+    state.dashboard.workOrderChart.destroy();
+    state.dashboard.workOrderChart = null;
+  }
+  const hasData = trend.some((point) => (point.values.opened || 0) > 0 || (point.values.completed || 0) > 0);
+  if (!trend.length || !hasData) {
+    canvas.hidden = true;
+    emptyState.hidden = false;
+    return;
+  }
+  canvas.hidden = false;
+  emptyState.hidden = true;
+  if (typeof Chart === "undefined") return;
+  state.dashboard.workOrderChart = new Chart(canvas, {
+    type: "line",
+    data: {
+      labels: trend.map((point) => point.period_label),
+      datasets: [
+        { label: "Opened", data: trend.map((point) => point.values.opened || 0), borderColor: "#ad4634", tension: 0.3 },
+        { label: "Completed", data: trend.map((point) => point.values.completed || 0), borderColor: "#9aa7ad", tension: 0.3 },
+      ],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      scales: {
+        x: { ticks: { color: "#a29e93" }, grid: { color: "rgba(198,192,182,.08)" } },
+        y: { ticks: { color: "#a29e93", precision: 0 }, grid: { color: "rgba(198,192,182,.08)" } },
+      },
+      plugins: { legend: { labels: { color: "#f1ece3" } } },
+    },
+  });
+}
+
+function renderDashboardCharts(summary) {
+  renderRevenueTrendChart(summary.revenue_trend);
+  renderWorkOrderTrendChart(summary.work_order_trend);
+}
+
+function renderRevenueBreakdown(summary) {
+  const container = $("revenue-breakdown-list");
+  if (!summary.revenue_breakdown.length) {
+    container.innerHTML = '<p class="empty-card-inline">No completed repair orders in the selected period.</p>';
+    return;
+  }
+  container.innerHTML = summary.revenue_breakdown.map((item) => `
+    <div class="revenue-breakdown-item">
+      <div class="revenue-breakdown-item-head"><strong>${escapeHtml(item.label)}</strong><span>${money(item.amount)} · ${item.percent}%</span></div>
+      <progress class="revenue-breakdown-bar" value="${item.percent}" max="100"></progress>
+    </div>`).join("");
+}
+
+function openDashboardInsightTarget(insight) {
+  if (insight.link_view === "estimate" && insight.link_record_id) {
+    void openEstimateRecord(insight.link_record_id);
+  } else if (insight.link_view === "work-orders") {
+    navigate("work-orders");
+    if (insight.link_record_id) void selectWorkOrder(insight.link_record_id);
+  } else if (insight.link_view === "invoices") {
+    navigate("invoices");
+    if (insight.link_record_id) void selectInvoice(insight.link_record_id);
+  }
+}
+
+function renderDashboardInsights(summary) {
+  const container = $("dashboard-insights-list");
+  if (!summary.insights.length) {
+    container.innerHTML = '<p class="empty-card-inline">No open items right now.</p>';
+    return;
+  }
+  container.innerHTML = summary.insights.map((insight, index) => `
+    <button type="button" class="insight-item priority-${escapeHtml(insight.priority)}" data-insight-index="${index}">
+      <span class="insight-item-issue">${escapeHtml(insight.issue)}</span>
+      <span class="insight-item-metric">${escapeHtml(insight.metric)}</span>
+      <span class="insight-item-action">${escapeHtml(insight.recommended_action)}</span>
+    </button>`).join("");
+  $$("[data-insight-index]", container).forEach((button) => {
+    button.addEventListener("click", () => {
+      const insight = summary.insights[Number(button.dataset.insightIndex)];
+      if (insight) openDashboardInsightTarget(insight);
+    });
+  });
+}
+
+function renderCurrentOperations(summary) {
+  const ops = summary.current_operations;
+  $("current-ops-open").textContent = String(ops.open_work_orders);
+  $("current-ops-in-progress").textContent = String(ops.in_progress);
+  $("current-ops-waiting-parts").textContent = String(ops.waiting_on_parts);
+  $("current-ops-awaiting-approval").textContent = String(ops.awaiting_customer_approval);
+  $("current-ops-completed-not-invoiced").textContent = String(ops.completed_not_invoiced);
+  $("current-ops-note").textContent = ops.ready_for_pickup_note;
+}
+
+function renderFinancialObligations(summary) {
+  const obligations = summary.financial_obligations;
+  $("financial-obligations-outstanding").textContent = money(obligations.outstanding_balance);
+  $("financial-obligations-overdue-balance").textContent = money(obligations.overdue_balance);
+  $("financial-obligations-overdue-count").textContent = String(obligations.overdue_invoice_count);
+  $("financial-obligations-deposits").textContent = money(obligations.deposits_received_total);
+  const list = $("upcoming-installments-list");
+  if (!obligations.upcoming_installments.length) {
+    list.innerHTML = '<p class="empty-card-inline">No upcoming installments.</p>';
+    return;
+  }
+  list.innerHTML = obligations.upcoming_installments.map((item) => `
+    <div class="customer-list-item square-invoice-row">
+      <strong>${escapeHtml(item.invoice_number)} · ${escapeHtml(item.label)}</strong>
+      <span>${money(item.amount)}${item.due_at ? ` · Due ${new Date(item.due_at).toLocaleDateString()}` : ""}</span>
+    </div>`).join("");
+}
+
+function initializeDashboard() {
+  $("dashboard-range-preset").addEventListener("change", () => {
+    state.dashboard.rangePreset = $("dashboard-range-preset").value;
+    void loadDashboardSummary();
+  });
+  $("dashboard-date-from").addEventListener("change", () => {
+    $("dashboard-range-preset").value = "custom";
+    state.dashboard.rangePreset = "custom";
+    void loadDashboardSummary();
+  });
+  $("dashboard-date-to").addEventListener("change", () => {
+    $("dashboard-range-preset").value = "custom";
+    state.dashboard.rangePreset = "custom";
+    void loadDashboardSummary();
+  });
+  $("dashboard-summary-refresh").addEventListener("click", () => void loadDashboardSummary());
+}
+
+// --- Approval Queue --------------------------------------------------------
+
+function updateApprovalQueueBadge(count) {
+  const badge = $("nav-approval-queue-badge");
+  if (!badge) return;
+  badge.textContent = count > 99 ? "99+" : String(count);
+  badge.hidden = count === 0;
+}
+
+async function refreshApprovalQueueBadge() {
+  try {
+    const response = await apiFetch("/api/estimates?page=1&page_size=1&status=awaiting_approval");
+    const data = await readApiPayload(response);
+    if (!response.ok || !data) return;
+    updateApprovalQueueBadge(data.total);
+  } catch {
+    // Badge refresh is best-effort background polling; never toast on failure.
+  }
+}
+
+function renderApprovalQueueList() {
+  const list = $("approval-queue-list");
+  const { items, page, total, hasMore } = state.approvalQueue;
+  $("approval-queue-page-status").textContent = `Page ${page} · ${total} total`;
+  $("approval-queue-prev").disabled = page <= 1;
+  $("approval-queue-next").disabled = !hasMore;
+  if (!items.length) {
+    list.innerHTML = "<p>No estimates awaiting customer approval.</p>";
+    return;
+  }
+  list.innerHTML = items.map((item) => `
+    <button type="button" class="customer-list-item${item.id === state.approvalQueue.selectedEstimateId ? " is-active" : ""}" data-approval-estimate-id="${item.id}">
+      <strong>${escapeHtml(item.estimate_number)}</strong>
+      <span>${escapeHtml(item.vehicle_display_name)}${item.estimate_total != null ? ` · ${money(item.estimate_total)}` : ""}</span>
+      <span>Updated ${new Date(item.updated_at).toLocaleString()}</span>
+    </button>`).join("");
+  $$("[data-approval-estimate-id]", list).forEach((button) => {
+    button.addEventListener("click", () => {
+      void selectApprovalQueueEstimate(Number(button.dataset.approvalEstimateId));
+    });
+  });
+}
+
+async function loadApprovalQueue() {
+  if (!(await requireAuthenticated("login"))) return;
+  const list = $("approval-queue-list");
+  list.innerHTML = '<div class="loading-panel"><span class="loading-spinner"></span><div><strong>Loading approval queue</strong></div></div>';
+  const searchParams = new URLSearchParams({
+    page: String(state.approvalQueue.page),
+    page_size: String(state.approvalQueue.pageSize),
+    status: "awaiting_approval",
+  });
+  try {
+    const response = await apiFetch(`/api/estimates?${searchParams.toString()}`);
+    const data = await readApiPayload(response);
+    if (!response.ok || !data) throw apiError(response, data, "Approval queue load failed");
+    state.approvalQueue.items = data.items;
+    state.approvalQueue.total = data.total;
+    state.approvalQueue.hasMore = data.has_more;
+    renderApprovalQueueList();
+    updateApprovalQueueBadge(data.total);
+  } catch (error) {
+    state.approvalQueue.items = [];
+    state.approvalQueue.total = 0;
+    state.approvalQueue.hasMore = false;
+    renderApprovalQueueList();
+    showToast(`Approval queue load failed: ${error.message}`, "error");
+  }
+}
+
+function renderApprovalQueueDetail(estimate) {
+  const container = $("approval-queue-detail");
+  if (!estimate) {
+    container.innerHTML = "<p>Select an estimate from the list to see full detail.</p>";
+    return;
+  }
+  container.innerHTML = `
+    <div class="customer-detail-header"><strong>${escapeHtml(estimate.estimate_number)}</strong><span>${escapeHtml(estimate.status.replaceAll("_", " "))}</span></div>
+    <div class="detail-rail-card"><span>Required owner action</span><p>This estimate is waiting on the customer's approval decision. No owner action is required unless you want to follow up or extend the link.</p></div>
+    <div class="customer-detail-grid">
+      <div><span>Customer</span><strong>${escapeHtml(estimate.customer_display_name || "—")}</strong></div>
+      <div><span>Vehicle</span><strong>${escapeHtml(estimate.vehicle_display_name || "—")}</strong></div>
+      <div><span>Revision</span><strong>${estimate.current_revision_number ?? "—"}</strong></div>
+      <div><span>Estimate total</span><strong>${estimate.estimate_total != null ? money(estimate.estimate_total) : "—"}</strong></div>
+      <div><span>Sent / updated</span><strong>${estimate.updated_at ? new Date(estimate.updated_at).toLocaleString() : "—"}</strong></div>
+      <div><span>Expires</span><strong>${estimate.expires_at ? new Date(estimate.expires_at).toLocaleString() : "—"}</strong></div>
+    </div>`;
+}
+
+async function selectApprovalQueueEstimate(estimateId) {
+  try {
+    const response = await apiFetch(`/api/estimates/${estimateId}`);
+    const data = await readApiPayload(response);
+    if (!response.ok || !data) throw apiError(response, data, "Estimate load failed");
+    state.approvalQueue.selectedEstimateId = data.id;
+    state.approvalQueue.selectedEstimate = data;
+    renderApprovalQueueDetail(data);
+    renderApprovalQueueList();
+  } catch (error) {
+    showToast(`Estimate load failed: ${error.message}`, "error");
+  }
+}
+
+function initializeApprovalQueue() {
+  $("approval-queue-refresh").addEventListener("click", () => void loadApprovalQueue());
+  $("approval-queue-prev").addEventListener("click", () => {
+    if (state.approvalQueue.page > 1) {
+      state.approvalQueue.page -= 1;
+      void loadApprovalQueue();
+    }
+  });
+  $("approval-queue-next").addEventListener("click", () => {
+    if (state.approvalQueue.hasMore) {
+      state.approvalQueue.page += 1;
+      void loadApprovalQueue();
+    }
+  });
+  $("approval-queue-open-estimate").addEventListener("click", () => {
+    if (state.approvalQueue.selectedEstimateId) void openEstimateRecord(state.approvalQueue.selectedEstimateId);
+  });
+  $("approval-queue-open-customer").addEventListener("click", () => {
+    const estimate = state.approvalQueue.selectedEstimate;
+    if (!estimate) return;
+    navigate("customers");
+    void selectCustomer(estimate.customer_id);
+  });
+}
+
 function initializeApp() {
   setAuthState(false);
   initializeNavigation();
-  initializeTilt();
   loadSavedPreferences();
   initializeLocation();
   initializeChat();
+  initializeDashboard();
   initializeCustomers();
   initializeVehicles();
+  initializeTechnicians();
+  initializeMyDay();
   initializeWorkOrders();
+  initializeApprovalQueue();
+  initializeInvoices();
+  initializeNotifications();
+  initializeSquareDashboard();
+  initializeReports();
+  initializeServiceDesk();
+  initializeDiagnostics();
+  initializeInspections();
+  initializeVendors();
+  initializeParts();
+  initializeScheduling();
   initializeEstimate();
   initializeSystem();
   initializeAuth();
+  // "/login" and "/approval" are never the marketing landing page, regardless
+  // of auth state. Cleared here (not an inline <script>) so it stays
+  // compliant with the app's script-src 'self' CSP.
+  if (window.location.pathname === "/login" || window.location.pathname === "/approval") {
+    document.body.classList.remove("marketing-mode");
+  }
   if (window.location.pathname === "/approval") {
     navigate("approval");
     void loadPublicApprovalPage();
@@ -2290,17 +6147,38 @@ function initializeApp() {
   }
   void loadSession().then((authenticated) => {
     if (!authenticated) {
-      if (window.location.pathname !== "/approval") navigate("login");
+      // Unauthenticated visitors to "/" see the marketing landing page
+      // (default body state) instead of being forced to the login view.
+      if (window.location.pathname !== "/approval" && window.location.pathname !== "/") navigate("login");
       return;
     }
-    void loadCustomerOptions().catch(() => {
-      showToast("Customer options failed to load.", "error");
-    });
-    void restoreSelectionsFromContext();
-    if (window.location.pathname === "/login") navigate("dashboard");
+    document.body.classList.remove("marketing-mode");
+    if (isTechnicianSession()) {
+      // Unlike the owner branch below, "my-day" is never the page's static
+      // default view (the HTML ships with #view-dashboard marked
+      // is-active), so this must fire on every authenticated load -- not
+      // just the first login redirect from "/login" -- or a technician
+      // reopening/refreshing the app lands on the owner-only Overview shell
+      // instead of My Day.
+      navigate("my-day");
+    } else {
+      void loadCustomerOptions().catch(() => {
+        showToast("Customer options failed to load.", "error");
+      });
+      void restoreSelectionsFromContext();
+      void loadDashboardSummary();
+      void refreshApprovalQueueBadge();
+      if (window.location.pathname === "/login") navigate("dashboard");
+    }
   });
   void loadHealth(false);
   window.setInterval(() => loadHealth(false), 60000);
+  window.setInterval(() => {
+    if (state.auth.authenticated && state.auth.user?.role === "owner") {
+      void refreshNotificationsBadge();
+      void refreshApprovalQueueBadge();
+    }
+  }, 60000);
 }
 
 document.addEventListener("DOMContentLoaded", initializeApp);

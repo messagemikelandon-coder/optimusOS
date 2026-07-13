@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import socket
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Annotated, Any
 from urllib.parse import urlparse
@@ -23,6 +23,8 @@ from app.auth import (
     create_auth_session,
     get_current_auth_context,
     require_authenticated_user,
+    require_owner_context,
+    require_owner_or_technician_context,
     set_session_cookie,
 )
 from app.config import Settings, get_settings
@@ -34,6 +36,7 @@ from app.context_store import (
     list_entries,
     upsert_entry,
 )
+from app.customer_history_store import get_customer_history
 from app.customer_store import (
     CustomerNotFoundError,
     CustomerStoreError,
@@ -43,8 +46,18 @@ from app.customer_store import (
     list_customers,
     update_customer,
 )
+from app.dashboard_store import get_dashboard_summary
 from app.db import get_db_session
 from app.db_models import UserAccount
+from app.diagnostics_store import (
+    DiagnosticFindingNotFoundError,
+    DiagnosticsStoreError,
+    create_diagnostic_finding,
+    delete_diagnostic_finding,
+    get_diagnostic_finding,
+    list_diagnostic_findings,
+    update_diagnostic_finding,
+)
 from app.errors import EstimatorResearchError
 from app.estimate_store import (
     EstimateApprovalTokenError,
@@ -61,11 +74,52 @@ from app.estimate_store import (
     send_estimate_for_approval,
     update_estimate,
 )
+from app.inspection_store import (
+    InspectionNotFoundError,
+    InspectionStoreError,
+    create_inspection,
+    delete_inspection,
+    get_inspection,
+    list_inspections,
+    update_inspection,
+)
+from app.intake_store import (
+    IntakeConflictError,
+    IntakeRequestNotFoundError,
+    IntakeStoreError,
+    convert_intake_request,
+    create_intake_request,
+    get_intake_request,
+    list_intake_requests,
+    update_intake_request,
+)
+from app.invoice_store import (
+    InvoiceNotFoundError,
+    InvoiceStoreError,
+    get_invoice,
+    issue_invoice,
+    list_invoices,
+    render_invoice_html,
+    render_invoice_pdf,
+)
 from app.models import (
+    AppointmentCancelRequest,
+    AppointmentCreate,
+    AppointmentListResponse,
+    AppointmentMoveRequest,
+    AppointmentRead,
+    AppointmentStatus,
+    AppointmentUpdate,
     AuthLoginRequest,
     AuthMeResponse,
     AuthSessionResponse,
     AuthUser,
+    AvailabilityResponse,
+    BayArchiveResponse,
+    BayCreate,
+    BayListResponse,
+    BayRead,
+    BayUpdate,
     ChatRequest,
     ChatResponse,
     ContextDeleteResponse,
@@ -75,9 +129,15 @@ from app.models import (
     ContextScope,
     CustomerArchiveResponse,
     CustomerCreate,
+    CustomerHistoryResponse,
     CustomerListResponse,
     CustomerRead,
     CustomerUpdate,
+    DashboardSummaryResponse,
+    DiagnosticFindingCreate,
+    DiagnosticFindingListResponse,
+    DiagnosticFindingRead,
+    DiagnosticFindingUpdate,
     EstimateApprovalActionRequest,
     EstimateApprovalActionResponse,
     EstimateApprovalAuditResponse,
@@ -88,19 +148,63 @@ from app.models import (
     EstimateDeclineActionRequest,
     EstimateListResponse,
     EstimateRead,
-    EstimateRequest,
-    EstimateResponse,
     EstimateRevisionCreate,
     EstimateSendForApprovalRequest,
     EstimateStatus,
     EstimateUpdate,
+    InspectionCreate,
+    InspectionListResponse,
+    InspectionRead,
+    InspectionUpdate,
+    IntakeRequestConvertRequest,
+    IntakeRequestConvertResponse,
+    IntakeRequestCreate,
+    IntakeRequestListResponse,
+    IntakeRequestRead,
+    IntakeRequestUpdate,
+    InvoiceIssueRequest,
+    InvoiceListResponse,
+    InvoicePaymentCreate,
+    InvoicePaymentVoidRequest,
+    InvoiceRead,
+    InvoiceStatus,
     LocationInput,
+    NotificationListResponse,
+    NotificationMarkReadResponse,
+    PartArchiveResponse,
+    PartCreate,
+    PartListResponse,
+    PartRead,
+    PartUpdate,
     ResolvedLocation,
+    ScheduleBlockCreate,
+    ScheduleBlockListResponse,
+    ScheduleBlockRead,
+    ScheduleBlockUpdate,
+    TechnicianArchiveResponse,
+    TechnicianClockResponse,
+    TechnicianCreate,
+    TechnicianListResponse,
+    TechnicianMeResponse,
+    TechnicianProvisionLoginRequest,
+    TechnicianProvisionLoginResponse,
+    TechnicianRead,
+    TechnicianUpdate,
     VehicleArchiveResponse,
     VehicleCreate,
     VehicleListResponse,
     VehicleRead,
     VehicleUpdate,
+    VendorArchiveResponse,
+    VendorCreate,
+    VendorListResponse,
+    VendorRead,
+    VendorUpdate,
+    WorkingHoursCreate,
+    WorkingHoursListResponse,
+    WorkingHoursRead,
+    WorkingHoursUpdate,
+    WorkOrderAssignTechnicianRequest,
     WorkOrderListResponse,
     WorkOrderNoteCreate,
     WorkOrderRead,
@@ -108,11 +212,75 @@ from app.models import (
     WorkOrderStatusUpdate,
     WorkOrderUpdate,
 )
+from app.notification_store import (
+    NotificationNotFoundError,
+    NotificationStoreError,
+    list_notifications,
+    mark_all_notifications_read,
+    mark_notification_read,
+)
 from app.orchestrator import OptimusResearchOrchestrator
+from app.part_store import (
+    PartNotFoundError,
+    PartStoreError,
+    archive_part,
+    create_part,
+    get_part,
+    list_parts,
+    update_part,
+)
+from app.payment_store import PaymentNotFoundError, record_payment, void_payment
 from app.rate_limit import RateLimitExceeded, SlidingWindowRateLimiter
+from app.scheduling_store import (
+    SchedulingConflictError,
+    SchedulingNotFoundError,
+    SchedulingStoreError,
+    archive_bay,
+    cancel_appointment,
+    create_appointment,
+    create_bay,
+    create_schedule_block,
+    create_working_hours,
+    delete_schedule_block,
+    delete_working_hours,
+    get_appointment,
+    get_availability,
+    get_bay,
+    get_schedule_block,
+    list_appointments,
+    list_bays,
+    list_schedule_blocks,
+    list_working_hours,
+    move_appointment,
+    update_appointment,
+    update_bay,
+    update_schedule_block,
+    update_working_hours,
+)
 from app.services.http import SafeHttpClient
 from app.services.location import LocationService
 from app.services.optimus_chat import OptimusChatService
+from app.services.square import SquareApiError, SquareInvoiceClient
+from app.square_store import (
+    SquareAlreadyPushedError,
+    SquareStoreError,
+    push_invoice_to_square,
+    refresh_square_invoice,
+)
+from app.technician_store import (
+    TechnicianConflictError,
+    TechnicianNotFoundError,
+    TechnicianStoreError,
+    archive_technician,
+    clock_in,
+    clock_out,
+    create_technician,
+    get_my_technician_profile,
+    get_technician,
+    list_technicians,
+    provision_login,
+    update_technician,
+)
 from app.vehicle_store import (
     VehicleNotFoundError,
     VehicleStoreError,
@@ -122,10 +290,20 @@ from app.vehicle_store import (
     list_vehicles,
     update_vehicle,
 )
+from app.vendor_store import (
+    VendorNotFoundError,
+    VendorStoreError,
+    archive_vendor,
+    create_vendor,
+    get_vendor,
+    list_vendors,
+    update_vendor,
+)
 from app.work_order_store import (
     WorkOrderNotFoundError,
     WorkOrderStoreError,
     add_work_order_note,
+    assign_technician,
     create_work_order_from_estimate,
     get_work_order,
     list_work_orders,
@@ -140,6 +318,10 @@ SettingsDep = Annotated[Settings, Depends(get_settings)]
 DbSessionDep = Annotated[Session, Depends(get_db_session)]
 AuthContextDep = Annotated[AuthContext, Depends(get_current_auth_context)]
 CurrentUserDep = Annotated[UserAccount, Depends(require_authenticated_user)]
+OwnerAuthContextDep = Annotated[AuthContext, Depends(require_owner_context)]
+OwnerOrTechnicianAuthContextDep = Annotated[
+    AuthContext, Depends(require_owner_or_technician_context)
+]
 
 app = FastAPI(
     title="Optimus Command Center | Landon Motor Works",
@@ -194,6 +376,18 @@ async def security_headers(request: Request, call_next):  # type: ignore[no-unty
         "img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; "
         "form-action 'self'"
     )
+    # Only advertise HSTS when the deployed origin is actually HTTPS -- sending
+    # it over plain local HTTP would tell browsers to demand HTTPS on a host
+    # that can't serve it, matching the same frontend_origin check already
+    # used for the Secure cookie flag in app/auth.py. This deliberately does
+    # NOT trust a client-supplied X-Forwarded-Proto header instead, since
+    # nothing in front of this app today is confirmed to strip/overwrite that
+    # header from untrusted clients -- an attacker reaching the app directly
+    # could otherwise force a spoofed HSTS response. Revisit once staging's
+    # actual TLS-terminating reverse-proxy topology is chosen and confirmed
+    # to control that header.
+    if get_settings().frontend_origin.lower().startswith("https://"):
+        response.headers["Strict-Transport-Security"] = "max-age=63072000; includeSubDomains"
     return response
 
 
@@ -228,6 +422,8 @@ async def health(settings: SettingsDep) -> dict[str, str | bool]:
         "auth_configured": bool(
             settings.optimus_owner_username and settings.optimus_owner_password
         ),
+        "square_configured": settings.square_configured,
+        "square_environment": settings.square_environment,
     }
 
 
@@ -332,7 +528,7 @@ async def auth_me(auth: AuthContextDep) -> AuthMeResponse:
 async def create_customer_record(
     payload: CustomerCreate,
     db: DbSessionDep,
-    auth: AuthContextDep,
+    auth: OwnerAuthContextDep,
 ) -> CustomerRead:
     try:
         return create_customer(db=db, auth=auth, payload=payload)
@@ -350,7 +546,7 @@ async def create_customer_record(
 async def list_customer_records(
     db: DbSessionDep,
     settings: SettingsDep,
-    auth: AuthContextDep,
+    auth: OwnerAuthContextDep,
     page: int = Query(default=1),
     page_size: int = Query(default=20),
     search: str | None = Query(default=None, max_length=120),
@@ -380,7 +576,7 @@ async def list_customer_records(
 async def get_customer_record(
     customer_id: int,
     db: DbSessionDep,
-    auth: AuthContextDep,
+    auth: OwnerAuthContextDep,
 ) -> CustomerRead:
     try:
         return get_customer(db=db, auth=auth, customer_id=customer_id)
@@ -401,7 +597,7 @@ async def update_customer_record(
     customer_id: int,
     payload: CustomerUpdate,
     db: DbSessionDep,
-    auth: AuthContextDep,
+    auth: OwnerAuthContextDep,
 ) -> CustomerRead:
     try:
         return update_customer(db=db, auth=auth, customer_id=customer_id, payload=payload)
@@ -421,7 +617,7 @@ async def update_customer_record(
 async def archive_customer_record(
     customer_id: int,
     db: DbSessionDep,
-    auth: AuthContextDep,
+    auth: OwnerAuthContextDep,
 ) -> CustomerArchiveResponse:
     try:
         return archive_customer(db=db, auth=auth, customer_id=customer_id)
@@ -442,7 +638,7 @@ async def create_vehicle_record(
     customer_id: int,
     payload: VehicleCreate,
     db: DbSessionDep,
-    auth: AuthContextDep,
+    auth: OwnerAuthContextDep,
 ) -> VehicleRead:
     try:
         return create_vehicle(db=db, auth=auth, customer_id=customer_id, payload=payload)
@@ -463,7 +659,7 @@ async def list_customer_vehicle_records(
     customer_id: int,
     db: DbSessionDep,
     settings: SettingsDep,
-    auth: AuthContextDep,
+    auth: OwnerAuthContextDep,
     page: int = Query(default=1),
     page_size: int = Query(default=20),
     search: str | None = Query(default=None, max_length=120),
@@ -492,11 +688,32 @@ async def list_customer_vehicle_records(
         ) from exc
 
 
+@app.get("/api/customers/{customer_id}/history", response_model=CustomerHistoryResponse)
+async def get_customer_history_record(
+    customer_id: int,
+    db: DbSessionDep,
+    auth: OwnerAuthContextDep,
+    limit: int = Query(default=20, ge=1, le=50),
+) -> CustomerHistoryResponse:
+    try:
+        return get_customer_history(db=db, auth=auth, customer_id=customer_id, limit=limit)
+    except CustomerNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except CustomerStoreError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Customer history lookup failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Customer history storage is unavailable.",
+        ) from exc
+
+
 @app.get("/api/vehicles", response_model=VehicleListResponse)
 async def list_vehicle_records(
     db: DbSessionDep,
     settings: SettingsDep,
-    auth: AuthContextDep,
+    auth: OwnerAuthContextDep,
     page: int = Query(default=1),
     page_size: int = Query(default=20),
     search: str | None = Query(default=None, max_length=120),
@@ -530,7 +747,7 @@ async def list_vehicle_records(
 async def get_vehicle_record(
     vehicle_id: int,
     db: DbSessionDep,
-    auth: AuthContextDep,
+    auth: OwnerAuthContextDep,
 ) -> VehicleRead:
     try:
         return get_vehicle(db=db, auth=auth, vehicle_id=vehicle_id)
@@ -551,7 +768,7 @@ async def update_vehicle_record(
     vehicle_id: int,
     payload: VehicleUpdate,
     db: DbSessionDep,
-    auth: AuthContextDep,
+    auth: OwnerAuthContextDep,
 ) -> VehicleRead:
     try:
         return update_vehicle(db=db, auth=auth, vehicle_id=vehicle_id, payload=payload)
@@ -571,7 +788,7 @@ async def update_vehicle_record(
 async def archive_vehicle_record(
     vehicle_id: int,
     db: DbSessionDep,
-    auth: AuthContextDep,
+    auth: OwnerAuthContextDep,
 ) -> VehicleArchiveResponse:
     try:
         return archive_vehicle(db=db, auth=auth, vehicle_id=vehicle_id)
@@ -584,6 +801,753 @@ async def archive_vehicle_record(
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Vehicle storage is unavailable.",
+        ) from exc
+
+
+@app.post("/api/technicians", response_model=TechnicianRead)
+async def create_technician_record(
+    payload: TechnicianCreate,
+    db: DbSessionDep,
+    auth: OwnerAuthContextDep,
+) -> TechnicianRead:
+    try:
+        return create_technician(db=db, auth=auth, payload=payload)
+    except TechnicianStoreError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Technician creation failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Technician storage is unavailable.",
+        ) from exc
+
+
+@app.get("/api/technicians", response_model=TechnicianListResponse)
+async def list_technician_records(
+    db: DbSessionDep,
+    settings: SettingsDep,
+    auth: OwnerAuthContextDep,
+    page: int = Query(default=1),
+    page_size: int = Query(default=20),
+    search: str | None = Query(default=None, max_length=120),
+    archived: bool = False,
+) -> TechnicianListResponse:
+    try:
+        return list_technicians(
+            db=db,
+            auth=auth,
+            settings=settings,
+            page=page,
+            page_size=page_size,
+            archived=archived,
+            search=search,
+        )
+    except TechnicianStoreError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Technician listing failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Technician storage is unavailable.",
+        ) from exc
+
+
+@app.get("/api/technicians/me", response_model=TechnicianMeResponse)
+async def get_my_technician_record(
+    db: DbSessionDep,
+    auth: OwnerOrTechnicianAuthContextDep,
+) -> TechnicianMeResponse:
+    try:
+        return get_my_technician_profile(db=db, auth=auth)
+    except TechnicianNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Technician self-profile lookup failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Technician storage is unavailable.",
+        ) from exc
+
+
+@app.post("/api/technicians/me/clock-in", response_model=TechnicianClockResponse)
+async def clock_in_record(
+    db: DbSessionDep,
+    auth: OwnerOrTechnicianAuthContextDep,
+) -> TechnicianClockResponse:
+    try:
+        return clock_in(db=db, auth=auth)
+    except TechnicianNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except TechnicianConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Technician clock-in failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Technician storage is unavailable.",
+        ) from exc
+
+
+@app.post("/api/technicians/me/clock-out", response_model=TechnicianClockResponse)
+async def clock_out_record(
+    db: DbSessionDep,
+    auth: OwnerOrTechnicianAuthContextDep,
+) -> TechnicianClockResponse:
+    try:
+        return clock_out(db=db, auth=auth)
+    except TechnicianNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except TechnicianConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Technician clock-out failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Technician storage is unavailable.",
+        ) from exc
+
+
+@app.get("/api/technicians/{technician_id}", response_model=TechnicianRead)
+async def get_technician_record(
+    technician_id: int,
+    db: DbSessionDep,
+    auth: OwnerAuthContextDep,
+) -> TechnicianRead:
+    try:
+        return get_technician(db=db, auth=auth, technician_id=technician_id)
+    except TechnicianNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except TechnicianStoreError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Technician retrieval failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Technician storage is unavailable.",
+        ) from exc
+
+
+@app.patch("/api/technicians/{technician_id}", response_model=TechnicianRead)
+async def update_technician_record(
+    technician_id: int,
+    payload: TechnicianUpdate,
+    db: DbSessionDep,
+    auth: OwnerAuthContextDep,
+) -> TechnicianRead:
+    try:
+        return update_technician(db=db, auth=auth, technician_id=technician_id, payload=payload)
+    except TechnicianNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except TechnicianStoreError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Technician update failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Technician storage is unavailable.",
+        ) from exc
+
+
+@app.delete("/api/technicians/{technician_id}", response_model=TechnicianArchiveResponse)
+async def archive_technician_record(
+    technician_id: int,
+    db: DbSessionDep,
+    auth: OwnerAuthContextDep,
+) -> TechnicianArchiveResponse:
+    try:
+        return archive_technician(db=db, auth=auth, technician_id=technician_id)
+    except TechnicianNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except TechnicianStoreError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Technician archive failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Technician storage is unavailable.",
+        ) from exc
+
+
+@app.post(
+    "/api/technicians/{technician_id}/provision-login",
+    response_model=TechnicianProvisionLoginResponse,
+)
+async def provision_technician_login_record(
+    technician_id: int,
+    payload: TechnicianProvisionLoginRequest,
+    db: DbSessionDep,
+    auth: OwnerAuthContextDep,
+) -> TechnicianProvisionLoginResponse:
+    try:
+        return provision_login(db=db, auth=auth, technician_id=technician_id, payload=payload)
+    except TechnicianNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except TechnicianConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except TechnicianStoreError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Technician login provisioning failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Technician storage is unavailable.",
+        ) from exc
+
+
+@app.post("/api/vendors", response_model=VendorRead)
+async def create_vendor_record(
+    payload: VendorCreate,
+    db: DbSessionDep,
+    auth: OwnerAuthContextDep,
+) -> VendorRead:
+    try:
+        return create_vendor(db=db, auth=auth, payload=payload)
+    except VendorStoreError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Vendor creation failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Vendor storage is unavailable.",
+        ) from exc
+
+
+@app.get("/api/vendors", response_model=VendorListResponse)
+async def list_vendor_records(
+    db: DbSessionDep,
+    settings: SettingsDep,
+    auth: OwnerAuthContextDep,
+    page: int = Query(default=1),
+    page_size: int = Query(default=20),
+    search: str | None = Query(default=None, max_length=120),
+    archived: bool = False,
+) -> VendorListResponse:
+    try:
+        return list_vendors(
+            db=db,
+            auth=auth,
+            settings=settings,
+            page=page,
+            page_size=page_size,
+            archived=archived,
+            search=search,
+        )
+    except VendorStoreError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Vendor listing failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Vendor storage is unavailable.",
+        ) from exc
+
+
+@app.get("/api/vendors/{vendor_id}", response_model=VendorRead)
+async def get_vendor_record(
+    vendor_id: int,
+    db: DbSessionDep,
+    auth: OwnerAuthContextDep,
+) -> VendorRead:
+    try:
+        return get_vendor(db=db, auth=auth, vendor_id=vendor_id)
+    except VendorNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except VendorStoreError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Vendor retrieval failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Vendor storage is unavailable.",
+        ) from exc
+
+
+@app.patch("/api/vendors/{vendor_id}", response_model=VendorRead)
+async def update_vendor_record(
+    vendor_id: int,
+    payload: VendorUpdate,
+    db: DbSessionDep,
+    auth: OwnerAuthContextDep,
+) -> VendorRead:
+    try:
+        return update_vendor(db=db, auth=auth, vendor_id=vendor_id, payload=payload)
+    except VendorNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except VendorStoreError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Vendor update failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Vendor storage is unavailable.",
+        ) from exc
+
+
+@app.delete("/api/vendors/{vendor_id}", response_model=VendorArchiveResponse)
+async def archive_vendor_record(
+    vendor_id: int,
+    db: DbSessionDep,
+    auth: OwnerAuthContextDep,
+) -> VendorArchiveResponse:
+    try:
+        return archive_vendor(db=db, auth=auth, vendor_id=vendor_id)
+    except VendorNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except VendorStoreError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Vendor archive failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Vendor storage is unavailable.",
+        ) from exc
+
+
+@app.post("/api/parts", response_model=PartRead)
+async def create_part_record(
+    payload: PartCreate,
+    db: DbSessionDep,
+    auth: OwnerAuthContextDep,
+) -> PartRead:
+    try:
+        return create_part(db=db, auth=auth, payload=payload)
+    except PartStoreError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Part creation failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Part storage is unavailable.",
+        ) from exc
+
+
+@app.get("/api/parts", response_model=PartListResponse)
+async def list_part_records(
+    db: DbSessionDep,
+    settings: SettingsDep,
+    auth: OwnerAuthContextDep,
+    page: int = Query(default=1),
+    page_size: int = Query(default=20),
+    search: str | None = Query(default=None, max_length=120),
+    archived: bool = False,
+    vendor_id: int | None = Query(default=None, ge=1),
+    below_reorder_threshold_only: bool = False,
+) -> PartListResponse:
+    try:
+        return list_parts(
+            db=db,
+            auth=auth,
+            settings=settings,
+            page=page,
+            page_size=page_size,
+            archived=archived,
+            search=search,
+            vendor_id=vendor_id,
+            below_reorder_threshold_only=below_reorder_threshold_only,
+        )
+    except PartStoreError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Part listing failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Part storage is unavailable.",
+        ) from exc
+
+
+@app.get("/api/parts/{part_id}", response_model=PartRead)
+async def get_part_record(
+    part_id: int,
+    db: DbSessionDep,
+    auth: OwnerAuthContextDep,
+) -> PartRead:
+    try:
+        return get_part(db=db, auth=auth, part_id=part_id)
+    except PartNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except PartStoreError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Part retrieval failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Part storage is unavailable.",
+        ) from exc
+
+
+@app.patch("/api/parts/{part_id}", response_model=PartRead)
+async def update_part_record(
+    part_id: int,
+    payload: PartUpdate,
+    db: DbSessionDep,
+    auth: OwnerAuthContextDep,
+) -> PartRead:
+    try:
+        return update_part(db=db, auth=auth, part_id=part_id, payload=payload)
+    except PartNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except PartStoreError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Part update failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Part storage is unavailable.",
+        ) from exc
+
+
+@app.delete("/api/parts/{part_id}", response_model=PartArchiveResponse)
+async def archive_part_record(
+    part_id: int,
+    db: DbSessionDep,
+    auth: OwnerAuthContextDep,
+) -> PartArchiveResponse:
+    try:
+        return archive_part(db=db, auth=auth, part_id=part_id)
+    except PartNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except PartStoreError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Part archive failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Part storage is unavailable.",
+        ) from exc
+
+
+@app.post("/api/intake-requests", response_model=IntakeRequestRead)
+async def create_intake_request_record(
+    payload: IntakeRequestCreate,
+    db: DbSessionDep,
+    auth: OwnerAuthContextDep,
+) -> IntakeRequestRead:
+    try:
+        return create_intake_request(db=db, auth=auth, payload=payload)
+    except IntakeStoreError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Intake request creation failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Intake request storage is unavailable.",
+        ) from exc
+
+
+@app.get("/api/intake-requests", response_model=IntakeRequestListResponse)
+async def list_intake_request_records(
+    db: DbSessionDep,
+    settings: SettingsDep,
+    auth: OwnerAuthContextDep,
+    page: int = Query(default=1),
+    page_size: int = Query(default=20),
+    search: str | None = Query(default=None, max_length=120),
+    status_filter: Annotated[str | None, Query(alias="status")] = None,
+) -> IntakeRequestListResponse:
+    try:
+        return list_intake_requests(
+            db=db,
+            auth=auth,
+            settings=settings,
+            page=page,
+            page_size=page_size,
+            status_filter=status_filter,
+            search=search,
+        )
+    except IntakeStoreError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Intake request listing failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Intake request storage is unavailable.",
+        ) from exc
+
+
+@app.get("/api/intake-requests/{intake_request_id}", response_model=IntakeRequestRead)
+async def get_intake_request_record(
+    intake_request_id: int,
+    db: DbSessionDep,
+    auth: OwnerAuthContextDep,
+) -> IntakeRequestRead:
+    try:
+        return get_intake_request(db=db, auth=auth, intake_request_id=intake_request_id)
+    except IntakeRequestNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except IntakeStoreError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Intake request retrieval failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Intake request storage is unavailable.",
+        ) from exc
+
+
+@app.patch("/api/intake-requests/{intake_request_id}", response_model=IntakeRequestRead)
+async def update_intake_request_record(
+    intake_request_id: int,
+    payload: IntakeRequestUpdate,
+    db: DbSessionDep,
+    auth: OwnerAuthContextDep,
+) -> IntakeRequestRead:
+    try:
+        return update_intake_request(
+            db=db, auth=auth, intake_request_id=intake_request_id, payload=payload
+        )
+    except IntakeRequestNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except IntakeConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except IntakeStoreError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Intake request update failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Intake request storage is unavailable.",
+        ) from exc
+
+
+@app.post(
+    "/api/intake-requests/{intake_request_id}/convert",
+    response_model=IntakeRequestConvertResponse,
+)
+async def convert_intake_request_record(
+    intake_request_id: int,
+    payload: IntakeRequestConvertRequest,
+    db: DbSessionDep,
+    auth: OwnerAuthContextDep,
+) -> IntakeRequestConvertResponse:
+    try:
+        return convert_intake_request(
+            db=db, auth=auth, intake_request_id=intake_request_id, payload=payload
+        )
+    except IntakeRequestNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except IntakeConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except IntakeStoreError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Intake request conversion failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Intake request storage is unavailable.",
+        ) from exc
+
+
+@app.post("/api/diagnostic-findings", response_model=DiagnosticFindingRead)
+async def create_diagnostic_finding_record(
+    payload: DiagnosticFindingCreate,
+    db: DbSessionDep,
+    auth: OwnerAuthContextDep,
+) -> DiagnosticFindingRead:
+    try:
+        return create_diagnostic_finding(db=db, auth=auth, payload=payload)
+    except DiagnosticsStoreError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Diagnostic finding creation failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Diagnostic finding storage is unavailable.",
+        ) from exc
+
+
+@app.get("/api/diagnostic-findings", response_model=DiagnosticFindingListResponse)
+async def list_diagnostic_finding_records(
+    db: DbSessionDep,
+    settings: SettingsDep,
+    auth: OwnerAuthContextDep,
+    page: int = Query(default=1),
+    page_size: int = Query(default=20),
+    vehicle_id: int | None = Query(default=None, ge=1),
+    work_order_id: int | None = Query(default=None, ge=1),
+) -> DiagnosticFindingListResponse:
+    try:
+        return list_diagnostic_findings(
+            db=db,
+            auth=auth,
+            settings=settings,
+            page=page,
+            page_size=page_size,
+            vehicle_id=vehicle_id,
+            work_order_id=work_order_id,
+        )
+    except DiagnosticsStoreError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Diagnostic finding listing failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Diagnostic finding storage is unavailable.",
+        ) from exc
+
+
+@app.get("/api/diagnostic-findings/{finding_id}", response_model=DiagnosticFindingRead)
+async def get_diagnostic_finding_record(
+    finding_id: int,
+    db: DbSessionDep,
+    auth: OwnerAuthContextDep,
+) -> DiagnosticFindingRead:
+    try:
+        return get_diagnostic_finding(db=db, auth=auth, finding_id=finding_id)
+    except DiagnosticFindingNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except DiagnosticsStoreError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Diagnostic finding retrieval failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Diagnostic finding storage is unavailable.",
+        ) from exc
+
+
+@app.patch("/api/diagnostic-findings/{finding_id}", response_model=DiagnosticFindingRead)
+async def update_diagnostic_finding_record(
+    finding_id: int,
+    payload: DiagnosticFindingUpdate,
+    db: DbSessionDep,
+    auth: OwnerAuthContextDep,
+) -> DiagnosticFindingRead:
+    try:
+        return update_diagnostic_finding(db=db, auth=auth, finding_id=finding_id, payload=payload)
+    except DiagnosticFindingNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except DiagnosticsStoreError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Diagnostic finding update failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Diagnostic finding storage is unavailable.",
+        ) from exc
+
+
+@app.delete("/api/diagnostic-findings/{finding_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_diagnostic_finding_record(
+    finding_id: int,
+    db: DbSessionDep,
+    auth: OwnerAuthContextDep,
+) -> None:
+    try:
+        delete_diagnostic_finding(db=db, auth=auth, finding_id=finding_id)
+    except DiagnosticFindingNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Diagnostic finding deletion failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Diagnostic finding storage is unavailable.",
+        ) from exc
+
+
+@app.post("/api/inspections", response_model=InspectionRead)
+async def create_inspection_record(
+    payload: InspectionCreate,
+    db: DbSessionDep,
+    auth: OwnerAuthContextDep,
+) -> InspectionRead:
+    try:
+        return create_inspection(db=db, auth=auth, payload=payload)
+    except InspectionStoreError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Inspection creation failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Inspection storage is unavailable.",
+        ) from exc
+
+
+@app.get("/api/inspections", response_model=InspectionListResponse)
+async def list_inspection_records(
+    db: DbSessionDep,
+    settings: SettingsDep,
+    auth: OwnerAuthContextDep,
+    page: int = Query(default=1),
+    page_size: int = Query(default=20),
+    vehicle_id: int | None = Query(default=None, ge=1),
+    work_order_id: int | None = Query(default=None, ge=1),
+) -> InspectionListResponse:
+    try:
+        return list_inspections(
+            db=db,
+            auth=auth,
+            settings=settings,
+            page=page,
+            page_size=page_size,
+            vehicle_id=vehicle_id,
+            work_order_id=work_order_id,
+        )
+    except InspectionStoreError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Inspection listing failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Inspection storage is unavailable.",
+        ) from exc
+
+
+@app.get("/api/inspections/{inspection_id}", response_model=InspectionRead)
+async def get_inspection_record(
+    inspection_id: int,
+    db: DbSessionDep,
+    auth: OwnerAuthContextDep,
+) -> InspectionRead:
+    try:
+        return get_inspection(db=db, auth=auth, inspection_id=inspection_id)
+    except InspectionNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except InspectionStoreError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Inspection retrieval failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Inspection storage is unavailable.",
+        ) from exc
+
+
+@app.patch("/api/inspections/{inspection_id}", response_model=InspectionRead)
+async def update_inspection_record(
+    inspection_id: int,
+    payload: InspectionUpdate,
+    db: DbSessionDep,
+    auth: OwnerAuthContextDep,
+) -> InspectionRead:
+    try:
+        return update_inspection(db=db, auth=auth, inspection_id=inspection_id, payload=payload)
+    except InspectionNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except InspectionStoreError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Inspection update failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Inspection storage is unavailable.",
+        ) from exc
+
+
+@app.delete("/api/inspections/{inspection_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_inspection_record(
+    inspection_id: int,
+    db: DbSessionDep,
+    auth: OwnerAuthContextDep,
+) -> None:
+    try:
+        delete_inspection(db=db, auth=auth, inspection_id=inspection_id)
+    except InspectionNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Inspection deletion failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Inspection storage is unavailable.",
         ) from exc
 
 
@@ -734,59 +1698,12 @@ async def chat(
         raise HTTPException(status_code=502, detail="Optimus chat failed.") from exc
 
 
-@app.post(
-    "/api/estimate",
-    response_model=EstimateResponse,
-)
-async def estimate(
-    request: EstimateRequest,
-    request_context: Request,
-    settings: SettingsDep,
-    current_user: CurrentUserDep,
-) -> EstimateResponse:
-    del current_user
-    await enforce_rate_limit(request_context, settings)
-
-    if len(request.job) > settings.max_job_text_length:
-        raise HTTPException(status_code=422, detail="Job description is too long.")
-    if not settings.openai_api_key:
-        raise HTTPException(status_code=503, detail="OPENAI_API_KEY is not configured.")
-
-    try:
-        orchestrator = OptimusResearchOrchestrator(settings)
-        return await orchestrator.estimate_job(request)
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-    except EstimatorResearchError as exc:
-        logger.warning(
-            "Estimate research failed request_id=%s stage=%s code=%s",
-            exc.request_id,
-            exc.stage,
-            exc.code,
-        )
-        raise HTTPException(status_code=exc.http_status, detail=exc.as_detail()) from exc
-    except RuntimeError as exc:
-        logger.warning("Estimate research failed: %s", exc)
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
-    except Exception as exc:
-        logger.exception("Unexpected estimate failure")
-        raise HTTPException(
-            status_code=502,
-            detail={
-                "code": "unexpected_estimator_failure",
-                "message": "The estimator failed unexpectedly. Run DIAGNOSE_ESTIMATOR.bat.",
-                "stage": "estimate_pipeline",
-                "request_id": "not-available",
-            },
-        ) from exc
-
-
 @app.post("/api/estimates", response_model=EstimateRead)
 async def create_estimate_record(
     payload: EstimateCreate,
     db: DbSessionDep,
     settings: SettingsDep,
-    auth: AuthContextDep,
+    auth: OwnerAuthContextDep,
 ) -> EstimateRead:
     if not settings.openai_api_key:
         raise HTTPException(status_code=503, detail="OPENAI_API_KEY is not configured.")
@@ -817,7 +1734,7 @@ async def create_estimate_record(
 @app.get("/api/estimates", response_model=EstimateListResponse)
 async def list_estimate_records(
     db: DbSessionDep,
-    auth: AuthContextDep,
+    auth: OwnerAuthContextDep,
     page: int = Query(default=1),
     page_size: int = Query(default=20),
     status_filter: Annotated[EstimateStatus | None, Query(alias="status")] = None,
@@ -857,7 +1774,7 @@ async def list_estimate_records(
 async def get_estimate_record(
     estimate_id: int,
     db: DbSessionDep,
-    auth: AuthContextDep,
+    auth: OwnerAuthContextDep,
 ) -> EstimateRead:
     try:
         return get_estimate(db=db, auth=auth, estimate_id=estimate_id)
@@ -878,7 +1795,7 @@ async def update_estimate_record(
     estimate_id: int,
     payload: EstimateUpdate,
     db: DbSessionDep,
-    auth: AuthContextDep,
+    auth: OwnerAuthContextDep,
 ) -> EstimateRead:
     try:
         return update_estimate(db=db, auth=auth, estimate_id=estimate_id, payload=payload)
@@ -902,7 +1819,7 @@ async def create_estimate_revision_record(
     payload: EstimateRevisionCreate,
     db: DbSessionDep,
     settings: SettingsDep,
-    auth: AuthContextDep,
+    auth: OwnerAuthContextDep,
 ) -> EstimateRead:
     if not settings.openai_api_key:
         raise HTTPException(status_code=503, detail="OPENAI_API_KEY is not configured.")
@@ -938,7 +1855,7 @@ async def send_estimate_record_for_approval(
     estimate_id: int,
     payload: EstimateSendForApprovalRequest,
     db: DbSessionDep,
-    auth: AuthContextDep,
+    auth: OwnerAuthContextDep,
     request_context: Request,
 ) -> EstimateApprovalSendResponse:
     del request_context
@@ -1061,7 +1978,7 @@ async def approval_decline(
 async def estimate_approval_history(
     estimate_id: int,
     db: DbSessionDep,
-    auth: AuthContextDep,
+    auth: OwnerAuthContextDep,
 ) -> EstimateApprovalAuditResponse:
     try:
         return approval_history(db=db, auth=auth, estimate_id=estimate_id)
@@ -1081,7 +1998,7 @@ async def estimate_approval_history(
 async def create_work_order_record(
     estimate_id: int,
     db: DbSessionDep,
-    auth: AuthContextDep,
+    auth: OwnerAuthContextDep,
 ) -> WorkOrderRead:
     try:
         return create_work_order_from_estimate(db=db, auth=auth, estimate_id=estimate_id)
@@ -1105,7 +2022,7 @@ async def create_work_order_record(
 async def list_work_order_records(
     db: DbSessionDep,
     settings: SettingsDep,
-    auth: AuthContextDep,
+    auth: OwnerOrTechnicianAuthContextDep,
     page: int = Query(default=1),
     page_size: int = Query(default=20),
     status_filter: Annotated[WorkOrderStatus | None, Query(alias="status")] = None,
@@ -1139,7 +2056,7 @@ async def list_work_order_records(
 async def get_work_order_record(
     work_order_id: int,
     db: DbSessionDep,
-    auth: AuthContextDep,
+    auth: OwnerOrTechnicianAuthContextDep,
 ) -> WorkOrderRead:
     try:
         return get_work_order(db=db, auth=auth, work_order_id=work_order_id)
@@ -1160,7 +2077,7 @@ async def update_work_order_record(
     work_order_id: int,
     payload: WorkOrderUpdate,
     db: DbSessionDep,
-    auth: AuthContextDep,
+    auth: OwnerAuthContextDep,
 ) -> WorkOrderRead:
     try:
         return update_work_order(db=db, auth=auth, work_order_id=work_order_id, payload=payload)
@@ -1176,12 +2093,33 @@ async def update_work_order_record(
         ) from exc
 
 
+@app.post("/api/work-orders/{work_order_id}/assign-technician", response_model=WorkOrderRead)
+async def assign_work_order_technician_record(
+    work_order_id: int,
+    payload: WorkOrderAssignTechnicianRequest,
+    db: DbSessionDep,
+    auth: OwnerAuthContextDep,
+) -> WorkOrderRead:
+    try:
+        return assign_technician(db=db, auth=auth, work_order_id=work_order_id, payload=payload)
+    except WorkOrderNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except WorkOrderStoreError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Work-order technician assignment failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Work-order storage is unavailable.",
+        ) from exc
+
+
 @app.post("/api/work-orders/{work_order_id}/status", response_model=WorkOrderRead)
 async def update_work_order_status_record(
     work_order_id: int,
     payload: WorkOrderStatusUpdate,
     db: DbSessionDep,
-    auth: AuthContextDep,
+    auth: OwnerOrTechnicianAuthContextDep,
 ) -> WorkOrderRead:
     try:
         return transition_work_order_status(
@@ -1211,7 +2149,7 @@ async def add_work_order_note_record(
     work_order_id: int,
     payload: WorkOrderNoteCreate,
     db: DbSessionDep,
-    auth: AuthContextDep,
+    auth: OwnerOrTechnicianAuthContextDep,
 ) -> WorkOrderRead:
     try:
         return add_work_order_note(db=db, auth=auth, work_order_id=work_order_id, payload=payload)
@@ -1224,4 +2162,816 @@ async def add_work_order_note_record(
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Work-order storage is unavailable.",
+        ) from exc
+
+
+@app.get("/api/invoices", response_model=InvoiceListResponse)
+async def list_invoice_records(
+    db: DbSessionDep,
+    settings: SettingsDep,
+    auth: OwnerAuthContextDep,
+    page: int = Query(default=1),
+    page_size: int = Query(default=20),
+    status_filter: Annotated[InvoiceStatus | None, Query(alias="status")] = None,
+    search: str | None = Query(default=None, max_length=120),
+) -> InvoiceListResponse:
+    try:
+        return list_invoices(
+            db=db,
+            auth=auth,
+            settings=settings,
+            page=page,
+            page_size=page_size,
+            status=status_filter,
+            search=search,
+        )
+    except InvoiceStoreError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Invoice listing failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Invoice storage is unavailable.",
+        ) from exc
+
+
+@app.get("/api/invoices/{invoice_id}", response_model=InvoiceRead)
+async def get_invoice_record(
+    invoice_id: int,
+    db: DbSessionDep,
+    auth: OwnerAuthContextDep,
+) -> InvoiceRead:
+    try:
+        return get_invoice(db=db, auth=auth, invoice_id=invoice_id)
+    except InvoiceNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except InvoiceStoreError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Invoice retrieval failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Invoice storage is unavailable.",
+        ) from exc
+
+
+@app.post("/api/invoices/{invoice_id}/issue", response_model=InvoiceRead)
+async def issue_invoice_record(
+    invoice_id: int,
+    payload: InvoiceIssueRequest,
+    db: DbSessionDep,
+    settings: SettingsDep,
+    auth: OwnerAuthContextDep,
+) -> InvoiceRead:
+    try:
+        return issue_invoice(
+            db=db,
+            auth=auth,
+            settings=settings,
+            invoice_id=invoice_id,
+            payload=payload,
+        )
+    except InvoiceNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except InvoiceStoreError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Invoice issue failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Invoice storage is unavailable.",
+        ) from exc
+
+
+@app.get("/api/invoices/{invoice_id}/html")
+async def get_invoice_html(
+    invoice_id: int,
+    db: DbSessionDep,
+    settings: SettingsDep,
+    auth: OwnerAuthContextDep,
+) -> Response:
+    try:
+        invoice = get_invoice(db=db, auth=auth, invoice_id=invoice_id)
+        return Response(
+            content=render_invoice_html(invoice, business_name=settings.business_name),
+            media_type="text/html; charset=utf-8",
+        )
+    except InvoiceNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except InvoiceStoreError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Invoice HTML generation failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Invoice storage is unavailable.",
+        ) from exc
+
+
+@app.get("/api/invoices/{invoice_id}/pdf")
+async def get_invoice_pdf(
+    invoice_id: int,
+    db: DbSessionDep,
+    settings: SettingsDep,
+    auth: OwnerAuthContextDep,
+) -> Response:
+    try:
+        invoice = get_invoice(db=db, auth=auth, invoice_id=invoice_id)
+        pdf = render_invoice_pdf(invoice, business_name=settings.business_name)
+        headers = {"Content-Disposition": f'inline; filename="{invoice.invoice_number}.pdf"'}
+        return Response(content=pdf, media_type="application/pdf", headers=headers)
+    except InvoiceNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except InvoiceStoreError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Invoice PDF generation failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Invoice storage is unavailable.",
+        ) from exc
+
+
+@app.post("/api/invoices/{invoice_id}/payments", response_model=InvoiceRead)
+async def record_invoice_payment(
+    invoice_id: int,
+    payload: InvoicePaymentCreate,
+    db: DbSessionDep,
+    auth: OwnerAuthContextDep,
+) -> InvoiceRead:
+    try:
+        return record_payment(db=db, auth=auth, invoice_id=invoice_id, payload=payload)
+    except InvoiceNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except InvoiceStoreError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Invoice payment recording failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Invoice storage is unavailable.",
+        ) from exc
+
+
+@app.post("/api/invoices/{invoice_id}/payments/{payment_id}/void", response_model=InvoiceRead)
+async def void_invoice_payment(
+    invoice_id: int,
+    payment_id: int,
+    payload: InvoicePaymentVoidRequest,
+    db: DbSessionDep,
+    auth: OwnerAuthContextDep,
+) -> InvoiceRead:
+    try:
+        return void_payment(
+            db=db,
+            auth=auth,
+            invoice_id=invoice_id,
+            payment_id=payment_id,
+            payload=payload,
+        )
+    except (InvoiceNotFoundError, PaymentNotFoundError) as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except InvoiceStoreError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Invoice payment void failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Invoice storage is unavailable.",
+        ) from exc
+
+
+@app.post("/api/invoices/{invoice_id}/square/push", response_model=InvoiceRead)
+async def push_invoice_to_square_record(
+    invoice_id: int,
+    db: DbSessionDep,
+    settings: SettingsDep,
+    auth: OwnerAuthContextDep,
+) -> InvoiceRead:
+    if not settings.square_configured:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Square is not configured (sandbox only in this phase).",
+        )
+    client = SquareInvoiceClient(settings)
+    try:
+        return await asyncio.to_thread(
+            lambda: push_invoice_to_square(
+                db=db,
+                auth=auth,
+                invoice_id=invoice_id,
+                client=client,
+                location_id=settings.square_location_id,
+            )
+        )
+    except InvoiceNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except SquareAlreadyPushedError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except (SquareStoreError, InvoiceStoreError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except SquareApiError as exc:
+        logger.warning("Square push failed: %s", exc)
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Square push failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Invoice storage is unavailable.",
+        ) from exc
+    finally:
+        client.close()
+
+
+@app.post("/api/invoices/{invoice_id}/square/refresh", response_model=InvoiceRead)
+async def refresh_square_invoice_record(
+    invoice_id: int,
+    db: DbSessionDep,
+    settings: SettingsDep,
+    auth: OwnerAuthContextDep,
+) -> InvoiceRead:
+    if not settings.square_configured:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Square is not configured (sandbox only in this phase).",
+        )
+    client = SquareInvoiceClient(settings)
+    try:
+        return await asyncio.to_thread(
+            lambda: refresh_square_invoice(
+                db=db,
+                auth=auth,
+                invoice_id=invoice_id,
+                client=client,
+            )
+        )
+    except InvoiceNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except SquareStoreError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except SquareApiError as exc:
+        logger.warning("Square refresh failed: %s", exc)
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Square refresh failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Invoice storage is unavailable.",
+        ) from exc
+    finally:
+        client.close()
+
+
+@app.get("/api/notifications", response_model=NotificationListResponse)
+async def list_notification_records(
+    db: DbSessionDep,
+    settings: SettingsDep,
+    auth: OwnerAuthContextDep,
+    page: int = Query(default=1),
+    page_size: int = Query(default=20),
+    unread: bool = Query(default=False),
+) -> NotificationListResponse:
+    try:
+        return list_notifications(
+            db=db,
+            auth=auth,
+            settings=settings,
+            page=page,
+            page_size=page_size,
+            unread_only=unread,
+        )
+    except NotificationStoreError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Notification listing failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Notification storage is unavailable.",
+        ) from exc
+
+
+@app.post("/api/notifications/{notification_id}/read", response_model=NotificationMarkReadResponse)
+async def mark_notification_read_record(
+    notification_id: int,
+    db: DbSessionDep,
+    auth: OwnerAuthContextDep,
+) -> NotificationMarkReadResponse:
+    try:
+        return mark_notification_read(db=db, auth=auth, notification_id=notification_id)
+    except NotificationNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except NotificationStoreError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Notification mark-read failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Notification storage is unavailable.",
+        ) from exc
+
+
+@app.post("/api/notifications/read-all", response_model=NotificationMarkReadResponse)
+async def mark_all_notifications_read_record(
+    db: DbSessionDep,
+    auth: OwnerAuthContextDep,
+) -> NotificationMarkReadResponse:
+    try:
+        return mark_all_notifications_read(db=db, auth=auth)
+    except NotificationStoreError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Notification mark-all-read failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Notification storage is unavailable.",
+        ) from exc
+
+
+@app.get("/api/dashboard/summary", response_model=DashboardSummaryResponse)
+async def get_dashboard_summary_record(
+    db: DbSessionDep,
+    auth: OwnerAuthContextDep,
+    date_from: Annotated[datetime | None, Query()] = None,
+    date_to: Annotated[datetime | None, Query()] = None,
+) -> DashboardSummaryResponse:
+    resolved_to = date_to or datetime.now(UTC)
+    resolved_from = date_from or (resolved_to - timedelta(days=30))
+    if resolved_from >= resolved_to:
+        raise HTTPException(status_code=422, detail="date_from must be before date_to.")
+    try:
+        return get_dashboard_summary(
+            db=db,
+            auth=auth,
+            date_from=resolved_from,
+            date_to=resolved_to,
+        )
+    except SQLAlchemyError as exc:
+        logger.warning("Dashboard summary failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Dashboard storage is unavailable.",
+        ) from exc
+
+
+# ---- Scheduling: bays ----
+
+
+@app.post("/api/bays", response_model=BayRead)
+async def create_bay_record(
+    payload: BayCreate,
+    db: DbSessionDep,
+    auth: OwnerAuthContextDep,
+) -> BayRead:
+    try:
+        return create_bay(db=db, auth=auth, payload=payload)
+    except SchedulingStoreError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Bay creation failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Bay storage is unavailable."
+        ) from exc
+
+
+@app.get("/api/bays", response_model=BayListResponse)
+async def list_bay_records(
+    db: DbSessionDep,
+    settings: SettingsDep,
+    auth: OwnerAuthContextDep,
+    page: int = Query(default=1),
+    page_size: int = Query(default=20),
+    archived: bool = False,
+) -> BayListResponse:
+    try:
+        return list_bays(
+            db=db, auth=auth, settings=settings, page=page, page_size=page_size, archived=archived
+        )
+    except SchedulingStoreError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Bay listing failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Bay storage is unavailable."
+        ) from exc
+
+
+@app.get("/api/bays/{bay_id}", response_model=BayRead)
+async def get_bay_record(bay_id: int, db: DbSessionDep, auth: OwnerAuthContextDep) -> BayRead:
+    try:
+        return get_bay(db=db, auth=auth, bay_id=bay_id)
+    except SchedulingNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Bay retrieval failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Bay storage is unavailable."
+        ) from exc
+
+
+@app.patch("/api/bays/{bay_id}", response_model=BayRead)
+async def update_bay_record(
+    bay_id: int,
+    payload: BayUpdate,
+    db: DbSessionDep,
+    auth: OwnerAuthContextDep,
+) -> BayRead:
+    try:
+        return update_bay(db=db, auth=auth, bay_id=bay_id, payload=payload)
+    except SchedulingNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except SchedulingStoreError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Bay update failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Bay storage is unavailable."
+        ) from exc
+
+
+@app.delete("/api/bays/{bay_id}", response_model=BayArchiveResponse)
+async def archive_bay_record(
+    bay_id: int, db: DbSessionDep, auth: OwnerAuthContextDep
+) -> BayArchiveResponse:
+    try:
+        return archive_bay(db=db, auth=auth, bay_id=bay_id)
+    except SchedulingNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Bay archive failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Bay storage is unavailable."
+        ) from exc
+
+
+# ---- Scheduling: technician working hours ----
+
+
+@app.post("/api/working-hours", response_model=WorkingHoursRead)
+async def create_working_hours_record(
+    payload: WorkingHoursCreate,
+    db: DbSessionDep,
+    auth: OwnerAuthContextDep,
+) -> WorkingHoursRead:
+    try:
+        return create_working_hours(db=db, auth=auth, payload=payload)
+    except SchedulingStoreError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Working hours creation failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Scheduling storage is unavailable.",
+        ) from exc
+
+
+@app.get("/api/working-hours", response_model=WorkingHoursListResponse)
+async def list_working_hours_records(
+    db: DbSessionDep,
+    auth: OwnerAuthContextDep,
+    technician_id: int = Query(...),
+) -> WorkingHoursListResponse:
+    try:
+        return list_working_hours(db=db, auth=auth, technician_id=technician_id)
+    except SchedulingStoreError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Working hours listing failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Scheduling storage is unavailable.",
+        ) from exc
+
+
+@app.patch("/api/working-hours/{working_hours_id}", response_model=WorkingHoursRead)
+async def update_working_hours_record(
+    working_hours_id: int,
+    payload: WorkingHoursUpdate,
+    db: DbSessionDep,
+    auth: OwnerAuthContextDep,
+) -> WorkingHoursRead:
+    try:
+        return update_working_hours(
+            db=db, auth=auth, working_hours_id=working_hours_id, payload=payload
+        )
+    except SchedulingNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except SchedulingStoreError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Working hours update failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Scheduling storage is unavailable.",
+        ) from exc
+
+
+@app.delete("/api/working-hours/{working_hours_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_working_hours_record(
+    working_hours_id: int, db: DbSessionDep, auth: OwnerAuthContextDep
+) -> None:
+    try:
+        delete_working_hours(db=db, auth=auth, working_hours_id=working_hours_id)
+    except SchedulingNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Working hours deletion failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Scheduling storage is unavailable.",
+        ) from exc
+
+
+# ---- Scheduling: schedule blocks ----
+
+
+@app.post("/api/schedule-blocks", response_model=ScheduleBlockRead)
+async def create_schedule_block_record(
+    payload: ScheduleBlockCreate,
+    db: DbSessionDep,
+    auth: OwnerAuthContextDep,
+) -> ScheduleBlockRead:
+    try:
+        return create_schedule_block(db=db, auth=auth, payload=payload)
+    except SchedulingStoreError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Schedule block creation failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Scheduling storage is unavailable.",
+        ) from exc
+
+
+@app.get("/api/schedule-blocks", response_model=ScheduleBlockListResponse)
+async def list_schedule_block_records(
+    db: DbSessionDep,
+    settings: SettingsDep,
+    auth: OwnerAuthContextDep,
+    page: int = Query(default=1),
+    page_size: int = Query(default=20),
+    technician_id: int | None = Query(default=None),
+    bay_id: int | None = Query(default=None),
+    date_from: Annotated[datetime | None, Query()] = None,
+    date_to: Annotated[datetime | None, Query()] = None,
+) -> ScheduleBlockListResponse:
+    try:
+        return list_schedule_blocks(
+            db=db,
+            auth=auth,
+            settings=settings,
+            page=page,
+            page_size=page_size,
+            technician_id=technician_id,
+            bay_id=bay_id,
+            date_from=date_from,
+            date_to=date_to,
+        )
+    except SchedulingStoreError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Schedule block listing failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Scheduling storage is unavailable.",
+        ) from exc
+
+
+@app.get("/api/schedule-blocks/{block_id}", response_model=ScheduleBlockRead)
+async def get_schedule_block_record(
+    block_id: int, db: DbSessionDep, auth: OwnerAuthContextDep
+) -> ScheduleBlockRead:
+    try:
+        return get_schedule_block(db=db, auth=auth, block_id=block_id)
+    except SchedulingNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Schedule block retrieval failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Scheduling storage is unavailable.",
+        ) from exc
+
+
+@app.patch("/api/schedule-blocks/{block_id}", response_model=ScheduleBlockRead)
+async def update_schedule_block_record(
+    block_id: int,
+    payload: ScheduleBlockUpdate,
+    db: DbSessionDep,
+    auth: OwnerAuthContextDep,
+) -> ScheduleBlockRead:
+    try:
+        return update_schedule_block(db=db, auth=auth, block_id=block_id, payload=payload)
+    except SchedulingNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except SchedulingStoreError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Schedule block update failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Scheduling storage is unavailable.",
+        ) from exc
+
+
+@app.delete("/api/schedule-blocks/{block_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_schedule_block_record(
+    block_id: int, db: DbSessionDep, auth: OwnerAuthContextDep
+) -> None:
+    try:
+        delete_schedule_block(db=db, auth=auth, block_id=block_id)
+    except SchedulingNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Schedule block deletion failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Scheduling storage is unavailable.",
+        ) from exc
+
+
+# ---- Scheduling: availability ----
+
+
+@app.get("/api/availability", response_model=AvailabilityResponse)
+async def get_availability_record(
+    db: DbSessionDep,
+    auth: OwnerAuthContextDep,
+    technician_id: Annotated[int, Query()],
+    date_from: Annotated[datetime, Query()],
+    date_to: Annotated[datetime, Query()],
+    bay_id: int | None = Query(default=None),
+) -> AvailabilityResponse:
+    try:
+        return get_availability(
+            db=db,
+            auth=auth,
+            technician_id=technician_id,
+            date_from=date_from,
+            date_to=date_to,
+            bay_id=bay_id,
+        )
+    except SchedulingNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except SchedulingStoreError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Availability lookup failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Scheduling storage is unavailable.",
+        ) from exc
+
+
+# ---- Scheduling: appointments ----
+
+
+@app.post("/api/appointments", response_model=AppointmentRead)
+async def create_appointment_record(
+    payload: AppointmentCreate,
+    db: DbSessionDep,
+    auth: OwnerAuthContextDep,
+) -> AppointmentRead:
+    try:
+        return create_appointment(db=db, auth=auth, payload=payload)
+    except SchedulingNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except SchedulingConflictError as exc:
+        raise HTTPException(status_code=409, detail=exc.as_detail()) from exc
+    except SchedulingStoreError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Appointment creation failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Scheduling storage is unavailable.",
+        ) from exc
+
+
+@app.get("/api/appointments", response_model=AppointmentListResponse)
+async def list_appointment_records(
+    db: DbSessionDep,
+    settings: SettingsDep,
+    auth: OwnerAuthContextDep,
+    page: int = Query(default=1),
+    page_size: int = Query(default=50),
+    date_from: Annotated[datetime | None, Query()] = None,
+    date_to: Annotated[datetime | None, Query()] = None,
+    technician_id: int | None = Query(default=None),
+    bay_id: int | None = Query(default=None),
+    status_filter: Annotated[AppointmentStatus | None, Query(alias="status")] = None,
+    customer_id: int | None = Query(default=None),
+    vehicle_id: int | None = Query(default=None),
+) -> AppointmentListResponse:
+    try:
+        return list_appointments(
+            db=db,
+            auth=auth,
+            settings=settings,
+            page=page,
+            page_size=page_size,
+            date_from=date_from,
+            date_to=date_to,
+            technician_id=technician_id,
+            bay_id=bay_id,
+            status_filter=status_filter,
+            customer_id=customer_id,
+            vehicle_id=vehicle_id,
+        )
+    except SchedulingStoreError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Appointment listing failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Scheduling storage is unavailable.",
+        ) from exc
+
+
+@app.get("/api/appointments/{appointment_id}", response_model=AppointmentRead)
+async def get_appointment_record(
+    appointment_id: int, db: DbSessionDep, auth: OwnerAuthContextDep
+) -> AppointmentRead:
+    try:
+        return get_appointment(db=db, auth=auth, appointment_id=appointment_id)
+    except SchedulingNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Appointment retrieval failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Scheduling storage is unavailable.",
+        ) from exc
+
+
+@app.patch("/api/appointments/{appointment_id}", response_model=AppointmentRead)
+async def update_appointment_record(
+    appointment_id: int,
+    payload: AppointmentUpdate,
+    db: DbSessionDep,
+    auth: OwnerAuthContextDep,
+) -> AppointmentRead:
+    try:
+        return update_appointment(db=db, auth=auth, appointment_id=appointment_id, payload=payload)
+    except SchedulingNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except SchedulingConflictError as exc:
+        raise HTTPException(status_code=409, detail=exc.as_detail()) from exc
+    except SchedulingStoreError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Appointment update failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Scheduling storage is unavailable.",
+        ) from exc
+
+
+@app.post("/api/appointments/{appointment_id}/move", response_model=AppointmentRead)
+async def move_appointment_record(
+    appointment_id: int,
+    payload: AppointmentMoveRequest,
+    db: DbSessionDep,
+    auth: OwnerAuthContextDep,
+) -> AppointmentRead:
+    try:
+        return move_appointment(db=db, auth=auth, appointment_id=appointment_id, payload=payload)
+    except SchedulingNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except SchedulingConflictError as exc:
+        raise HTTPException(status_code=409, detail=exc.as_detail()) from exc
+    except SchedulingStoreError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Appointment move failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Scheduling storage is unavailable.",
+        ) from exc
+
+
+@app.post("/api/appointments/{appointment_id}/cancel", response_model=AppointmentRead)
+async def cancel_appointment_record(
+    appointment_id: int,
+    payload: AppointmentCancelRequest,
+    db: DbSessionDep,
+    auth: OwnerAuthContextDep,
+) -> AppointmentRead:
+    try:
+        return cancel_appointment(
+            db=db,
+            auth=auth,
+            appointment_id=appointment_id,
+            cancellation_reason=payload.cancellation_reason,
+        )
+    except SchedulingNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except SchedulingConflictError as exc:
+        raise HTTPException(status_code=409, detail=exc.as_detail()) from exc
+    except SchedulingStoreError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Appointment cancellation failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Scheduling storage is unavailable.",
         ) from exc

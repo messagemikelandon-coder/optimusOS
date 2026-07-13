@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from sqlalchemy import Select, and_, func, or_, select
 from sqlalchemy.orm import Session
 
-from app.auth import AuthContext, ensure_utc
+from app.auth import AuthContext, effective_owner_id, ensure_utc
 from app.config import Settings
 from app.db_models import Customer
 from app.models import (
@@ -130,7 +130,7 @@ def _to_read(customer: Customer) -> CustomerRead:
 
 
 def _owner_query(auth: AuthContext) -> Select[tuple[Customer]]:
-    return select(Customer).where(Customer.owner_user_id == auth.user.id)
+    return select(Customer).where(Customer.owner_user_id == effective_owner_id(auth))
 
 
 def _get_customer(db: Session, auth: AuthContext, customer_id: int) -> Customer:
@@ -156,7 +156,7 @@ def create_customer(
         last_name=normalized["last_name"],  # type: ignore[arg-type]
         company_name=normalized["company_name"],  # type: ignore[arg-type]
     )
-    customer = Customer(owner_user_id=auth.user.id, **normalized)
+    customer = Customer(owner_user_id=effective_owner_id(auth), **normalized)
     db.add(customer)
     db.commit()
     db.refresh(customer)

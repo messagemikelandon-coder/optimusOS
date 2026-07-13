@@ -9,7 +9,7 @@ from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from sqlalchemy import Select, func, select
 from sqlalchemy.orm import Session
 
-from app.auth import AuthContext, ensure_utc
+from app.auth import AuthContext, effective_owner_id, ensure_utc
 from app.customer_store import display_name as customer_display_name
 from app.customer_store import get_customer_model
 from app.db_models import (
@@ -46,8 +46,11 @@ from app.models import (
     EstimateStatus,
     EstimateUpdate,
     EstimateVehicleSummary,
+    NotificationEntityType,
+    NotificationEvent,
     VehicleInput,
 )
+from app.notification_store import record_notification
 from app.orchestrator import OptimusResearchOrchestrator
 from app.vehicle_store import get_vehicle_model, vehicle_display_name
 
@@ -254,7 +257,7 @@ def _validate_estimate_ready_for_approval(
 
 
 def _estimate_query(auth: AuthContext) -> Select[tuple[Estimate]]:
-    return select(Estimate).where(Estimate.owner_user_id == auth.user.id)
+    return select(Estimate).where(Estimate.owner_user_id == effective_owner_id(auth))
 
 
 def _approval_request_query(token: str) -> Select[tuple[EstimateApprovalRequest]]:
@@ -444,11 +447,13 @@ def _require_estimate(db: Session, auth: AuthContext, estimate_id: int) -> Estim
 def _next_estimate_number(db: Session, auth: AuthContext) -> str:
     count = (
         db.scalar(
-            select(func.count()).select_from(Estimate).where(Estimate.owner_user_id == auth.user.id)
+            select(func.count())
+            .select_from(Estimate)
+            .where(Estimate.owner_user_id == effective_owner_id(auth))
         )
         or 0
     )
-    return f"EST-{auth.user.id:03d}-{count + 1:05d}"
+    return f"EST-{effective_owner_id(auth):03d}-{count + 1:05d}"
 
 
 async def _build_estimate_payload(
@@ -546,7 +551,7 @@ async def create_estimate(
         approval_due_at=approval_due_at,
     )
     estimate = Estimate(
-        owner_user_id=auth.user.id,
+        owner_user_id=effective_owner_id(auth),
         customer_id=payload.customer_id,
         vehicle_id=payload.vehicle_id,
         estimate_number=_next_estimate_number(db, auth),
@@ -560,7 +565,7 @@ async def create_estimate(
     db.flush()
     revision = EstimateRevision(
         estimate_id=estimate.id,
-        owner_user_id=auth.user.id,
+        owner_user_id=effective_owner_id(auth),
         revision_number=1,
         status=EstimateStatus.DRAFT.value,
         customer_snapshot=customer_summary.model_dump(mode="json"),
@@ -722,7 +727,7 @@ async def create_estimate_revision(
     next_revision_number = estimate.current_revision_number + 1
     revision = EstimateRevision(
         estimate_id=estimate.id,
-        owner_user_id=auth.user.id,
+        owner_user_id=effective_owner_id(auth),
         revision_number=next_revision_number,
         status=EstimateStatus.READY.value,
         customer_snapshot=customer_summary.model_dump(mode="json"),
@@ -764,7 +769,7 @@ def send_estimate_for_approval(
     approval_request = EstimateApprovalRequest(
         estimate_id=estimate.id,
         estimate_revision_id=revision.id,
-        owner_user_id=auth.user.id,
+        owner_user_id=effective_owner_id(auth),
         token_hash=_hash_token(token),
         status="active",
         expires_at=datetime.now(UTC) + timedelta(hours=payload.expires_in_hours),
@@ -792,6 +797,15 @@ def send_estimate_for_approval(
         content_hash=revision.content_hash,
         approval_request_id=approval_request.id,
         actor_user_id=auth.user.id,
+    )
+    record_notification(
+        db=db,
+        owner_user_id=estimate.owner_user_id,
+        entity_type=NotificationEntityType.ESTIMATE,
+        entity_id=estimate.id,
+        event=NotificationEvent.ESTIMATE_SENT,
+        title=f"Estimate {estimate.estimate_number} sent for approval",
+        body=f"Revision {revision.revision_number} awaiting customer response.",
     )
     db.commit()
     return EstimateApprovalSendResponse(
@@ -900,6 +914,17 @@ def approve_estimate(
     db.add(estimate)
     db.add(revision)
     db.add(approval_request)
+    # No AuthContext on this public token path -- the owner is derived from
+    # the estimate row itself.
+    record_notification(
+        db=db,
+        owner_user_id=estimate.owner_user_id,
+        entity_type=NotificationEntityType.ESTIMATE,
+        entity_id=estimate.id,
+        event=NotificationEvent.ESTIMATE_APPROVED,
+        title=f"Estimate {estimate.estimate_number} approved by {payload.approving_name}",
+        body=f"Payment option: {payload.payment_option.value}.",
+    )
     db.commit()
     used_at = approval_request.used_at
     if used_at is None:
@@ -949,6 +974,15 @@ def decline_estimate(
     db.add(estimate)
     db.add(revision)
     db.add(approval_request)
+    record_notification(
+        db=db,
+        owner_user_id=estimate.owner_user_id,
+        entity_type=NotificationEntityType.ESTIMATE,
+        entity_id=estimate.id,
+        event=NotificationEvent.ESTIMATE_DECLINED,
+        title=f"Estimate {estimate.estimate_number} declined by {payload.declining_name}",
+        body=payload.reason,
+    )
     db.commit()
     used_at = approval_request.used_at
     if used_at is None:

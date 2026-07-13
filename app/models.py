@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import re
-from datetime import datetime
+from datetime import date, datetime
 from enum import StrEnum
 from typing import Annotated, Literal
 
@@ -489,6 +489,181 @@ class CustomerArchiveResponse(BaseModel):
     customer: CustomerRead
 
 
+class TechnicianBase(BaseModel):
+    first_name: str | None = Field(default=None, max_length=120)
+    last_name: str | None = Field(default=None, max_length=120)
+    phone: str | None = Field(default=None, max_length=40)
+    email: str | None = Field(default=None, max_length=180)
+    employment_status: str | None = Field(default=None, max_length=40)
+    job_title: str | None = Field(default=None, max_length=120)
+    hire_date: date | None = None
+    hourly_cost: float | None = Field(default=None, ge=0, le=1000)
+    certifications: str | None = Field(default=None, max_length=2000)
+    certification_expiration: date | None = None
+    specialties: str | None = Field(default=None, max_length=2000)
+    driver_license_valid: bool | None = None
+    insurance_verified: bool | None = None
+    normal_availability: str | None = Field(default=None, max_length=500)
+    safety_notes: str | None = Field(default=None, max_length=4000)
+
+    @field_validator(
+        "first_name",
+        "last_name",
+        "phone",
+        "email",
+        "employment_status",
+        "job_title",
+        "certifications",
+        "specialties",
+        "normal_availability",
+        "safety_notes",
+        mode="before",
+    )
+    @classmethod
+    def strip_technician_strings(cls, value: object) -> object:
+        if isinstance(value, str):
+            stripped = value.strip()
+            return stripped or None
+        return value
+
+    @model_validator(mode="after")
+    def require_name(self) -> TechnicianBase:
+        if not (self.first_name or self.last_name):
+            raise ValueError("Provide a first or last name.")
+        return self
+
+
+class TechnicianCreate(TechnicianBase):
+    pass
+
+
+class TechnicianUpdate(BaseModel):
+    first_name: str | None = Field(default=None, max_length=120)
+    last_name: str | None = Field(default=None, max_length=120)
+    phone: str | None = Field(default=None, max_length=40)
+    email: str | None = Field(default=None, max_length=180)
+    employment_status: str | None = Field(default=None, max_length=40)
+    job_title: str | None = Field(default=None, max_length=120)
+    hire_date: date | None = None
+    hourly_cost: float | None = Field(default=None, ge=0, le=1000)
+    certifications: str | None = Field(default=None, max_length=2000)
+    certification_expiration: date | None = None
+    specialties: str | None = Field(default=None, max_length=2000)
+    driver_license_valid: bool | None = None
+    insurance_verified: bool | None = None
+    normal_availability: str | None = Field(default=None, max_length=500)
+    safety_notes: str | None = Field(default=None, max_length=4000)
+
+    @field_validator(
+        "first_name",
+        "last_name",
+        "phone",
+        "email",
+        "employment_status",
+        "job_title",
+        "certifications",
+        "specialties",
+        "normal_availability",
+        "safety_notes",
+        mode="before",
+    )
+    @classmethod
+    def strip_technician_strings(cls, value: object) -> object:
+        if isinstance(value, str):
+            stripped = value.strip()
+            return stripped or None
+        return value
+
+
+class TechnicianRead(TechnicianBase):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    display_name: str
+    is_archived: bool
+    has_login: bool
+    is_clocked_in: bool
+    comeback_count: int
+    created_at: datetime
+    updated_at: datetime
+
+
+class TechnicianListResponse(BaseModel):
+    items: list[TechnicianRead]
+    page: int
+    page_size: int
+    total: int
+    has_more: bool
+
+
+class TechnicianArchiveResponse(BaseModel):
+    ok: bool = True
+    technician: TechnicianRead
+
+
+class TechnicianProvisionLoginRequest(BaseModel):
+    username: NonBlank = Field(max_length=120)
+    password: NonBlank = Field(min_length=8, max_length=256)
+
+
+class TechnicianProvisionLoginResponse(BaseModel):
+    ok: bool = True
+    technician: TechnicianRead
+    username: str
+
+
+class TechnicianTimeEntryRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    clock_in_at: datetime
+    clock_out_at: datetime | None = None
+    duration_minutes: int | None = None
+
+
+class TechnicianClockResponse(BaseModel):
+    ok: bool = True
+    is_clocked_in: bool
+    entry: TechnicianTimeEntryRead
+
+
+class TechnicianSelfRead(BaseModel):
+    """Same shape as `TechnicianRead` minus `hourly_cost` -- that's an
+    internal wage/cost field the owner sets and sees, not something a
+    technician's own self-service view should expose."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    first_name: str | None = None
+    last_name: str | None = None
+    phone: str | None = None
+    email: str | None = None
+    employment_status: str | None = None
+    job_title: str | None = None
+    hire_date: date | None = None
+    certifications: str | None = None
+    certification_expiration: date | None = None
+    specialties: str | None = None
+    driver_license_valid: bool | None = None
+    insurance_verified: bool | None = None
+    normal_availability: str | None = None
+    safety_notes: str | None = None
+    display_name: str
+    is_archived: bool
+    has_login: bool
+    is_clocked_in: bool
+    comeback_count: int
+    created_at: datetime
+    updated_at: datetime
+
+
+class TechnicianMeResponse(BaseModel):
+    technician: TechnicianSelfRead
+    recent_time_entries: list[TechnicianTimeEntryRead]
+    assigned_work_order_ids: list[int]
+
+
 class VehicleBase(BaseModel):
     vin: str | None = Field(default=None, max_length=17)
     year: int | None = Field(default=None, ge=1900, le=2100)
@@ -902,6 +1077,7 @@ class WorkOrderUpdate(BaseModel):
     scheduled_for: datetime | None = None
     deposit_received: bool | None = None
     authorization_confirmed: bool | None = None
+    is_comeback: bool | None = None
 
     @field_validator("diagnosis", mode="before")
     @classmethod
@@ -910,6 +1086,10 @@ class WorkOrderUpdate(BaseModel):
             stripped = value.strip()
             return stripped or None
         return value
+
+
+class WorkOrderAssignTechnicianRequest(BaseModel):
+    technician_id: int | None = None
 
 
 class WorkOrderStatusUpdate(BaseModel):
@@ -965,9 +1145,15 @@ class WorkOrderRead(BaseModel):
     estimate_total: float | None = None
     labor_hours_estimate: float | None = None
     payment_option_selected: str | None = None
+    invoice_id: int | None = None
+    invoice_number: str | None = None
+    invoice_status: InvoiceStatus | None = None
     deposit_received: bool
     authorization_confirmed: bool
     scheduled_for: datetime | None = None
+    assigned_technician_id: int | None = None
+    assigned_technician_display_name: str | None = None
+    is_comeback: bool
     allowed_next_statuses: list[WorkOrderStatus] = Field(default_factory=list)
     blocked_transitions: dict[str, str] = Field(default_factory=dict)
     source_revision: EstimateRevisionRead
@@ -983,6 +1169,147 @@ class WorkOrderListResponse(BaseModel):
     page_size: int
     total: int
     has_more: bool
+
+
+class InvoiceStatus(StrEnum):
+    DRAFT = "draft"
+    ISSUED = "issued"
+    PARTIALLY_PAID = "partially_paid"
+    PAID = "paid"
+    OVERDUE = "overdue"
+    VOID = "void"
+
+
+class InvoiceLineItemKind(StrEnum):
+    LABOR = "labor"
+    PART = "part"
+    FEE = "fee"
+
+
+class PaymentAppliesTo(StrEnum):
+    DEPOSIT = "deposit"
+    INSTALLMENT = "installment"
+    BALANCE = "balance"
+    FULL = "full"
+    OTHER = "other"
+
+
+class InvoiceCustomerSnapshot(BaseModel):
+    display_name: str
+    email: str | None = None
+    phone: str | None = None
+
+
+class InvoiceVehicleSnapshot(BaseModel):
+    display_name: str
+    vin: str | None = None
+    license_plate: str | None = None
+    current_mileage: int | None = None
+
+
+class InvoiceLineItemRead(BaseModel):
+    id: int
+    sort_order: int
+    kind: InvoiceLineItemKind
+    description: str
+    quantity: float
+    unit_amount: float
+    line_total: float
+
+
+class InvoicePaymentCreate(BaseModel):
+    amount: float = Field(gt=0, le=1_000_000)
+    method_label: NonBlank = Field(max_length=60)
+    applies_to: PaymentAppliesTo = PaymentAppliesTo.OTHER
+    note: str | None = Field(default=None, max_length=2000)
+    recorded_at: datetime | None = None
+
+    @field_validator("note", mode="before")
+    @classmethod
+    def strip_payment_note(cls, value: object) -> object:
+        if isinstance(value, str):
+            stripped = value.strip()
+            return stripped or None
+        return value
+
+
+class InvoicePaymentVoidRequest(BaseModel):
+    reason: str | None = Field(default=None, max_length=2000)
+
+    @field_validator("reason", mode="before")
+    @classmethod
+    def strip_void_reason(cls, value: object) -> object:
+        if isinstance(value, str):
+            stripped = value.strip()
+            return stripped or None
+        return value
+
+
+class InvoicePaymentRead(BaseModel):
+    id: int
+    amount: float
+    method_label: str
+    applies_to: PaymentAppliesTo
+    note: str | None = None
+    recorded_at: datetime
+    reversal_of_payment_id: int | None = None
+    is_reversal: bool
+    created_by_user_id: int | None = None
+    created_by_display_name: str | None = None
+    created_at: datetime
+
+
+class PaymentScheduleEntryRead(BaseModel):
+    id: int
+    sort_order: int
+    label: str
+    due_at: datetime | None = None
+    amount: float
+
+
+class InvoiceRead(BaseModel):
+    id: int
+    invoice_number: str
+    status: InvoiceStatus
+    work_order_id: int
+    estimate_id: int
+    estimate_revision_id: int
+    customer_id: int
+    vehicle_id: int
+    customer: InvoiceCustomerSnapshot
+    vehicle: InvoiceVehicleSnapshot
+    title: str
+    complaint: str
+    payment_option_selected: str | None = None
+    issued_at: datetime | None = None
+    due_at: datetime | None = None
+    labor_total: float
+    parts_total: float
+    fees_total: float
+    invoice_total: float
+    total_paid: float
+    balance_due: float
+    is_overdue: bool
+    square_invoice_id: str | None = None
+    square_status: str | None = None
+    square_payment_url: str | None = None
+    line_items: list[InvoiceLineItemRead] = Field(default_factory=list)
+    payments: list[InvoicePaymentRead] = Field(default_factory=list)
+    schedule: list[PaymentScheduleEntryRead] = Field(default_factory=list)
+    created_at: datetime
+    updated_at: datetime
+
+
+class InvoiceListResponse(BaseModel):
+    items: list[InvoiceRead]
+    page: int
+    page_size: int
+    total: int
+    has_more: bool
+
+
+class InvoiceIssueRequest(BaseModel):
+    due_in_days: int = Field(default=30, ge=1, le=180)
 
 
 class ApprovalBase(BaseModel):
@@ -1017,3 +1344,871 @@ class ApprovalRead(ApprovalBase):
 
 class ApprovalDecisionRequest(BaseModel):
     reason: str | None = Field(default=None, max_length=4000)
+
+
+class CustomerHistoryEstimateItem(BaseModel):
+    id: int
+    estimate_number: str
+    status: EstimateStatus
+    vehicle_display_name: str
+    estimate_total: float | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class CustomerHistoryWorkOrderItem(BaseModel):
+    id: int
+    estimate_number: str
+    title: str
+    status: WorkOrderStatus
+    invoice_id: int | None = None
+    updated_at: datetime
+
+
+class CustomerHistoryInvoiceItem(BaseModel):
+    id: int
+    invoice_number: str
+    status: InvoiceStatus
+    invoice_total: float
+    balance_due: float
+    is_overdue: bool
+    issued_at: datetime | None = None
+    due_at: datetime | None = None
+
+
+class CustomerHistoryEstimateSection(BaseModel):
+    items: list[CustomerHistoryEstimateItem]
+    total: int
+
+
+class CustomerHistoryWorkOrderSection(BaseModel):
+    items: list[CustomerHistoryWorkOrderItem]
+    total: int
+
+
+class CustomerHistoryInvoiceSection(BaseModel):
+    items: list[CustomerHistoryInvoiceItem]
+    total: int
+
+
+class CustomerHistoryResponse(BaseModel):
+    customer_id: int
+    customer_display_name: str
+    estimates: CustomerHistoryEstimateSection
+    work_orders: CustomerHistoryWorkOrderSection
+    invoices: CustomerHistoryInvoiceSection
+
+
+class NotificationEntityType(StrEnum):
+    ESTIMATE = "estimate"
+    WORK_ORDER = "work_order"
+    INVOICE = "invoice"
+
+
+class NotificationEvent(StrEnum):
+    ESTIMATE_SENT = "estimate_sent"
+    ESTIMATE_APPROVED = "estimate_approved"
+    ESTIMATE_DECLINED = "estimate_declined"
+    WORK_ORDER_STATUS_CHANGED = "work_order_status_changed"
+    INVOICE_ISSUED = "invoice_issued"
+    PAYMENT_RECORDED = "payment_recorded"
+    PAYMENT_VOIDED = "payment_voided"
+
+
+class NotificationRead(BaseModel):
+    id: int
+    entity_type: NotificationEntityType
+    entity_id: int
+    event: NotificationEvent
+    title: str
+    body: str | None = None
+    read_at: datetime | None = None
+    created_at: datetime
+
+
+class NotificationListResponse(BaseModel):
+    items: list[NotificationRead]
+    page: int
+    page_size: int
+    total: int
+    unread_count: int
+    has_more: bool
+
+
+class NotificationMarkReadResponse(BaseModel):
+    ok: bool
+    unread_count: int
+
+
+class DashboardMetric(BaseModel):
+    """A single Overview metric. `available=False` means the shop's data
+    model doesn't support this metric yet (e.g. no COGS/expense tracking
+    exists anywhere in the schema) -- the frontend must render the honest
+    `unavailable_reason` message, never a fabricated number."""
+
+    key: str
+    label: str
+    available: bool
+    value: float | None = None
+    previous_value: float | None = None
+    change_percent: float | None = None
+    unavailable_reason: str | None = None
+
+
+class DashboardTrendPoint(BaseModel):
+    period_label: str
+    period_start: datetime
+    values: dict[str, float]
+
+
+class DashboardWorkOrderStatusCount(BaseModel):
+    status: WorkOrderStatus
+    count: int
+
+
+class DashboardRevenueBreakdownItem(BaseModel):
+    label: str
+    amount: float
+    percent: float
+
+
+class DashboardInsightPriority(StrEnum):
+    HIGH = "high"
+    MEDIUM = "medium"
+    LOW = "low"
+
+
+class DashboardInsight(BaseModel):
+    key: str
+    priority: DashboardInsightPriority
+    issue: str
+    metric: str
+    recommended_action: str
+    link_view: str
+    link_record_id: int | None = None
+    generated_at: datetime
+
+
+class DashboardUpcomingInstallment(BaseModel):
+    invoice_id: int
+    invoice_number: str
+    label: str
+    amount: float
+    due_at: datetime | None = None
+
+
+class DashboardCurrentOperations(BaseModel):
+    open_work_orders: int
+    in_progress: int
+    waiting_on_parts: int
+    awaiting_customer_approval: int
+    completed_not_invoiced: int
+    ready_for_pickup_note: str
+
+
+class DashboardFinancialObligations(BaseModel):
+    outstanding_balance: float
+    overdue_balance: float
+    overdue_invoice_count: int
+    upcoming_installments: list[DashboardUpcomingInstallment]
+    deposits_received_total: float
+
+
+class DashboardSummaryResponse(BaseModel):
+    date_from: datetime
+    date_to: datetime
+    metrics: list[DashboardMetric]
+    revenue_trend: list[DashboardTrendPoint]
+    work_order_trend: list[DashboardTrendPoint]
+    revenue_breakdown: list[DashboardRevenueBreakdownItem]
+    gross_profit_margin: DashboardMetric
+    approval_conversion_rate: DashboardMetric
+    accounts_receivable_health: DashboardMetric
+    work_orders_by_status: list[DashboardWorkOrderStatusCount]
+    current_operations: DashboardCurrentOperations
+    financial_obligations: DashboardFinancialObligations
+    insights: list[DashboardInsight]
+
+
+class VendorBase(BaseModel):
+    name: NonBlank = Field(max_length=180)
+    contact_name: str | None = Field(default=None, max_length=180)
+    phone: str | None = Field(default=None, max_length=40)
+    email: str | None = Field(default=None, max_length=180)
+    address_line_1: str | None = Field(default=None, max_length=180)
+    address_line_2: str | None = Field(default=None, max_length=180)
+    city: str | None = Field(default=None, max_length=120)
+    state: str | None = Field(default=None, max_length=80)
+    postal_code: str | None = Field(default=None, max_length=20)
+    notes: str | None = Field(default=None, max_length=4000)
+
+    @field_validator(
+        "contact_name",
+        "phone",
+        "email",
+        "address_line_1",
+        "address_line_2",
+        "city",
+        "state",
+        "postal_code",
+        "notes",
+        mode="before",
+    )
+    @classmethod
+    def strip_vendor_strings(cls, value: object) -> object:
+        if isinstance(value, str):
+            stripped = value.strip()
+            return stripped or None
+        return value
+
+
+class VendorCreate(VendorBase):
+    pass
+
+
+class VendorUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=180)
+    contact_name: str | None = Field(default=None, max_length=180)
+    phone: str | None = Field(default=None, max_length=40)
+    email: str | None = Field(default=None, max_length=180)
+    address_line_1: str | None = Field(default=None, max_length=180)
+    address_line_2: str | None = Field(default=None, max_length=180)
+    city: str | None = Field(default=None, max_length=120)
+    state: str | None = Field(default=None, max_length=80)
+    postal_code: str | None = Field(default=None, max_length=20)
+    notes: str | None = Field(default=None, max_length=4000)
+
+    @field_validator(
+        "name",
+        "contact_name",
+        "phone",
+        "email",
+        "address_line_1",
+        "address_line_2",
+        "city",
+        "state",
+        "postal_code",
+        "notes",
+        mode="before",
+    )
+    @classmethod
+    def strip_vendor_update_strings(cls, value: object) -> object:
+        if isinstance(value, str):
+            stripped = value.strip()
+            return stripped or None
+        return value
+
+
+class VendorRead(VendorBase):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    is_archived: bool
+    part_count: int
+    created_at: datetime
+    updated_at: datetime
+
+
+class VendorListResponse(BaseModel):
+    items: list[VendorRead]
+    page: int
+    page_size: int
+    total: int
+    has_more: bool
+
+
+class VendorArchiveResponse(BaseModel):
+    ok: bool = True
+    vendor: VendorRead
+
+
+class PartBase(BaseModel):
+    part_number: NonBlank = Field(max_length=120)
+    description: NonBlank = Field(max_length=300)
+    category: str | None = Field(default=None, max_length=120)
+    quantity_on_hand: int = Field(default=0, ge=0)
+    reorder_threshold: int | None = Field(default=None, ge=0)
+    unit_cost: float | None = Field(default=None, ge=0)
+    unit_price: float | None = Field(default=None, ge=0)
+    location: str | None = Field(default=None, max_length=120)
+    notes: str | None = Field(default=None, max_length=4000)
+    vendor_id: int | None = None
+
+    @field_validator("part_number", "description", "category", "location", "notes", mode="before")
+    @classmethod
+    def strip_part_strings(cls, value: object) -> object:
+        if isinstance(value, str):
+            stripped = value.strip()
+            return stripped or None
+        return value
+
+
+class PartCreate(PartBase):
+    pass
+
+
+class PartUpdate(BaseModel):
+    part_number: str | None = Field(default=None, min_length=1, max_length=120)
+    description: str | None = Field(default=None, min_length=1, max_length=300)
+    category: str | None = Field(default=None, max_length=120)
+    quantity_on_hand: int | None = Field(default=None, ge=0)
+    reorder_threshold: int | None = Field(default=None, ge=0)
+    unit_cost: float | None = Field(default=None, ge=0)
+    unit_price: float | None = Field(default=None, ge=0)
+    location: str | None = Field(default=None, max_length=120)
+    notes: str | None = Field(default=None, max_length=4000)
+    vendor_id: int | None = None
+
+    @field_validator("part_number", "description", "category", "location", "notes", mode="before")
+    @classmethod
+    def strip_part_update_strings(cls, value: object) -> object:
+        if isinstance(value, str):
+            stripped = value.strip()
+            return stripped or None
+        return value
+
+
+class PartRead(PartBase):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    vendor_name: str | None = None
+    is_archived: bool
+    is_below_reorder_threshold: bool
+    created_at: datetime
+    updated_at: datetime
+
+
+class PartListResponse(BaseModel):
+    items: list[PartRead]
+    page: int
+    page_size: int
+    total: int
+    has_more: bool
+
+
+class PartArchiveResponse(BaseModel):
+    ok: bool = True
+    part: PartRead
+
+
+class IntakeSourceCode(StrEnum):
+    PHONE = "phone"
+    WALK_IN = "walk_in"
+    WEB = "web"
+    REFERRAL = "referral"
+
+
+class IntakeStatus(StrEnum):
+    NEW = "new"
+    CONTACTED = "contacted"
+    SCHEDULED = "scheduled"
+    CONVERTED = "converted"
+    DISMISSED = "dismissed"
+
+
+class IntakeRequestBase(BaseModel):
+    customer_name: NonBlank = Field(max_length=200)
+    phone: str | None = Field(default=None, max_length=40)
+    email: str | None = Field(default=None, max_length=180)
+    vehicle_description: str | None = Field(default=None, max_length=300)
+    complaint: NonBlank = Field(max_length=4000)
+    source: IntakeSourceCode = IntakeSourceCode.PHONE
+    notes: str | None = Field(default=None, max_length=4000)
+
+    @field_validator("phone", "email", "vehicle_description", "notes", mode="before")
+    @classmethod
+    def strip_intake_strings(cls, value: object) -> object:
+        if isinstance(value, str):
+            stripped = value.strip()
+            return stripped or None
+        return value
+
+
+class IntakeRequestCreate(IntakeRequestBase):
+    pass
+
+
+class IntakeRequestUpdate(BaseModel):
+    customer_name: str | None = Field(default=None, min_length=1, max_length=200)
+    phone: str | None = Field(default=None, max_length=40)
+    email: str | None = Field(default=None, max_length=180)
+    vehicle_description: str | None = Field(default=None, max_length=300)
+    complaint: str | None = Field(default=None, min_length=1, max_length=4000)
+    source: IntakeSourceCode | None = None
+    status: IntakeStatus | None = None
+    notes: str | None = Field(default=None, max_length=4000)
+
+    @field_validator("phone", "email", "vehicle_description", "notes", mode="before")
+    @classmethod
+    def strip_intake_update_strings(cls, value: object) -> object:
+        if isinstance(value, str):
+            stripped = value.strip()
+            return stripped or None
+        return value
+
+
+class IntakeRequestRead(IntakeRequestBase):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    status: IntakeStatus
+    converted_customer_id: int | None = None
+    converted_vehicle_id: int | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class IntakeRequestListResponse(BaseModel):
+    items: list[IntakeRequestRead]
+    page: int
+    page_size: int
+    total: int
+    has_more: bool
+
+
+class IntakeRequestConvertRequest(BaseModel):
+    """Vehicle fields are optional -- an intake request can convert to just
+    a customer record when no vehicle detail was captured yet."""
+
+    vehicle_year: int | None = Field(default=None, ge=1900, le=2100)
+    vehicle_make: str | None = Field(default=None, max_length=100)
+    vehicle_model: str | None = Field(default=None, max_length=100)
+    vehicle_vin: str | None = Field(default=None, max_length=17)
+
+
+class IntakeRequestConvertResponse(BaseModel):
+    ok: bool = True
+    intake_request: IntakeRequestRead
+    customer: CustomerRead
+    vehicle: VehicleRead | None = None
+
+
+class DiagnosticFindingBase(BaseModel):
+    vehicle_id: int
+    work_order_id: int | None = None
+    technician_id: int | None = None
+    codes: str | None = Field(default=None, max_length=2000)
+    symptoms: NonBlank = Field(max_length=4000)
+    tests_performed: str | None = Field(default=None, max_length=4000)
+    conclusion: str | None = Field(default=None, max_length=4000)
+
+    @field_validator("codes", "tests_performed", "conclusion", mode="before")
+    @classmethod
+    def strip_diagnostic_strings(cls, value: object) -> object:
+        if isinstance(value, str):
+            stripped = value.strip()
+            return stripped or None
+        return value
+
+
+class DiagnosticFindingCreate(DiagnosticFindingBase):
+    pass
+
+
+class DiagnosticFindingUpdate(BaseModel):
+    work_order_id: int | None = None
+    technician_id: int | None = None
+    codes: str | None = Field(default=None, max_length=2000)
+    symptoms: str | None = Field(default=None, min_length=1, max_length=4000)
+    tests_performed: str | None = Field(default=None, max_length=4000)
+    conclusion: str | None = Field(default=None, max_length=4000)
+
+    @field_validator("codes", "tests_performed", "conclusion", mode="before")
+    @classmethod
+    def strip_diagnostic_update_strings(cls, value: object) -> object:
+        if isinstance(value, str):
+            stripped = value.strip()
+            return stripped or None
+        return value
+
+
+class DiagnosticFindingRead(DiagnosticFindingBase):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    vehicle_display_name: str | None = None
+    technician_display_name: str | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class DiagnosticFindingListResponse(BaseModel):
+    items: list[DiagnosticFindingRead]
+    page: int
+    page_size: int
+    total: int
+    has_more: bool
+
+
+class InspectionItem(BaseModel):
+    label: NonBlank = Field(max_length=200)
+    status: Literal["ok", "attention", "fail"] = "ok"
+    note: str | None = Field(default=None, max_length=1000)
+
+    @field_validator("note", mode="before")
+    @classmethod
+    def strip_inspection_item_note(cls, value: object) -> object:
+        if isinstance(value, str):
+            stripped = value.strip()
+            return stripped or None
+        return value
+
+
+class InspectionBase(BaseModel):
+    vehicle_id: int
+    work_order_id: int | None = None
+    technician_id: int | None = None
+    inspection_type: str | None = Field(default=None, max_length=120)
+    items: list[InspectionItem] = Field(default_factory=list, max_length=200)
+    overall_notes: str | None = Field(default=None, max_length=4000)
+
+    @field_validator("inspection_type", "overall_notes", mode="before")
+    @classmethod
+    def strip_inspection_strings(cls, value: object) -> object:
+        if isinstance(value, str):
+            stripped = value.strip()
+            return stripped or None
+        return value
+
+
+class InspectionCreate(InspectionBase):
+    pass
+
+
+class InspectionUpdate(BaseModel):
+    work_order_id: int | None = None
+    technician_id: int | None = None
+    inspection_type: str | None = Field(default=None, max_length=120)
+    items: list[InspectionItem] | None = Field(default=None, max_length=200)
+    overall_notes: str | None = Field(default=None, max_length=4000)
+
+    @field_validator("inspection_type", "overall_notes", mode="before")
+    @classmethod
+    def strip_inspection_update_strings(cls, value: object) -> object:
+        if isinstance(value, str):
+            stripped = value.strip()
+            return stripped or None
+        return value
+
+
+class InspectionRead(InspectionBase):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    vehicle_display_name: str | None = None
+    technician_display_name: str | None = None
+    has_attention_items: bool
+    has_failed_items: bool
+    created_at: datetime
+    updated_at: datetime
+
+
+class InspectionListResponse(BaseModel):
+    items: list[InspectionRead]
+    page: int
+    page_size: int
+    total: int
+    has_more: bool
+
+
+class AppointmentStatus(StrEnum):
+    TENTATIVE = "tentative"
+    CONFIRMED = "confirmed"
+    IN_PROGRESS = "in_progress"
+    COMPLETED = "completed"
+    CANCELED = "canceled"
+    NO_SHOW = "no_show"
+
+
+class ServiceLocation(StrEnum):
+    SHOP = "shop"
+    MOBILE = "mobile"
+
+
+class BayBase(BaseModel):
+    name: NonBlank = Field(max_length=120)
+    notes: str | None = Field(default=None, max_length=2000)
+
+    @field_validator("notes", mode="before")
+    @classmethod
+    def strip_bay_notes(cls, value: object) -> object:
+        if isinstance(value, str):
+            stripped = value.strip()
+            return stripped or None
+        return value
+
+
+class BayCreate(BayBase):
+    pass
+
+
+class BayUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=120)
+    notes: str | None = Field(default=None, max_length=2000)
+
+    @field_validator("notes", mode="before")
+    @classmethod
+    def strip_bay_update_notes(cls, value: object) -> object:
+        if isinstance(value, str):
+            stripped = value.strip()
+            return stripped or None
+        return value
+
+
+class BayRead(BayBase):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    is_archived: bool
+    created_at: datetime
+    updated_at: datetime
+
+
+class BayListResponse(BaseModel):
+    items: list[BayRead]
+    page: int
+    page_size: int
+    total: int
+    has_more: bool
+
+
+class BayArchiveResponse(BaseModel):
+    bay: BayRead
+
+
+class WorkingHoursBase(BaseModel):
+    technician_id: int
+    day_of_week: int = Field(ge=0, le=6)
+    start_minute: int = Field(ge=0, lt=1440)
+    end_minute: int = Field(gt=0, le=1440)
+
+    @model_validator(mode="after")
+    def require_end_after_start(self) -> WorkingHoursBase:
+        if self.end_minute <= self.start_minute:
+            raise ValueError("end_minute must be later than start_minute.")
+        return self
+
+
+class WorkingHoursCreate(WorkingHoursBase):
+    pass
+
+
+class WorkingHoursUpdate(BaseModel):
+    day_of_week: int | None = Field(default=None, ge=0, le=6)
+    start_minute: int | None = Field(default=None, ge=0, lt=1440)
+    end_minute: int | None = Field(default=None, gt=0, le=1440)
+
+
+class WorkingHoursRead(WorkingHoursBase):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    created_at: datetime
+    updated_at: datetime
+
+
+class WorkingHoursListResponse(BaseModel):
+    items: list[WorkingHoursRead]
+
+
+class ScheduleBlockBase(BaseModel):
+    technician_id: int | None = None
+    bay_id: int | None = None
+    start_time: datetime
+    end_time: datetime
+    reason: NonBlank = Field(max_length=200)
+    notes: str | None = Field(default=None, max_length=2000)
+
+    @field_validator("notes", mode="before")
+    @classmethod
+    def strip_schedule_block_notes(cls, value: object) -> object:
+        if isinstance(value, str):
+            stripped = value.strip()
+            return stripped or None
+        return value
+
+    @model_validator(mode="after")
+    def require_end_after_start(self) -> ScheduleBlockBase:
+        if self.end_time <= self.start_time:
+            raise ValueError("end_time must be later than start_time.")
+        return self
+
+    @model_validator(mode="after")
+    def require_single_scope(self) -> ScheduleBlockBase:
+        if self.technician_id is not None and self.bay_id is not None:
+            raise ValueError(
+                "A schedule block can target a technician or a bay, not both -- create two"
+                " separate blocks if both need to be unavailable."
+            )
+        return self
+
+
+class ScheduleBlockCreate(ScheduleBlockBase):
+    pass
+
+
+class ScheduleBlockUpdate(BaseModel):
+    technician_id: int | None = None
+    bay_id: int | None = None
+    start_time: datetime | None = None
+    end_time: datetime | None = None
+    reason: str | None = Field(default=None, min_length=1, max_length=200)
+    notes: str | None = Field(default=None, max_length=2000)
+
+    @field_validator("notes", mode="before")
+    @classmethod
+    def strip_schedule_block_update_notes(cls, value: object) -> object:
+        if isinstance(value, str):
+            stripped = value.strip()
+            return stripped or None
+        return value
+
+
+class ScheduleBlockRead(ScheduleBlockBase):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    technician_display_name: str | None = None
+    bay_name: str | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class ScheduleBlockListResponse(BaseModel):
+    items: list[ScheduleBlockRead]
+    page: int
+    page_size: int
+    total: int
+    has_more: bool
+
+
+class AppointmentBase(BaseModel):
+    customer_id: int
+    vehicle_id: int
+    work_order_id: int | None = None
+    technician_id: int
+    bay_id: int | None = None
+    service_type: NonBlank = Field(max_length=160)
+    service_location: ServiceLocation = ServiceLocation.SHOP
+    start_time: datetime
+    end_time: datetime
+    travel_buffer_minutes: int = Field(default=0, ge=0, le=480)
+    customer_notes: str | None = Field(default=None, max_length=4000)
+    internal_notes: str | None = Field(default=None, max_length=4000)
+
+    @field_validator("customer_notes", "internal_notes", mode="before")
+    @classmethod
+    def strip_appointment_notes(cls, value: object) -> object:
+        if isinstance(value, str):
+            stripped = value.strip()
+            return stripped or None
+        return value
+
+    @model_validator(mode="after")
+    def require_end_after_start(self) -> AppointmentBase:
+        if self.end_time <= self.start_time:
+            raise ValueError("end_time must be later than start_time.")
+        return self
+
+
+class AppointmentCreate(AppointmentBase):
+    status: Literal[AppointmentStatus.TENTATIVE, AppointmentStatus.CONFIRMED] = (
+        AppointmentStatus.TENTATIVE
+    )
+
+
+class AppointmentUpdate(BaseModel):
+    customer_id: int | None = None
+    vehicle_id: int | None = None
+    work_order_id: int | None = None
+    technician_id: int | None = None
+    bay_id: int | None = None
+    service_type: str | None = Field(default=None, min_length=1, max_length=160)
+    service_location: ServiceLocation | None = None
+    start_time: datetime | None = None
+    end_time: datetime | None = None
+    travel_buffer_minutes: int | None = Field(default=None, ge=0, le=480)
+    status: (
+        Literal[
+            AppointmentStatus.TENTATIVE,
+            AppointmentStatus.CONFIRMED,
+            AppointmentStatus.IN_PROGRESS,
+            AppointmentStatus.COMPLETED,
+            AppointmentStatus.NO_SHOW,
+        ]
+        | None
+    ) = None
+    customer_notes: str | None = Field(default=None, max_length=4000)
+    internal_notes: str | None = Field(default=None, max_length=4000)
+
+    @field_validator("customer_notes", "internal_notes", mode="before")
+    @classmethod
+    def strip_appointment_update_notes(cls, value: object) -> object:
+        if isinstance(value, str):
+            stripped = value.strip()
+            return stripped or None
+        return value
+
+
+class AppointmentMoveRequest(BaseModel):
+    start_time: datetime
+    end_time: datetime
+    technician_id: int | None = None
+    bay_id: int | None = None
+    travel_buffer_minutes: int | None = Field(default=None, ge=0, le=480)
+
+    @model_validator(mode="after")
+    def require_end_after_start(self) -> AppointmentMoveRequest:
+        if self.end_time <= self.start_time:
+            raise ValueError("end_time must be later than start_time.")
+        return self
+
+
+class AppointmentCancelRequest(BaseModel):
+    cancellation_reason: NonBlank = Field(max_length=500)
+
+
+class AppointmentRead(AppointmentBase):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    status: AppointmentStatus
+    customer_display_name: str | None = None
+    vehicle_display_name: str | None = None
+    technician_display_name: str | None = None
+    bay_name: str | None = None
+    created_at: datetime
+    updated_at: datetime
+    canceled_at: datetime | None = None
+    cancellation_reason: str | None = None
+
+
+class AppointmentListResponse(BaseModel):
+    items: list[AppointmentRead]
+    page: int
+    page_size: int
+    total: int
+    has_more: bool
+
+
+class AppointmentConflictDetail(BaseModel):
+    code: str
+    message: str
+    conflicting_appointment_id: int | None = None
+    conflicting_schedule_block_id: int | None = None
+
+
+class AvailabilityWindow(BaseModel):
+    start_time: datetime
+    end_time: datetime
+
+
+class AvailabilityResponse(BaseModel):
+    technician_id: int
+    bay_id: int | None = None
+    date_from: datetime
+    date_to: datetime
+    working_windows: list[AvailabilityWindow]
+    busy_windows: list[AvailabilityWindow]
+    blocked_windows: list[AvailabilityWindow]

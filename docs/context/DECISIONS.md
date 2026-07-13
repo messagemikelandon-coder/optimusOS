@@ -126,3 +126,15 @@ Relevant sources: `git show 060ab68 --stat --summary`, `app/main.py`, `app/auth.
 - Consequences: source changes must land in real source files and then be regenerated.
 - Files affected: `dist/`, `app/`, `docs/`.
 - Revisit if: a future packaging workflow changes the generated-artifact policy.
+
+## ADR-011
+
+- ID: ADR-011
+- Date: 2026-07-09
+- Status: Accepted
+- Context: Phase 5 (Private Staging) requires a separate host/environment; the roadmap explicitly calls for deciding where staging will live before Phase 5 stalls on unmade infrastructure decisions. This is a real-money, real-credentials decision that requires the owner's direct choice, not an autonomous one.
+- Decision: Staging will be hosted on a DigitalOcean droplet (recommended over Hetzner Cloud for setup simplicity/documentation quality at a small cost premium), with the domain registered through Cloudflare (at-cost registration, and Cloudflare's free proxy/DNS will terminate HTTPS at the edge, satisfying the HTTPS/HSTS requirement without self-managed TLS certificates).
+- Alternatives considered: Hetzner Cloud (cheaper, stricter signup, less beginner-friendly docs); a managed PaaS (Railway/Render/Fly.io) instead of a raw VPS (less ops work, but a bigger departure from the existing Docker Compose deployment model already decided in ADR-008).
+- Consequences: actual account creation, payment setup, droplet provisioning, and domain purchase are owner actions — no agent can perform these (real credentials, spending money, cloud provider actions all require explicit owner action per `AGENTS.md`). Once the droplet and domain exist, deployment configuration (Compose on the droplet, Cloudflare DNS/proxy settings, secrets handling) can proceed as agent-assisted work.
+- Files affected: `docs/context/PLANS.md`, `docs/context/CURRENT_STATE.md`, `docs/context/SESSION_HANDOFF.md`.
+- Revisit if: cost, region/latency requirements, or a preference change makes a different provider or a managed PaaS more suitable.

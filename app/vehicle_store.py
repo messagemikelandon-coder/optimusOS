@@ -5,7 +5,7 @@ import re
 from sqlalchemy import Select, String, and_, cast, func, or_, select
 from sqlalchemy.orm import Session
 
-from app.auth import AuthContext, ensure_utc
+from app.auth import AuthContext, effective_owner_id, ensure_utc
 from app.config import Settings
 from app.customer_store import display_name as customer_display_name
 from app.customer_store import get_customer_model
@@ -121,7 +121,7 @@ def _to_read(vehicle: Vehicle) -> VehicleRead:
 
 
 def _owner_query(auth: AuthContext) -> Select[tuple[Vehicle]]:
-    return select(Vehicle).where(Vehicle.owner_user_id == auth.user.id)
+    return select(Vehicle).where(Vehicle.owner_user_id == effective_owner_id(auth))
 
 
 def _get_vehicle(db: Session, auth: AuthContext, vehicle_id: int) -> Vehicle:
@@ -164,7 +164,7 @@ def create_vehicle(
     vin = normalize_vin(payload.vin)
     _ensure_unique_active_vin(db, auth, vin)
     vehicle = Vehicle(
-        owner_user_id=auth.user.id,
+        owner_user_id=effective_owner_id(auth),
         customer_id=customer.id,
         **normalized,
     )

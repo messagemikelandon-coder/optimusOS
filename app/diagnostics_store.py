@@ -1,0 +1,194 @@
+from __future__ import annotations
+
+from sqlalchemy import Select, func, select
+from sqlalchemy.orm import Session
+
+from app.auth import AuthContext, effective_owner_id, ensure_utc
+from app.config import Settings
+from app.db_models import DiagnosticFinding, Technician, Vehicle, WorkOrder
+from app.models import (
+    DiagnosticFindingCreate,
+    DiagnosticFindingListResponse,
+    DiagnosticFindingRead,
+    DiagnosticFindingUpdate,
+)
+from app.technician_store import display_name as technician_display_name
+from app.vehicle_store import vehicle_display_name
+
+
+class DiagnosticsStoreError(ValueError):
+    pass
+
+
+class DiagnosticFindingNotFoundError(DiagnosticsStoreError):
+    pass
+
+
+def _owner_query(auth: AuthContext) -> Select[tuple[DiagnosticFinding]]:
+    return select(DiagnosticFinding).where(
+        DiagnosticFinding.owner_user_id == effective_owner_id(auth)
+    )
+
+
+def _get_finding(db: Session, auth: AuthContext, finding_id: int) -> DiagnosticFinding:
+    finding = db.scalar(_owner_query(auth).where(DiagnosticFinding.id == finding_id))
+    if finding is None:
+        raise DiagnosticFindingNotFoundError("Diagnostic finding not found.")
+    return finding
+
+
+def _validate_vehicle(db: Session, auth: AuthContext, vehicle_id: int) -> None:
+    vehicle = db.scalar(
+        select(Vehicle).where(
+            Vehicle.id == vehicle_id, Vehicle.owner_user_id == effective_owner_id(auth)
+        )
+    )
+    if vehicle is None:
+        raise DiagnosticsStoreError("Selected vehicle was not found.")
+
+
+def _validate_technician(db: Session, auth: AuthContext, technician_id: int | None) -> None:
+    if technician_id is None:
+        return
+    technician = db.scalar(
+        select(Technician).where(
+            Technician.id == technician_id,
+            Technician.owner_user_id == effective_owner_id(auth),
+        )
+    )
+    if technician is None:
+        raise DiagnosticsStoreError("Selected technician was not found.")
+
+
+def _validate_work_order(db: Session, auth: AuthContext, work_order_id: int | None) -> None:
+    if work_order_id is None:
+        return
+    work_order = db.scalar(
+        select(WorkOrder).where(
+            WorkOrder.id == work_order_id,
+            WorkOrder.owner_user_id == effective_owner_id(auth),
+        )
+    )
+    if work_order is None:
+        raise DiagnosticsStoreError("Selected work order was not found.")
+
+
+def _to_read(db: Session, finding: DiagnosticFinding) -> DiagnosticFindingRead:
+    vehicle = db.get(Vehicle, finding.vehicle_id)
+    technician = db.get(Technician, finding.technician_id) if finding.technician_id else None
+    return DiagnosticFindingRead(
+        id=finding.id,
+        vehicle_id=finding.vehicle_id,
+        work_order_id=finding.work_order_id,
+        technician_id=finding.technician_id,
+        codes=finding.codes,
+        symptoms=finding.symptoms,
+        tests_performed=finding.tests_performed,
+        conclusion=finding.conclusion,
+        vehicle_display_name=vehicle_display_name(vehicle) if vehicle else None,
+        technician_display_name=technician_display_name(technician) if technician else None,
+        created_at=ensure_utc(finding.created_at),
+        updated_at=ensure_utc(finding.updated_at),
+    )
+
+
+def create_diagnostic_finding(
+    *, db: Session, auth: AuthContext, payload: DiagnosticFindingCreate
+) -> DiagnosticFindingRead:
+    _validate_vehicle(db, auth, payload.vehicle_id)
+    _validate_technician(db, auth, payload.technician_id)
+    _validate_work_order(db, auth, payload.work_order_id)
+    finding = DiagnosticFinding(
+        owner_user_id=effective_owner_id(auth),
+        vehicle_id=payload.vehicle_id,
+        work_order_id=payload.work_order_id,
+        technician_id=payload.technician_id,
+        codes=payload.codes,
+        symptoms=payload.symptoms,
+        tests_performed=payload.tests_performed,
+        conclusion=payload.conclusion,
+    )
+    db.add(finding)
+    db.commit()
+    db.refresh(finding)
+    return _to_read(db, finding)
+
+
+def get_diagnostic_finding(
+    *, db: Session, auth: AuthContext, finding_id: int
+) -> DiagnosticFindingRead:
+    return _to_read(db, _get_finding(db, auth, finding_id))
+
+
+def update_diagnostic_finding(
+    *,
+    db: Session,
+    auth: AuthContext,
+    finding_id: int,
+    payload: DiagnosticFindingUpdate,
+) -> DiagnosticFindingRead:
+    finding = _get_finding(db, auth, finding_id)
+    fields_set = payload.model_fields_set
+    if "technician_id" in fields_set:
+        _validate_technician(db, auth, payload.technician_id)
+        finding.technician_id = payload.technician_id
+    if "work_order_id" in fields_set:
+        _validate_work_order(db, auth, payload.work_order_id)
+        finding.work_order_id = payload.work_order_id
+    if "codes" in fields_set:
+        finding.codes = payload.codes
+    if "symptoms" in fields_set and payload.symptoms is not None:
+        finding.symptoms = payload.symptoms
+    if "tests_performed" in fields_set:
+        finding.tests_performed = payload.tests_performed
+    if "conclusion" in fields_set:
+        finding.conclusion = payload.conclusion
+    db.add(finding)
+    db.commit()
+    db.refresh(finding)
+    return _to_read(db, finding)
+
+
+def delete_diagnostic_finding(*, db: Session, auth: AuthContext, finding_id: int) -> None:
+    finding = _get_finding(db, auth, finding_id)
+    db.delete(finding)
+    db.commit()
+
+
+def list_diagnostic_findings(
+    *,
+    db: Session,
+    auth: AuthContext,
+    settings: Settings,
+    page: int,
+    page_size: int,
+    vehicle_id: int | None = None,
+    work_order_id: int | None = None,
+) -> DiagnosticFindingListResponse:
+    if page_size > settings.customers_max_page_size:
+        raise DiagnosticsStoreError(
+            f"Page size exceeds the maximum of {settings.customers_max_page_size}."
+        )
+    if page < 1:
+        raise DiagnosticsStoreError("Page must be 1 or greater.")
+
+    query = _owner_query(auth)
+    if vehicle_id is not None:
+        query = query.where(DiagnosticFinding.vehicle_id == vehicle_id)
+    if work_order_id is not None:
+        query = query.where(DiagnosticFinding.work_order_id == work_order_id)
+
+    total = db.scalar(select(func.count()).select_from(query.subquery())) or 0
+    offset = (page - 1) * page_size
+    findings = db.scalars(
+        query.order_by(DiagnosticFinding.created_at.desc(), DiagnosticFinding.id.desc())
+        .offset(offset)
+        .limit(page_size)
+    ).all()
+    return DiagnosticFindingListResponse(
+        items=[_to_read(db, finding) for finding in findings],
+        page=page,
+        page_size=page_size,
+        total=total,
+        has_more=offset + len(findings) < total,
+    )

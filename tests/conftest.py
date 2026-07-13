@@ -23,6 +23,12 @@ def settings() -> Settings:
         parts_tax_rate=8.5,
         optimus_owner_username="owner",
         optimus_owner_password="owner-password-123",
+        # Force a hermetic default regardless of what a real local .env might
+        # contain (mirrors the openai_api_key override above) -- individual
+        # Square tests opt back in explicitly via configure_square(settings).
+        square_access_token="",
+        square_location_id="",
+        square_environment="sandbox",
     )
 
 
