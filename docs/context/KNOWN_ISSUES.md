@@ -4,7 +4,7 @@ Purpose: confirmed defects, environment blockers, and their repair status.
 Information owner: repository maintainers.
 Read when: assessing current risk or planning repairs.
 Update when: a defect is discovered, repaired, or reclassified.
-Last verified date: 2026-07-12.
+Last verified date: 2026-07-13.
 Relevant sources: `git status`, `git diff --stat`, `env UV_CACHE_DIR=/tmp/uv-cache uv run pytest -q`, `docker compose logs --tail=80 backend worker`, `docker compose exec -T backend alembic current`, `gh pr view`.
 
 ## Confirmed Open Issues
@@ -14,6 +14,9 @@ Relevant sources: `git status`, `git diff --stat`, `env UV_CACHE_DIR=/tmp/uv-cac
 - No permanent, repeatable, committed automated test exists for Phase 4's fresh-volume E2E flow or its three failure drills (Redis down, Postgres down, full restart) — only a one-time manual live-proof run on 2026-07-08. Not a defect: the owner explicitly accepted this as sufficient to close Phase 4 on 2026-07-09. A permanent automated version remains unbuilt and is not planned unless separately requested.
 - The staging droplet is running `main` (`36b861b`), which predates the invoice-button fix (`1139499`) and the optimusctl override fix (`7d665c8`) — not yet deployed. Owner has the exact one-liner deploy sequence in `docs/context/SESSION_HANDOFF.md` (Owner action items); deferred, not yet actioned.
 - Pre-existing commit-boundary gap in `ensure_draft_invoice_for_work_order` (`app/invoice_store.py`), surfaced by the Phase 5.5 independent review (2026-07-10): its early-return branch (invoice already exists) and its `IntegrityError` concurrent-race branch return without committing the caller's pending work-order status update/status event — and now also the Phase 5.5 notification row — while the request still returns 200. Only reachable via a concurrent double-completion race on the same work order; single-owner local usage makes this near-impossible to hit. Predates Phase 5.5 (identical structure before the notification hook); accepted as a documented risk rather than reworking transactional semantics mid-slice. Revisit if work orders ever get multi-session concurrent writes.
+- Scheduling module (Phase 5.6 sub-phase 5, `app/scheduling_store.py`, 2026-07-13): the `SELECT ... FOR UPDATE` row-lock that serializes concurrent appointment create/move requests for the same technician/bay has not been exercised under real concurrent load — the test suite runs on SQLite, which ignores `FOR UPDATE`. Verified correct by code-pattern comparison to the identical, already-proven approach in `app/payment_store.py`, but this specific new usage has no executable concurrency evidence yet. Not a known defect, a known verification gap — worth a real concurrent-request test against Postgres before this module is considered fully load-tested.
+- Scheduling module: a technician with zero `WorkingHours` rows configured is treated as fully unrestricted (bookable at any hour) rather than fully blocked. Deliberate MVP choice (documented in `docs/context/CURRENT_STATE.md`) so the feature doesn't silently lock out every appointment before an owner has set up hours, but it means an owner who forgets to configure a new technician's hours gets no warning that working-hours enforcement isn't active for them yet.
+- Scheduling module: strictly owner-only, like the rest of Phase 5.6 — no technician-facing view of their own schedule exists yet. A reasonable follow-up for a mobile-mechanic app, not attempted in this slice (out of the literal spec given).
 
 ## Historical Resolved Issues
 

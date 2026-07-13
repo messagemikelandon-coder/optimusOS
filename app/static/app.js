@@ -167,6 +167,19 @@ const state = {
     total: 0,
     hasMore: false,
   },
+  scheduling: {
+    view: "day",
+    anchorDate: new Date(),
+    items: [],
+    blocks: [],
+    technicianFilterId: null,
+    technicians: [],
+    bays: [],
+    selectedAppointmentId: null,
+    selectedAppointment: null,
+    workingHoursTechnicianId: null,
+    workingHours: [],
+  },
   currentView: "dashboard",
   health: null,
   lastEstimate: null,
@@ -185,7 +198,7 @@ const viewMeta = {
   notifications: { eyebrow: "Owner alerts", title: "Notifications" },
   square: { eyebrow: "Payment integration", title: "Square" },
   reports: { eyebrow: "Owner reporting", title: "Reports" },
-  scheduling: { eyebrow: "Not yet built", title: "Scheduling" },
+  scheduling: { eyebrow: "Appointments", title: "Scheduling" },
   "service-desk": { eyebrow: "Intake queue", title: "Service Desk" },
   diagnostics: { eyebrow: "Findings", title: "Diagnostics" },
   inspections: { eyebrow: "Digital inspections", title: "Inspections" },
@@ -429,6 +442,7 @@ function navigate(view) {
   if (view === "parts" && state.auth.authenticated) void loadParts();
   if (view === "vendors" && state.auth.authenticated) void loadVendors();
   if (view === "technicians" && state.auth.authenticated) void loadTechnicians();
+  if (view === "scheduling" && state.auth.authenticated) void loadScheduling();
   if (view === "my-day" && state.auth.authenticated) void loadMyDay();
   if (view === "chat") {
     renderChatContextSummary();
@@ -4686,6 +4700,818 @@ function initializeParts() {
   });
 }
 
+// ---- Scheduling ----
+
+const SHOP_TIMEZONE = "America/Chicago";
+
+function shopOffsetMinutesAt(utcMs) {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: SHOP_TIMEZONE,
+    timeZoneName: "shortOffset",
+  }).formatToParts(new Date(utcMs));
+  const offsetPart = parts.find((part) => part.type === "timeZoneName")?.value || "GMT+0";
+  const match = offsetPart.match(/GMT([+-]\d+)(?::(\d+))?/);
+  if (!match) return 0;
+  const hours = Number(match[1]);
+  const minutes = Number(match[2] || 0);
+  return hours * 60 + (hours < 0 ? -minutes : minutes);
+}
+
+// Interprets a <input type="datetime-local"> value as America/Chicago wall-clock
+// time and returns the equivalent UTC ISO instant. A single offset correction
+// (rather than a full tz-aware parser) is sufficient outside DST-transition edge cases.
+function shopLocalInputToUtcIso(value) {
+  if (!value) return null;
+  const [datePart, timePart] = value.split("T");
+  const [year, month, day] = datePart.split("-").map(Number);
+  const [hour, minute] = timePart.split(":").map(Number);
+  const guessUtcMs = Date.UTC(year, month - 1, day, hour, minute);
+  const offsetMinutes = shopOffsetMinutesAt(guessUtcMs);
+  return new Date(guessUtcMs - offsetMinutes * 60000).toISOString();
+}
+
+function utcIsoToShopLocalInput(iso) {
+  if (!iso) return "";
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: SHOP_TIMEZONE,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).formatToParts(new Date(iso));
+  const map = {};
+  for (const part of parts) map[part.type] = part.value;
+  const hour = map.hour === "24" ? "00" : map.hour;
+  return `${map.year}-${map.month}-${map.day}T${hour}:${map.minute}`;
+}
+
+function shopDateKey(date) {
+  return new Intl.DateTimeFormat("en-CA", { timeZone: SHOP_TIMEZONE }).format(date);
+}
+
+function shopTimeLabel(iso) {
+  return new Intl.DateTimeFormat("en-US", {
+    timeZone: SHOP_TIMEZONE,
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(new Date(iso));
+}
+
+function shopDayHeadingLabel(dateKey) {
+  return new Intl.DateTimeFormat("en-US", {
+    timeZone: "UTC",
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+  }).format(new Date(`${dateKey}T00:00:00Z`));
+}
+
+function addDaysToDateKey(dateKey, days) {
+  const [year, month, day] = dateKey.split("-").map(Number);
+  return new Intl.DateTimeFormat("en-CA", { timeZone: "UTC" }).format(
+    new Date(Date.UTC(year, month - 1, day + days)),
+  );
+}
+
+function mondayOfWeek(dateKey) {
+  const dow = new Date(`${dateKey}T00:00:00Z`).getUTCDay();
+  const offset = dow === 0 ? -6 : 1 - dow;
+  return addDaysToDateKey(dateKey, offset);
+}
+
+function schedulingRangeKeys() {
+  const anchorKey = shopDateKey(state.scheduling.anchorDate);
+  if (state.scheduling.view === "day") {
+    return { startKey: anchorKey, endKey: addDaysToDateKey(anchorKey, 1) };
+  }
+  const startKey = mondayOfWeek(anchorKey);
+  return { startKey, endKey: addDaysToDateKey(startKey, 7) };
+}
+
+function schedulingRangeUtc() {
+  const { startKey, endKey } = schedulingRangeKeys();
+  return {
+    dateFrom: shopLocalInputToUtcIso(`${startKey}T00:00`),
+    dateTo: shopLocalInputToUtcIso(`${endKey}T00:00`),
+  };
+}
+
+function schedulingStatusLabel(status) {
+  return String(status || "").replaceAll("_", " ");
+}
+
+function schedulingConflictMessage(data, fallback) {
+  const detail = data?.detail;
+  if (detail && typeof detail === "object" && Array.isArray(detail.conflicts) && detail.conflicts.length) {
+    return detail.conflicts.map((conflict) => conflict.message).join(" ");
+  }
+  if (detail && typeof detail === "object" && typeof detail.message === "string") return detail.message;
+  if (typeof detail === "string") return detail;
+  return fallback;
+}
+
+function renderSchedulingDateLabel() {
+  const { startKey, endKey } = schedulingRangeKeys();
+  if (state.scheduling.view === "day") {
+    $("scheduling-date-label").textContent = shopDayHeadingLabel(startKey);
+  } else {
+    $("scheduling-date-label").textContent = `${shopDayHeadingLabel(startKey)} – ${shopDayHeadingLabel(addDaysToDateKey(endKey, -1))}`;
+  }
+  $("scheduling-view-day").classList.toggle("is-active", state.scheduling.view === "day");
+  $("scheduling-view-week").classList.toggle("is-active", state.scheduling.view === "week");
+}
+
+function renderAppointmentCard(appointment) {
+  const isSelected = state.scheduling.selectedAppointmentId === appointment.id;
+  const locationLabel = appointment.service_location === "mobile" ? "Mobile" : "Shop";
+  const bayLabel = appointment.bay_name ? ` · Bay ${escapeHtml(appointment.bay_name)}` : "";
+  return `
+    <button type="button" class="scheduling-card status-${escapeHtml(appointment.status)}${isSelected ? " is-active" : ""}" data-appointment-id="${appointment.id}">
+      <span class="scheduling-card-time">${shopTimeLabel(appointment.start_time)}&ndash;${shopTimeLabel(appointment.end_time)}</span>
+      <span class="scheduling-card-main">
+        <strong>${escapeHtml(appointment.service_type)}</strong>
+        <span>${escapeHtml(appointment.customer_display_name || "Unknown customer")} · ${escapeHtml(appointment.vehicle_display_name || "No vehicle")}</span>
+        <span class="scheduling-card-meta">${escapeHtml(appointment.technician_display_name || "Unassigned")}${bayLabel} · ${locationLabel}</span>
+      </span>
+      <span class="scheduling-status-badge status-${escapeHtml(appointment.status)}">${escapeHtml(schedulingStatusLabel(appointment.status))}</span>
+    </button>`;
+}
+
+function renderBlockCard(block) {
+  const scope = block.technician_display_name
+    ? escapeHtml(block.technician_display_name)
+    : (block.bay_name ? `Bay ${escapeHtml(block.bay_name)}` : "Shop-wide");
+  return `
+    <div class="scheduling-card is-blocked">
+      <span class="scheduling-card-time">${shopTimeLabel(block.start_time)}&ndash;${shopTimeLabel(block.end_time)}</span>
+      <span class="scheduling-card-main">
+        <strong>Blocked: ${escapeHtml(block.reason)}</strong>
+        <span>${scope}</span>
+      </span>
+    </div>`;
+}
+
+function schedulingEntriesSortedByTime(appointments, blocks) {
+  const entries = [
+    ...appointments.map((appointment) => ({ start: appointment.start_time, html: renderAppointmentCard(appointment) })),
+    ...blocks.map((block) => ({ start: block.start_time, html: renderBlockCard(block) })),
+  ];
+  entries.sort((a, b) => new Date(a.start) - new Date(b.start));
+  return entries.map((entry) => entry.html).join("");
+}
+
+function renderSchedulingAgenda() {
+  renderSchedulingDateLabel();
+  const container = $("scheduling-list");
+  const appointments = state.scheduling.items;
+  const blocks = state.scheduling.blocks;
+
+  if (!state.scheduling.technicians.length) {
+    container.innerHTML = '<div class="empty-card"><strong>No technicians yet</strong><p>Add a technician before scheduling appointments.</p></div>';
+    return;
+  }
+
+  if (state.scheduling.view === "day") {
+    const shopWideBlocks = blocks.filter((block) => !block.technician_id && !block.bay_id);
+    const technicians = state.scheduling.technicians.filter(
+      (technician) => !state.scheduling.technicianFilterId || technician.id === state.scheduling.technicianFilterId,
+    );
+    const groups = technicians.map((technician) => {
+      const items = appointments.filter((appointment) => appointment.technician_id === technician.id);
+      const techBlocks = blocks.filter((block) => block.technician_id === technician.id);
+      const html = schedulingEntriesSortedByTime(items, techBlocks);
+      return `
+        <div class="scheduling-group">
+          <h4>${escapeHtml(technician.display_name)}</h4>
+          ${html || '<div class="empty-card-inline">No appointments.</div>'}
+        </div>`;
+    });
+    const shopWideHtml = shopWideBlocks.length
+      ? `<div class="scheduling-group"><h4>Shop-wide</h4>${shopWideBlocks.map(renderBlockCard).join("")}</div>`
+      : "";
+    container.innerHTML = shopWideHtml + groups.join("");
+  } else {
+    const { startKey } = schedulingRangeKeys();
+    const dayKeys = Array.from({ length: 7 }, (_, index) => addDaysToDateKey(startKey, index));
+    const groups = dayKeys.map((dayKey) => {
+      const dayAppointments = appointments.filter(
+        (appointment) => shopDateKey(new Date(appointment.start_time)) === dayKey
+          && (!state.scheduling.technicianFilterId || appointment.technician_id === state.scheduling.technicianFilterId),
+      );
+      const dayBlocks = blocks.filter((block) => shopDateKey(new Date(block.start_time)) === dayKey);
+      const html = schedulingEntriesSortedByTime(dayAppointments, dayBlocks);
+      return `
+        <div class="scheduling-group">
+          <h4>${shopDayHeadingLabel(dayKey)}</h4>
+          ${html || '<div class="empty-card-inline">Nothing scheduled.</div>'}
+        </div>`;
+    });
+    container.innerHTML = groups.join("");
+  }
+
+  $$("[data-appointment-id]", container).forEach((button) => {
+    button.addEventListener("click", () => void selectAppointment(Number(button.dataset.appointmentId)));
+  });
+}
+
+async function loadSchedulingOptions() {
+  const [technicianResponse, bayResponse, customerResponse, workOrderResponse] = await Promise.all([
+    apiFetch("/api/technicians?page=1&page_size=100&archived=false"),
+    apiFetch("/api/bays?page=1&page_size=100&archived=false"),
+    apiFetch("/api/customers?page=1&page_size=100&archived=false"),
+    apiFetch("/api/work-orders?page=1&page_size=100"),
+  ]);
+  const [technicianData, bayData, customerData, workOrderData] = await Promise.all([
+    readApiPayload(technicianResponse),
+    readApiPayload(bayResponse),
+    readApiPayload(customerResponse),
+    readApiPayload(workOrderResponse),
+  ]);
+  if (!technicianResponse.ok || !technicianData) throw apiError(technicianResponse, technicianData, "Technician options failed");
+  if (!bayResponse.ok || !bayData) throw apiError(bayResponse, bayData, "Bay options failed");
+  if (!customerResponse.ok || !customerData) throw apiError(customerResponse, customerData, "Customer options failed");
+  if (!workOrderResponse.ok || !workOrderData) throw apiError(workOrderResponse, workOrderData, "Work order options failed");
+
+  state.scheduling.technicians = technicianData.items;
+  state.scheduling.bays = bayData.items;
+
+  const technicianOptions = technicianData.items.map((technician) => `<option value="${technician.id}">${escapeHtml(technician.display_name)}</option>`).join("");
+  const bayOptions = bayData.items.map((bay) => `<option value="${bay.id}">${escapeHtml(bay.name)}</option>`).join("");
+
+  $("scheduling-technician-filter").innerHTML = '<option value="">All technicians</option>' + technicianOptions;
+  $("scheduling-technician-id").innerHTML = technicianOptions;
+  $("scheduling-move-technician").innerHTML = technicianOptions;
+  $("scheduling-bay-id").innerHTML = '<option value="">No bay</option>' + bayOptions;
+  $("scheduling-move-bay").innerHTML = '<option value="">No bay</option>' + bayOptions;
+  $("working-hours-technician").innerHTML = technicianOptions;
+  $("schedule-block-technician").innerHTML = '<option value="">Shop-wide</option>' + technicianOptions;
+  $("schedule-block-bay").innerHTML = '<option value="">Any bay</option>' + bayOptions;
+
+  $("scheduling-customer-id").innerHTML = '<option value="">Select a customer</option>'
+    + customerData.items.map((customer) => `<option value="${customer.id}">${escapeHtml(customer.display_name)}</option>`).join("");
+  $("scheduling-work-order-id").innerHTML = '<option value="">No linked work order</option>'
+    + workOrderData.items.map((workOrder) => `<option value="${workOrder.id}">${escapeHtml(workOrder.estimate_number)} · ${escapeHtml(workOrder.title)}</option>`).join("");
+
+  if (!state.scheduling.workingHoursTechnicianId && technicianData.items.length) {
+    state.scheduling.workingHoursTechnicianId = technicianData.items[0].id;
+    $("working-hours-technician").value = String(technicianData.items[0].id);
+  }
+}
+
+async function loadSchedulingVehicleOptions(customerId, preferredVehicleId = null) {
+  const select = $("scheduling-vehicle-id");
+  if (!customerId) {
+    select.innerHTML = '<option value="">Select a customer first</option>';
+    return;
+  }
+  const response = await apiFetch(`/api/customers/${customerId}/vehicles?page=1&page_size=100&archived=false`);
+  const data = await readApiPayload(response);
+  if (!response.ok || !data) throw apiError(response, data, "Vehicle options failed");
+  select.innerHTML = '<option value="">Select a vehicle</option>'
+    + data.items.map((vehicle) => `<option value="${vehicle.id}">${escapeHtml(vehicle.display_name)}</option>`).join("");
+  if (preferredVehicleId) select.value = String(preferredVehicleId);
+}
+
+async function loadScheduling() {
+  const list = $("scheduling-list");
+  list.innerHTML = '<div class="loading-panel"><span class="loading-spinner"></span><div><strong>Loading schedule</strong></div></div>';
+  renderSchedulingDateLabel();
+  try {
+    if (!state.scheduling.technicians.length) await loadSchedulingOptions();
+    const { dateFrom, dateTo } = schedulingRangeUtc();
+    const params = new URLSearchParams({ date_from: dateFrom, date_to: dateTo, page_size: "200" });
+    if (state.scheduling.technicianFilterId) params.set("technician_id", String(state.scheduling.technicianFilterId));
+    const blockParams = new URLSearchParams({ date_from: dateFrom, date_to: dateTo, page_size: "200" });
+    const [appointmentResponse, blockResponse] = await Promise.all([
+      apiFetch(`/api/appointments?${params.toString()}`),
+      apiFetch(`/api/schedule-blocks?${blockParams.toString()}`),
+    ]);
+    const [appointmentData, blockData] = await Promise.all([
+      readApiPayload(appointmentResponse),
+      readApiPayload(blockResponse),
+    ]);
+    if (!appointmentResponse.ok || !appointmentData) throw apiError(appointmentResponse, appointmentData, "Appointment listing failed");
+    if (!blockResponse.ok || !blockData) throw apiError(blockResponse, blockData, "Schedule block listing failed");
+    state.scheduling.items = appointmentData.items;
+    state.scheduling.blocks = blockData.items;
+    renderSchedulingAgenda();
+    void loadBaysList();
+    void loadWorkingHoursList();
+    void loadScheduleBlocksList();
+  } catch (error) {
+    list.innerHTML = `<div class="error-card"><strong>Schedule failed to load</strong><p>${escapeHtml(error.message)}</p></div>`;
+    showToast(`Schedule failed to load: ${error.message}`, "error");
+  }
+}
+
+function renderSchedulingDetail(appointment = null) {
+  const detail = $("scheduling-detail");
+  const actions = $("scheduling-detail-actions");
+  if (!appointment) {
+    detail.innerHTML = "<p>Select an appointment from the calendar or create a new one.</p>";
+    actions.hidden = true;
+    $("scheduling-move-form").hidden = true;
+    $("scheduling-cancel-form").hidden = true;
+    return;
+  }
+  const bayLine = appointment.bay_name ? `<div><span>Bay</span><strong>${escapeHtml(appointment.bay_name)}</strong></div>` : "";
+  const workOrderLine = appointment.work_order_id ? `<div><span>Work order</span><strong>#${appointment.work_order_id}</strong></div>` : "";
+  detail.innerHTML = `
+    <div class="customer-detail-header">
+      <strong>${escapeHtml(appointment.service_type)}</strong>
+      <span class="scheduling-status-badge status-${escapeHtml(appointment.status)}">${escapeHtml(schedulingStatusLabel(appointment.status))}</span>
+    </div>
+    <div class="customer-detail-grid">
+      <div><span>When</span><strong>${shopDayHeadingLabel(shopDateKey(new Date(appointment.start_time)))}, ${shopTimeLabel(appointment.start_time)}&ndash;${shopTimeLabel(appointment.end_time)}</strong></div>
+      <div><span>Customer</span><strong>${escapeHtml(appointment.customer_display_name || "Unknown")}</strong></div>
+      <div><span>Vehicle</span><strong>${escapeHtml(appointment.vehicle_display_name || "Unknown")}</strong></div>
+      <div><span>Technician</span><strong>${escapeHtml(appointment.technician_display_name || "Unassigned")}</strong></div>
+      ${bayLine}
+      <div><span>Location</span><strong>${appointment.service_location === "mobile" ? "Mobile" : "Shop"}</strong></div>
+      <div><span>Travel buffer</span><strong>${appointment.travel_buffer_minutes} min</strong></div>
+      ${workOrderLine}
+    </div>
+    ${appointment.customer_notes ? `<div class="customer-detail-notes"><span>Customer-visible notes</span><p>${escapeHtml(appointment.customer_notes)}</p></div>` : ""}
+    ${appointment.internal_notes ? `<div class="customer-detail-notes"><span>Internal notes</span><p>${escapeHtml(appointment.internal_notes)}</p></div>` : ""}
+    ${appointment.status === "canceled" ? `<div class="customer-detail-notes"><span>Cancellation reason</span><p>${escapeHtml(appointment.cancellation_reason || "")}</p></div>` : ""}`;
+
+  actions.hidden = false;
+  $("scheduling-move-form").hidden = true;
+  $("scheduling-cancel-form").hidden = true;
+  const isCanceled = appointment.status === "canceled";
+  $("scheduling-confirm").hidden = appointment.status !== "tentative";
+  $("scheduling-edit").disabled = isCanceled;
+  $("scheduling-move-toggle").disabled = isCanceled;
+  $("scheduling-cancel-toggle").hidden = isCanceled || appointment.status === "completed";
+}
+
+async function selectAppointment(appointmentId) {
+  try {
+    const response = await apiFetch(`/api/appointments/${appointmentId}`);
+    const data = await readApiPayload(response);
+    if (!response.ok || !data) throw apiError(response, data, "Appointment load failed");
+    state.scheduling.selectedAppointmentId = data.id;
+    state.scheduling.selectedAppointment = data;
+    renderSchedulingDetail(data);
+    renderSchedulingAgenda();
+  } catch (error) {
+    showToast(`Appointment load failed: ${error.message}`, "error");
+  }
+}
+
+async function populateSchedulingForm(appointment = null) {
+  $("scheduling-id").value = appointment ? String(appointment.id) : "";
+  $("scheduling-customer-id").value = appointment ? String(appointment.customer_id) : "";
+  $("scheduling-customer-id").disabled = Boolean(appointment);
+  await loadSchedulingVehicleOptions(appointment ? appointment.customer_id : $("scheduling-customer-id").value, appointment?.vehicle_id);
+  $("scheduling-work-order-id").value = appointment?.work_order_id ? String(appointment.work_order_id) : "";
+  $("scheduling-service-type").value = appointment ? appointment.service_type : "";
+  $("scheduling-service-location").value = appointment ? appointment.service_location : "shop";
+  $("scheduling-technician-id").value = appointment ? String(appointment.technician_id) : "";
+  $("scheduling-bay-id").value = appointment?.bay_id ? String(appointment.bay_id) : "";
+  $("scheduling-start-time").value = appointment ? utcIsoToShopLocalInput(appointment.start_time) : "";
+  $("scheduling-end-time").value = appointment ? utcIsoToShopLocalInput(appointment.end_time) : "";
+  $("scheduling-travel-buffer").value = appointment ? appointment.travel_buffer_minutes : 0;
+  const statusSelect = $("scheduling-status");
+  statusSelect.innerHTML = appointment
+    ? `<option value="tentative">Tentative</option>
+       <option value="confirmed">Confirmed</option>
+       <option value="in_progress">In progress</option>
+       <option value="completed">Completed</option>
+       <option value="no_show">No-show</option>`
+    : `<option value="tentative">Tentative</option>
+       <option value="confirmed">Confirmed</option>`;
+  statusSelect.value = appointment ? appointment.status : "tentative";
+  $("scheduling-customer-notes").value = appointment ? appointment.customer_notes || "" : "";
+  $("scheduling-internal-notes").value = appointment ? appointment.internal_notes || "" : "";
+  $("scheduling-form-title").textContent = appointment ? "Edit appointment" : "Create appointment";
+  $("scheduling-form-mode").textContent = appointment ? "EDIT" : "CREATE";
+}
+
+async function submitSchedulingForm(event) {
+  event.preventDefault();
+  if (!await requireAuthenticated("login")) return;
+  const appointmentId = $("scheduling-id").value.trim();
+  const submit = $("scheduling-save");
+  submit.disabled = true;
+  submit.textContent = appointmentId ? "Saving…" : "Creating…";
+  const payload = {
+    customer_id: Number($("scheduling-customer-id").value),
+    vehicle_id: Number($("scheduling-vehicle-id").value),
+    work_order_id: $("scheduling-work-order-id").value ? Number($("scheduling-work-order-id").value) : null,
+    technician_id: Number($("scheduling-technician-id").value),
+    bay_id: $("scheduling-bay-id").value ? Number($("scheduling-bay-id").value) : null,
+    service_type: $("scheduling-service-type").value.trim(),
+    service_location: $("scheduling-service-location").value,
+    start_time: shopLocalInputToUtcIso($("scheduling-start-time").value),
+    end_time: shopLocalInputToUtcIso($("scheduling-end-time").value),
+    travel_buffer_minutes: Number($("scheduling-travel-buffer").value || 0),
+    status: $("scheduling-status").value,
+    customer_notes: $("scheduling-customer-notes").value.trim() || null,
+    internal_notes: $("scheduling-internal-notes").value.trim() || null,
+  };
+  try {
+    const response = await apiFetch(appointmentId ? `/api/appointments/${appointmentId}` : "/api/appointments", {
+      method: appointmentId ? "PATCH" : "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const data = await readApiPayload(response);
+    if (!response.ok || !data) {
+      if (response.status === 409) throw new Error(schedulingConflictMessage(data, "This time slot is unavailable."));
+      throw apiError(response, data, "Appointment save failed");
+    }
+    state.scheduling.selectedAppointmentId = data.id;
+    state.scheduling.selectedAppointment = data;
+    renderSchedulingDetail(data);
+    await loadScheduling();
+    showToast(appointmentId ? "Appointment updated." : "Appointment created.", "success");
+  } catch (error) {
+    showToast(`Appointment save failed: ${error.message}`, "error");
+  } finally {
+    submit.disabled = false;
+    submit.textContent = "Save appointment";
+  }
+}
+
+async function quickConfirmAppointment() {
+  const appointment = state.scheduling.selectedAppointment;
+  if (!appointment) return;
+  try {
+    const response = await apiFetch(`/api/appointments/${appointment.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status: "confirmed" }),
+    });
+    const data = await readApiPayload(response);
+    if (!response.ok || !data) throw apiError(response, data, "Confirmation failed");
+    state.scheduling.selectedAppointment = data;
+    renderSchedulingDetail(data);
+    await loadScheduling();
+    showToast("Appointment confirmed.", "success");
+  } catch (error) {
+    showToast(`Confirmation failed: ${error.message}`, "error");
+  }
+}
+
+function openMoveForm() {
+  const appointment = state.scheduling.selectedAppointment;
+  if (!appointment) return;
+  $("scheduling-move-start").value = utcIsoToShopLocalInput(appointment.start_time);
+  $("scheduling-move-end").value = utcIsoToShopLocalInput(appointment.end_time);
+  $("scheduling-move-technician").value = String(appointment.technician_id);
+  $("scheduling-move-bay").value = appointment.bay_id ? String(appointment.bay_id) : "";
+  $("scheduling-cancel-form").hidden = true;
+  $("scheduling-move-form").hidden = false;
+}
+
+async function submitMoveForm(event) {
+  event.preventDefault();
+  const appointment = state.scheduling.selectedAppointment;
+  if (!appointment) return;
+  const submit = $("scheduling-move-save");
+  submit.disabled = true;
+  try {
+    const payload = {
+      start_time: shopLocalInputToUtcIso($("scheduling-move-start").value),
+      end_time: shopLocalInputToUtcIso($("scheduling-move-end").value),
+      technician_id: Number($("scheduling-move-technician").value),
+      bay_id: $("scheduling-move-bay").value ? Number($("scheduling-move-bay").value) : null,
+    };
+    const response = await apiFetch(`/api/appointments/${appointment.id}/move`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const data = await readApiPayload(response);
+    if (!response.ok || !data) {
+      if (response.status === 409) throw new Error(schedulingConflictMessage(data, "This time slot is unavailable."));
+      throw apiError(response, data, "Move failed");
+    }
+    state.scheduling.selectedAppointment = data;
+    renderSchedulingDetail(data);
+    await loadScheduling();
+    showToast("Appointment moved.", "success");
+  } catch (error) {
+    showToast(`Move failed: ${error.message}`, "error");
+  } finally {
+    submit.disabled = false;
+  }
+}
+
+async function submitCancelForm(event) {
+  event.preventDefault();
+  const appointment = state.scheduling.selectedAppointment;
+  if (!appointment) return;
+  const submit = $("scheduling-cancel-save");
+  submit.disabled = true;
+  try {
+    const response = await apiFetch(`/api/appointments/${appointment.id}/cancel`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ cancellation_reason: $("scheduling-cancel-reason").value.trim() }),
+    });
+    const data = await readApiPayload(response);
+    if (!response.ok || !data) throw apiError(response, data, "Cancellation failed");
+    state.scheduling.selectedAppointment = data;
+    renderSchedulingDetail(data);
+    await loadScheduling();
+    showToast("Appointment canceled.", "success");
+  } catch (error) {
+    showToast(`Cancellation failed: ${error.message}`, "error");
+  } finally {
+    submit.disabled = false;
+  }
+}
+
+// ---- Scheduling: bays ----
+
+function renderBaysList() {
+  const container = $("bays-list");
+  if (!state.scheduling.bays.length) {
+    container.innerHTML = '<div class="empty-card-inline">No bays yet.</div>';
+    return;
+  }
+  container.innerHTML = state.scheduling.bays.map((bay) => `
+    <div class="scheduling-setup-item">
+      <span>${escapeHtml(bay.name)}</span>
+      <button type="button" class="text-button" data-archive-bay="${bay.id}">Archive</button>
+    </div>`).join("");
+  $$("[data-archive-bay]", container).forEach((button) => {
+    button.addEventListener("click", () => void archiveBay(Number(button.dataset.archiveBay)));
+  });
+}
+
+async function loadBaysList() {
+  try {
+    const response = await apiFetch("/api/bays?page=1&page_size=100&archived=false");
+    const data = await readApiPayload(response);
+    if (!response.ok || !data) throw apiError(response, data, "Bay listing failed");
+    state.scheduling.bays = data.items;
+    renderBaysList();
+  } catch (error) {
+    showToast(`Bay listing failed: ${error.message}`, "error");
+  }
+}
+
+async function submitBayForm(event) {
+  event.preventDefault();
+  const submit = $("bay-save");
+  submit.disabled = true;
+  try {
+    const response = await apiFetch("/api/bays", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: $("bay-name").value.trim(),
+        notes: $("bay-notes").value.trim() || null,
+      }),
+    });
+    const data = await readApiPayload(response);
+    if (!response.ok || !data) throw apiError(response, data, "Bay creation failed");
+    $("bay-form").reset();
+    await loadBaysList();
+    await loadSchedulingOptions();
+    showToast("Bay added.", "success");
+  } catch (error) {
+    showToast(`Bay creation failed: ${error.message}`, "error");
+  } finally {
+    submit.disabled = false;
+  }
+}
+
+async function archiveBay(bayId) {
+  if (!window.confirm("Archive this bay?")) return;
+  try {
+    const response = await apiFetch(`/api/bays/${bayId}`, { method: "DELETE" });
+    const data = await readApiPayload(response);
+    if (!response.ok || !data) throw apiError(response, data, "Bay archive failed");
+    await loadBaysList();
+    await loadSchedulingOptions();
+    showToast("Bay archived.", "success");
+  } catch (error) {
+    showToast(`Bay archive failed: ${error.message}`, "error");
+  }
+}
+
+// ---- Scheduling: working hours ----
+
+function renderWorkingHoursList() {
+  const container = $("working-hours-list");
+  const dayLabels = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+  if (!state.scheduling.workingHours.length) {
+    container.innerHTML = '<div class="empty-card-inline">No working hours configured -- this technician is treated as unrestricted.</div>';
+    return;
+  }
+  container.innerHTML = state.scheduling.workingHours.map((row) => {
+    const startLabel = `${String(Math.floor(row.start_minute / 60)).padStart(2, "0")}:${String(row.start_minute % 60).padStart(2, "0")}`;
+    const endLabel = `${String(Math.floor(row.end_minute / 60)).padStart(2, "0")}:${String(row.end_minute % 60).padStart(2, "0")}`;
+    return `
+      <div class="scheduling-setup-item">
+        <span>${dayLabels[row.day_of_week]}: ${startLabel}–${endLabel}</span>
+        <button type="button" class="text-button" data-delete-hours="${row.id}">Remove</button>
+      </div>`;
+  }).join("");
+  $$("[data-delete-hours]", container).forEach((button) => {
+    button.addEventListener("click", () => void deleteWorkingHours(Number(button.dataset.deleteHours)));
+  });
+}
+
+async function loadWorkingHoursList() {
+  const technicianId = state.scheduling.workingHoursTechnicianId || Number($("working-hours-technician").value);
+  if (!technicianId) return;
+  try {
+    const response = await apiFetch(`/api/working-hours?technician_id=${technicianId}`);
+    const data = await readApiPayload(response);
+    if (!response.ok || !data) throw apiError(response, data, "Working hours listing failed");
+    state.scheduling.workingHours = data.items;
+    renderWorkingHoursList();
+  } catch (error) {
+    showToast(`Working hours listing failed: ${error.message}`, "error");
+  }
+}
+
+async function submitWorkingHoursForm(event) {
+  event.preventDefault();
+  const technicianId = Number($("working-hours-technician").value);
+  if (!technicianId) return;
+  const submit = $("working-hours-save");
+  submit.disabled = true;
+  try {
+    const [startHour, startMinute] = $("working-hours-start").value.split(":").map(Number);
+    const [endHour, endMinute] = $("working-hours-end").value.split(":").map(Number);
+    const response = await apiFetch("/api/working-hours", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        technician_id: technicianId,
+        day_of_week: Number($("working-hours-day").value),
+        start_minute: startHour * 60 + startMinute,
+        end_minute: endHour * 60 + endMinute,
+      }),
+    });
+    const data = await readApiPayload(response);
+    if (!response.ok || !data) throw apiError(response, data, "Working hours creation failed");
+    await loadWorkingHoursList();
+    showToast("Working hours added.", "success");
+  } catch (error) {
+    showToast(`Working hours creation failed: ${error.message}`, "error");
+  } finally {
+    submit.disabled = false;
+  }
+}
+
+async function deleteWorkingHours(workingHoursId) {
+  if (!window.confirm("Remove these working hours?")) return;
+  try {
+    const response = await apiFetch(`/api/working-hours/${workingHoursId}`, { method: "DELETE" });
+    if (!response.ok) throw apiError(response, await readApiPayload(response), "Working hours removal failed");
+    await loadWorkingHoursList();
+    showToast("Working hours removed.", "success");
+  } catch (error) {
+    showToast(`Working hours removal failed: ${error.message}`, "error");
+  }
+}
+
+// ---- Scheduling: schedule blocks ----
+
+function renderScheduleBlocksList() {
+  const container = $("schedule-blocks-list");
+  if (!state.scheduling.blocks.length) {
+    container.innerHTML = '<div class="empty-card-inline">No blocked time in this range.</div>';
+    return;
+  }
+  container.innerHTML = state.scheduling.blocks.map((block) => {
+    const scope = block.technician_display_name || (block.bay_name ? `Bay ${escapeHtml(block.bay_name)}` : "Shop-wide");
+    return `
+      <div class="scheduling-setup-item">
+        <span>${shopDayHeadingLabel(shopDateKey(new Date(block.start_time)))} ${shopTimeLabel(block.start_time)}–${shopTimeLabel(block.end_time)} · ${escapeHtml(scope)} · ${escapeHtml(block.reason)}</span>
+        <button type="button" class="text-button" data-delete-block="${block.id}">Remove</button>
+      </div>`;
+  }).join("");
+  $$("[data-delete-block]", container).forEach((button) => {
+    button.addEventListener("click", () => void deleteScheduleBlock(Number(button.dataset.deleteBlock)));
+  });
+}
+
+async function loadScheduleBlocksList() {
+  renderScheduleBlocksList();
+}
+
+async function submitScheduleBlockForm(event) {
+  event.preventDefault();
+  const submit = $("schedule-block-save");
+  submit.disabled = true;
+  try {
+    const technicianValue = $("schedule-block-technician").value;
+    const bayValue = $("schedule-block-bay").value;
+    const response = await apiFetch("/api/schedule-blocks", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        technician_id: technicianValue ? Number(technicianValue) : null,
+        bay_id: bayValue ? Number(bayValue) : null,
+        start_time: shopLocalInputToUtcIso($("schedule-block-start").value),
+        end_time: shopLocalInputToUtcIso($("schedule-block-end").value),
+        reason: $("schedule-block-reason").value.trim(),
+      }),
+    });
+    const data = await readApiPayload(response);
+    if (!response.ok || !data) throw apiError(response, data, "Schedule block creation failed");
+    $("schedule-block-form").reset();
+    await loadScheduling();
+    showToast("Blocked time added.", "success");
+  } catch (error) {
+    showToast(`Schedule block creation failed: ${error.message}`, "error");
+  } finally {
+    submit.disabled = false;
+  }
+}
+
+async function deleteScheduleBlock(blockId) {
+  if (!window.confirm("Remove this blocked time?")) return;
+  try {
+    const response = await apiFetch(`/api/schedule-blocks/${blockId}`, { method: "DELETE" });
+    if (!response.ok) throw apiError(response, await readApiPayload(response), "Schedule block removal failed");
+    await loadScheduling();
+    showToast("Blocked time removed.", "success");
+  } catch (error) {
+    showToast(`Schedule block removal failed: ${error.message}`, "error");
+  }
+}
+
+function initializeScheduling() {
+  $("scheduling-view-day").addEventListener("click", () => {
+    state.scheduling.view = "day";
+    void loadScheduling();
+  });
+  $("scheduling-view-week").addEventListener("click", () => {
+    state.scheduling.view = "week";
+    void loadScheduling();
+  });
+  $("scheduling-prev").addEventListener("click", () => {
+    const step = state.scheduling.view === "day" ? 1 : 7;
+    state.scheduling.anchorDate = new Date(state.scheduling.anchorDate.getTime() - step * 86400000);
+    void loadScheduling();
+  });
+  $("scheduling-next").addEventListener("click", () => {
+    const step = state.scheduling.view === "day" ? 1 : 7;
+    state.scheduling.anchorDate = new Date(state.scheduling.anchorDate.getTime() + step * 86400000);
+    void loadScheduling();
+  });
+  $("scheduling-today").addEventListener("click", () => {
+    state.scheduling.anchorDate = new Date();
+    void loadScheduling();
+  });
+  $("scheduling-technician-filter").addEventListener("change", () => {
+    const value = $("scheduling-technician-filter").value;
+    state.scheduling.technicianFilterId = value ? Number(value) : null;
+    void loadScheduling();
+  });
+  $("scheduling-refresh").addEventListener("click", () => void loadScheduling());
+  $("scheduling-new").addEventListener("click", () => {
+    state.scheduling.selectedAppointmentId = null;
+    state.scheduling.selectedAppointment = null;
+    void populateSchedulingForm(null);
+    renderSchedulingDetail(null);
+    renderSchedulingAgenda();
+  });
+  $("scheduling-customer-id").addEventListener("change", () => {
+    void loadSchedulingVehicleOptions($("scheduling-customer-id").value);
+  });
+  $("scheduling-clear").addEventListener("click", () => {
+    void populateSchedulingForm(state.scheduling.selectedAppointment);
+  });
+  $("scheduling-form").addEventListener("submit", submitSchedulingForm);
+  $("scheduling-edit").addEventListener("click", () => {
+    void populateSchedulingForm(state.scheduling.selectedAppointment);
+  });
+  $("scheduling-confirm").addEventListener("click", () => void quickConfirmAppointment());
+  $("scheduling-move-toggle").addEventListener("click", openMoveForm);
+  $("scheduling-move-cancel").addEventListener("click", () => {
+    $("scheduling-move-form").hidden = true;
+  });
+  $("scheduling-move-form").addEventListener("submit", submitMoveForm);
+  $("scheduling-cancel-toggle").addEventListener("click", () => {
+    $("scheduling-move-form").hidden = true;
+    $("scheduling-cancel-form").hidden = false;
+  });
+  $("scheduling-cancel-dismiss").addEventListener("click", () => {
+    $("scheduling-cancel-form").hidden = true;
+  });
+  $("scheduling-cancel-form").addEventListener("submit", submitCancelForm);
+
+  $("bay-form").addEventListener("submit", submitBayForm);
+  $("working-hours-technician").addEventListener("change", () => {
+    state.scheduling.workingHoursTechnicianId = Number($("working-hours-technician").value);
+    void loadWorkingHoursList();
+  });
+  $("working-hours-form").addEventListener("submit", submitWorkingHoursForm);
+  $("schedule-block-form").addEventListener("submit", submitScheduleBlockForm);
+}
+
 function setStatus(id, text, online = null) {
   $(id).textContent = text;
   const dot = $(`${id}-dot`);
@@ -5303,6 +6129,7 @@ function initializeApp() {
   initializeInspections();
   initializeVendors();
   initializeParts();
+  initializeScheduling();
   initializeEstimate();
   initializeSystem();
   initializeAuth();
