@@ -1,0 +1,181 @@
+name: Application CI
+
+# Real quality gates for source changes: lint, type-check, unit tests, JS
+# syntax, migration integrity, and a Docker Compose boot + secret-log scan.
+# This is separate from ai-coordination.yml, which only validates the AI
+# session handoff doc and does not exercise any of the application itself.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: app-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  UV_CACHE_DIR: /tmp/uv-cache
+
+jobs:
+  lint-typecheck-test:
+    name: Lint, typecheck, unit tests, JS syntax
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Python dependencies
+        run: uv sync --extra dev
+
+      - name: ruff format --check
+        run: uv run ruff format --check .
+
+      - name: ruff check
+        run: uv run ruff check .
+
+      - name: pyright
+        run: uv run pyright
+
+      - name: pytest
+        run: uv run pytest -q
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: JS syntax check
+        run: node --check app/static/app.js
+
+      - name: git diff --check (whitespace/conflict-marker hygiene on PR diff)
+        if: github.event_name == 'pull_request'
+        run: git diff --check "origin/${{ github.base_ref }}...HEAD"
+
+  migrations:
+    name: Alembic migration integrity
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: optimus_os
+          POSTGRES_USER: optimus
+          POSTGRES_PASSWORD: optimus_local
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U optimus -d optimus_os"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql+psycopg://optimus:optimus_local@localhost:5432/optimus_os
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Python dependencies
+        run: uv sync --extra dev
+
+      - name: Confirm a single linear migration head
+        run: |
+          heads="$(uv run alembic heads)"
+          echo "$heads"
+          test "$(printf '%s\n' "$heads" | grep -c .)" -eq 1
+
+      - name: Upgrade from a clean database
+        run: uv run alembic upgrade head
+
+      - name: Confirm current revision is head
+        run: uv run alembic current | grep -q "(head)"
+
+      - name: Downgrade / upgrade round-trip
+        run: |
+          uv run alembic downgrade -1
+          uv run alembic upgrade head
+          uv run alembic current | grep -q "(head)"
+
+  docker-compose-integration:
+    name: Docker build, compose config, boot, and secret-log scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Python dependencies (for the log-scan script only)
+        run: uv sync --extra dev
+
+      # Placeholder values only, taken from .env.example -- never a real
+      # secret. This file never leaves the runner and nothing below prints
+      # its resolved contents (docker compose config always runs with -q).
+      - name: Create placeholder env file for compose
+        run: cp .env.example .env
+
+      - name: Validate docker-compose config (base)
+        run: docker compose config -q
+
+      - name: Validate docker-compose config (staging overlay)
+        run: docker compose -f docker-compose.yml -f ops/docker-compose.staging.yml config -q
+
+      - name: Build backend and worker images
+        run: docker compose -p optimus_ci build backend worker
+
+      - name: Boot the stack
+        run: docker compose -p optimus_ci up -d postgres redis backend worker
+
+      - name: Wait for backend health
+        run: |
+          for i in $(seq 1 30); do
+            if curl -sf http://127.0.0.1:8000/health >/dev/null; then
+              echo "backend healthy"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "backend did not become healthy in time" >&2
+          docker compose -p optimus_ci logs backend
+          exit 1
+
+      - name: Apply migrations inside the running backend container
+        run: docker compose -p optimus_ci exec -T backend alembic upgrade head
+
+      - name: Confirm readiness
+        run: curl -sf http://127.0.0.1:8000/ready
+
+      - name: Scan service logs for secret-shaped values
+        run: uv run python -m scripts.scan_logs_for_secrets --project optimus_ci --services backend worker postgres redis
+
+      - name: Tear down
+        if: always()
+        run: docker compose -p optimus_ci down -v
+
+      - name: Remove placeholder env file
+        if: always()
+        run: rm -f .env
