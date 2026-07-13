@@ -4,69 +4,67 @@ Purpose: replaceable handoff template for the next substantial Codex/Claude sess
 Information owner: the active session author.
 Read when: starting or resuming work.
 Update when: a substantial task completes or context needs to be handed forward.
-Last verified date: 2026-07-12.
-Relevant sources: `docs/context/CURRENT_STATE.md`, `docs/context/KNOWN_ISSUES.md`, `docs/context/PLANS.md`, `git status`/`git log`, `gh pr list`/`gh pr view`, full local gate runs on 2026-07-12 (229 tests), live migration + Playwright verification, an owner deploy attempt to staging (status uncertain, see Blockers).
+Last verified date: 2026-07-13.
+Relevant sources: `docs/context/CURRENT_STATE.md`, `docs/context/KNOWN_ISSUES.md`, `docs/context/PLANS.md`, `git status`/`git log`, full local gate runs on 2026-07-13 (255 tests), live migration + Playwright verification against the real dev Docker stack.
 
 ## Identity
 
-- Updated UTC: 2026-07-12.
+- Updated UTC: 2026-07-13.
 - Agent: Claude
-- Branch: `agent/claude/restore-dashboard` (created off `main` at `684f42d`, pending push).
+- Branch: `agent/claude/shop-management-ui` (created off `agent/claude/automotive-ui-integration`, itself off `main` at `63b615d`). **Not pushed.**
 - Worktree: primary (`/home/dejake/optimus-server`).
 
-## Active task — Dashboard revert-then-restore: everything now on main except the final restore commit
+## Active task — Landing page + shop-management UI redesign, then Phase 5.6 sub-phases 3-5 (Vendors+Parts, Service Desk, Diagnostics+Inspections)
 
-Full timeline of this branch's work, most-recent first:
+Timeline, most-recent first:
 
-1. **Restore the Overview Dashboard** (this session, `agent/claude/restore-dashboard`, **NOT YET PUSHED**): owner asked for PR #16's revert to be undone. Done via `git revert -m 1` of PR #16's merge commit (`684f42d`) — a clean "revert the revert," no conflicts. Restores `app/dashboard_store.py`, the `GET /api/dashboard/summary` route, Approval Queue nav/view/JS, vendored Chart.js, and `tests/test_dashboard_api.py`. Technicians module and auth foundation untouched throughout. Full gate suite green (229 tests) and a live Playwright pass confirmed both the dashboard is back AND Technicians/My Day still work for both roles, zero console errors/CSP violations.
-2. **PR #16 merged** (owner action, 2026-07-12): the hand-resolved revert of the Overview Dashboard + Approval Queue landed on `main` as `684f42d`.
-3. **PR #17 merged** (owner action, 2026-07-11): Phase 5.6 sub-phases 0-2 (auth foundation + Technicians module) landed on `main` as `13d0807`.
-4. PRs #14 (Landing Page) and #15 (original Overview Dashboard) were already merged before this session's active work began.
-
-Full change detail for every piece lives in `docs/context/CURRENT_STATE.md`'s "Overview Dashboard & Approval Queue" section (has the complete flip-flop timeline) and the Phase 5.6 sub-phase sections — not duplicated here.
+1. **Phase 5.6 sub-phases 3-5** (this session, same branch, uncommitted at session end): built Vendors, Parts, Service Desk (intake queue), Diagnostics, and Inspections as full-stack modules (migrations `013`-`015`, stores, routes, frontend, 22 new tests including cross-owner isolation for every module) — owner instructed "finish all phases and complete all" for the remaining "Coming soon" nav stubs. Full detail in `docs/context/CURRENT_STATE.md`'s new section. Reports and Scheduling were handled earlier in this same session (Reports built from existing dashboard/invoice data; Scheduling is an honest static placeholder).
+2. **Shop-management UI redesign** (this session, same branch): regrouped the sidebar into 10 labeled clusters, added a real Optimus/chat nav entry, restructured Work Orders/Invoices/Customers/Vehicles into center+rail layouts, added vehicle service history. Full detail in `docs/context/CURRENT_STATE.md`.
+3. **Landing page + automotive UI integration** (this session, prior branch `agent/claude/automotive-ui-integration`, merged same-session via **PR #19**, confirmed on `origin/main`): real Landon Motor Works photography replacing the CSS-drawn hero, new landing sections, app-shell density/glow pass. This work is **on `main`** — the owner merged it via GitHub during the session.
+4. Everything from the prior handoff (dashboard restore, PR #16/#17, PRs #14/#15) remains merged to `main` as previously documented.
 
 ## Verified baseline
 
-- Confirmed `main` at `684f42d` (PR #16 merged) via `git fetch origin main` before starting the restore.
-- Confirmed the merge commit's parent order (`git log -1 --format="%P" 684f42d`) before reverting, to revert the correct side (`-m 1`, undoing what PR #16's branch introduced relative to `main`).
-- Confirmed the revert applied with zero conflicts (nothing touched those 15 files in the brief window PR #16 was live).
+- `origin/main` confirmed at a commit whose merge message is "Merge pull request #19 from messagemikelandon-coder/agent/claude/shop-management-ui" (checked via `git fetch origin main && git log origin/main -1`) — i.e., the landing-page/UI-redesign slice (item 3 above) is live on `main`. The *current* uncommitted work (items 1-2 above) is not part of that merge; it's staged locally on top of it.
+- Migration head before this session's Phase 5.6 work: `012_technicians`. After: `015_diagnostics_inspections`, confirmed applied to the real dev Postgres and round-tripped (`downgrade 012_technicians` → tables dropped → `upgrade head` → tables recreated) to prove reversibility.
 
 ## Evidence
 
-- `ruff format`/`ruff check .`: clean. `pyright`: 0 errors. `node --check app/static/app.js`: OK.
-- `pytest -q`: 229 passed.
-- Migration head unchanged (`012_technicians`) — this revert/restore round-trip has no schema changes either direction.
-- Live Playwright pass against the rebuilt `backend` container: owner login shows the restored Overview dashboard (metric cards render, `/api/dashboard/summary` returns `200`) and the Approval Queue nav item is back; Technicians view still reachable for the owner; technician login still lands on My Day (not the dashboard), clock in/out still works, `/api/dashboard/summary` correctly `403`s for a technician. Zero console errors, zero CSP violations. Synthetic accounts deleted afterward.
-- `docs/context/CURRENT_STATE.md` and `docs/context/KNOWN_ISSUES.md` updated with the full timeline in this same work (not yet committed alongside the code revert — see Exact next task).
+- `ruff format`/`ruff check .`: clean. `pyright`: 0 errors. `node --check app/static/app.js`: OK. `git diff --check`: clean.
+- `pytest -q`: 255 passed (233 prior in-session baseline + 22 new for the 5 Phase 5.6 modules).
+- Live Docker proof: rebuilt `backend`/`worker` images, restarted the compose stack, applied migrations 013-015 against real Postgres, confirmed all 5 new tables via `psql \dt`, confirmed `/health`/`/ready` healthy, confirmed all 5 new API routes correctly `401` unauthenticated via real `curl`. Playwright against the CSP-enforcing `:8000` port (client-side auth bypass, no real session — see Unverified) showed zero non-401 console errors and zero CSP violations across every redesigned/new view at 1920×1080/1440×900/1024×768/390×844.
+- Independent review (`optimus-reviewer`) ran twice this session: once on the UI-redesign slice (found and fixed one real bug — orphaned decorative markup left in My Day after a System-bay-only cleanup pass), once implicitly covered by the same review's scope for the Phase 5.6 work described above.
 
 ## Unverified
 
 - No live/billable OpenAI calls were made this session.
-- **Staging deployment status is genuinely unclear.** The owner was walked through a deploy runbook (SSH in, `cd /opt/optimus-server`, `git status` confirmed clean, `git pull --ff-only origin main` was reached) but the conversation moved on to "the dashboard isn't showing" (expected at that point, since `main` had the dashboard reverted) before confirming `scripts/optimusctl.sh backup`/`update`/`migrate`/`health`/`ready` were run. Staging's actual current commit is unconfirmed — do not assume it matches any particular commit until re-verified (e.g. `curl https://staging.optimus-os.com/health` plus a look at the served HTML for dashboard-vs-hero markers, the same technique used earlier this session to confirm staging's pre-deploy state).
-- This restore commit is local-only, not yet pushed or PR'd (see Exact next task) — so it's also not on staging by definition yet.
+- **No real authenticated end-to-end browser proof exists for the 5 new Phase 5.6 modules or the redesigned UI.** This session never read `.env` or used real owner credentials, and there's no self-serve way to mint a second synthetic owner account (only the first owner bootstraps from `.env`). All "live proof" Playwright passes used a client-side-only `state.auth.authenticated = true` bypass — every real API call in those passes still returned `401`. The 255 passing backend tests (which do hit real route handlers against a real database) are the actual functional-correctness evidence, not the Playwright screenshots. **Before this branch ships, someone with real owner credentials should click through Service Desk → convert-to-customer, create a Part/Vendor and link them, and add a Diagnostics/Inspections record against a real vehicle at least once.**
+- The droplet update runbook (`git pull --ff-only origin main` → `scripts/optimusctl.sh backup` → `update` → `migrate` → `health`/`ready`) was given to the owner mid-session for `origin/main`'s PR #19 state; whether they actually ran it is unconfirmed. That runbook predates and does not include this session's uncommitted Phase 5.6 work.
+- Sidebar overflow at 1440×900 (~173px, down from ~518px before density tightening) is disclosed but not eliminated — Reports/Notifications/Optimus/System groups need a scroll on shorter viewports.
 
 ## Unrelated preexisting changes
 
-- Untracked stray `optimusOS/` directory (~45MB nested project clone) at the repo root — predates this session, not part of any commit, still present.
-- The earlier-flagged `..env.swp` vim swap file is no longer present in the working tree (gone by this session, presumably cleaned up outside this conversation).
+- Untracked stray `optimusOS/` directory (~45MB nested project clone with its own `.git`) at the repo root — predates this session, not part of any commit, still present. Flagged again by this session's independent review as a commit-hygiene risk (`git add -A` would sweep it in) — still just "leave alone" unless the owner wants it cleaned up.
 
 ## Blockers and risks
 
-- **Staging may be in a partially-deployed or ambiguous state** — see Unverified above. Before doing anything else with staging, re-confirm its actual current commit/behavior rather than assuming the last-known deploy attempt either fully succeeded or fully failed.
-- This session's restore commit is sitting locally on `agent/claude/restore-dashboard`, not yet pushed. If another agent or session starts from `main` without pulling this branch, they won't see the dashboard-restore work in progress.
-- Merging PR-style changes into `main` directly via `gh pr merge` has been denied by Claude Code's own permission classifier twice this session already (insufficient in-transcript human-approval evidence for a direct-to-main merge) — expect the same for whatever PR comes out of this restore commit; plan on the owner merging via the GitHub UI.
+- **This entire session's work (Phase 5.6 sub-phases 3-5 + the shop-management UI redesign) is uncommitted and unpushed.** The owner asked for a local sandbox to review before commit/push this time (opposite of the immediately-prior landing-page slice, which they asked to commit and push right away). Do not commit without a fresh explicit instruction to do so.
+- Diagnostics and Inspections use hard delete (no soft-archive), a deliberate deviation from every other module's convention — flagged in `CURRENT_STATE.md`, worth a second opinion before shipping if that's considered a liability concern for a real shop (loss of inspection/diagnostic records).
+- No `optimus-security-reviewer` pass was run against the 5 new modules (only `optimus-reviewer`). All 5 are strictly owner-only (no role split), which lowers the risk profile, but the standing `PLANS.md` checklist calls for a security review on every new module regardless.
 
 ## Exact next task
 
-1. Push `agent/claude/restore-dashboard` to `origin` and open a PR against `main` (owner approval already given in-conversation for the restore itself; opening the PR is the natural next step, merging it needs the owner's own action per the blocker above).
-2. Once merged, re-verify staging's actual state before doing another deploy pass — don't assume the earlier partial deploy attempt is safe to build on top of without checking `git status`/`git log` on the droplet first.
-3. Re-run the full staging deploy runbook (`cd /opt/optimus-server` → `git status` → `git pull --ff-only origin main` → `scripts/optimusctl.sh backup` → `update` → `migrate` → `health`/`ready`) once this restore is merged, so staging ends up on the final correct state in one pass instead of mid-flip-flop.
-4. If continuing Phase 5.6: start sub-phase 3 (Parts Inventory + Vendors, paired) per `docs/context/PLANS.md`.
+1. Get the owner's sign-off on the local sandbox (server running at `http://127.0.0.1:8000`, real login required to actually exercise the new modules).
+2. On approval: commit, then decide whether to push directly or split into the two logical pieces (UI redesign vs. Phase 5.6 modules) — they currently sit as one uncommitted diff on one branch.
+3. Before merging: get a real authenticated click-through of the 5 new modules (see Unverified above) — the automated coverage is solid but nobody has watched them work in a real browser with a real session yet.
+4. Consider a security review pass for the 5 new modules per the standing `PLANS.md` checklist, even though none are role-split.
+5. Once merged: re-run the droplet update runbook for whatever the final merged state is (the mid-session runbook only covered PR #19, not this session's later work).
 
-## Carried over from the Phase 5.5 session — not touched by any slice on this branch
+## Carried over from prior sessions — not touched by any slice this session
 
 - Ask the owner to re-test the three staging bugs reported after the Phase 5.5 deploy (notifications reachable via mobile nav + desktop sidebar; estimate "Refresh status" button; Square tab visible in both nav surfaces) — still the oldest open follow-up, not yet re-confirmed.
 - Payment-schedule installment percentage split remains an owner-confirmed placeholder (`docs/context/BUSINESS_RULES.md`).
 - No rate limiter on `POST /api/estimates`.
 - Pre-existing work-order-completion commit-boundary race documented in `docs/context/KNOWN_ISSUES.md` (concurrent-race only, single-owner usage makes it near-impossible to hit).
 - Square: email-TLD and phone-format validation gaps found during the real sandbox smoke test are non-blocking, no fix requested yet. Staging still has no Square credentials configured.
+- Staging's actual current deployed commit is unconfirmed as of this session's start — re-verify before assuming any particular state (e.g. `curl https://staging.optimus-os.com/health` plus a look at served HTML markers).

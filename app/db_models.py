@@ -1100,3 +1100,190 @@ class Notification(Base):
         nullable=False,
         server_default=func.now(),
     )
+
+
+class Vendor(Base):
+    __tablename__ = "vendors"
+    __table_args__ = (
+        Index("ix_vendors_owner_archived_updated", "owner_user_id", "is_archived", "updated_at"),
+        Index("ix_vendors_owner_name", "owner_user_id", "name"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    owner_user_id: Mapped[int] = mapped_column(
+        ForeignKey("user_accounts.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    name: Mapped[str] = mapped_column(String(180), nullable=False)
+    contact_name: Mapped[str | None] = mapped_column(String(180))
+    phone: Mapped[str | None] = mapped_column(String(40))
+    phone_normalized: Mapped[str | None] = mapped_column(String(32))
+    email: Mapped[str | None] = mapped_column(String(180))
+    email_normalized: Mapped[str | None] = mapped_column(String(180))
+    address_line_1: Mapped[str | None] = mapped_column(String(180))
+    address_line_2: Mapped[str | None] = mapped_column(String(180))
+    city: Mapped[str | None] = mapped_column(String(120))
+    state: Mapped[str | None] = mapped_column(String(80))
+    postal_code: Mapped[str | None] = mapped_column(String(20))
+    notes: Mapped[str | None] = mapped_column(Text)
+    is_archived: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+
+    parts: Mapped[list[Part]] = relationship(back_populates="vendor")
+
+
+class Part(Base):
+    __tablename__ = "parts"
+    __table_args__ = (
+        Index("ix_parts_owner_archived_updated", "owner_user_id", "is_archived", "updated_at"),
+        Index("ix_parts_owner_part_number", "owner_user_id", "part_number"),
+        Index("ix_parts_vendor", "vendor_id"),
+        CheckConstraint("quantity_on_hand >= 0", name="ck_parts_quantity_non_negative"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    owner_user_id: Mapped[int] = mapped_column(
+        ForeignKey("user_accounts.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    vendor_id: Mapped[int | None] = mapped_column(
+        ForeignKey("vendors.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    part_number: Mapped[str] = mapped_column(String(120), nullable=False)
+    description: Mapped[str] = mapped_column(String(300), nullable=False)
+    category: Mapped[str | None] = mapped_column(String(120))
+    quantity_on_hand: Mapped[int] = mapped_column(nullable=False, default=0, server_default="0")
+    reorder_threshold: Mapped[int | None] = mapped_column()
+    unit_cost: Mapped[Decimal | None] = mapped_column(Numeric(10, 2))
+    unit_price: Mapped[Decimal | None] = mapped_column(Numeric(10, 2))
+    location: Mapped[str | None] = mapped_column(String(120))
+    notes: Mapped[str | None] = mapped_column(Text)
+    is_archived: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+
+    vendor: Mapped[Vendor | None] = relationship(back_populates="parts")
+
+
+class IntakeRequest(Base):
+    __tablename__ = "intake_requests"
+    __table_args__ = (
+        Index(
+            "ix_intake_requests_owner_status_updated",
+            "owner_user_id",
+            "status",
+            "updated_at",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    owner_user_id: Mapped[int] = mapped_column(
+        ForeignKey("user_accounts.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    customer_name: Mapped[str] = mapped_column(String(200), nullable=False)
+    phone: Mapped[str | None] = mapped_column(String(40))
+    phone_normalized: Mapped[str | None] = mapped_column(String(32))
+    email: Mapped[str | None] = mapped_column(String(180))
+    email_normalized: Mapped[str | None] = mapped_column(String(180))
+    vehicle_description: Mapped[str | None] = mapped_column(String(300))
+    complaint: Mapped[str] = mapped_column(Text, nullable=False)
+    source: Mapped[str] = mapped_column(String(40), nullable=False, default="phone")
+    status: Mapped[str] = mapped_column(String(40), nullable=False, default="new")
+    notes: Mapped[str | None] = mapped_column(Text)
+    converted_customer_id: Mapped[int | None] = mapped_column(
+        ForeignKey("customers.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    converted_vehicle_id: Mapped[int | None] = mapped_column(
+        ForeignKey("vehicles.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+
+
+class DiagnosticFinding(Base):
+    __tablename__ = "diagnostic_findings"
+    __table_args__ = (
+        Index(
+            "ix_diagnostic_findings_owner_vehicle_updated",
+            "owner_user_id",
+            "vehicle_id",
+            "updated_at",
+        ),
+        Index("ix_diagnostic_findings_work_order", "work_order_id"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    owner_user_id: Mapped[int] = mapped_column(
+        ForeignKey("user_accounts.id", ondelete="CASCADE"), nullable=False
+    )
+    vehicle_id: Mapped[int] = mapped_column(
+        ForeignKey("vehicles.id", ondelete="CASCADE"), nullable=False
+    )
+    work_order_id: Mapped[int | None] = mapped_column(
+        ForeignKey("work_orders.id", ondelete="SET NULL"), nullable=True
+    )
+    technician_id: Mapped[int | None] = mapped_column(
+        ForeignKey("technicians.id", ondelete="SET NULL"), nullable=True
+    )
+    codes: Mapped[str | None] = mapped_column(Text)
+    symptoms: Mapped[str] = mapped_column(Text, nullable=False)
+    tests_performed: Mapped[str | None] = mapped_column(Text)
+    conclusion: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+
+
+class Inspection(Base):
+    __tablename__ = "inspections"
+    __table_args__ = (
+        Index("ix_inspections_owner_vehicle_updated", "owner_user_id", "vehicle_id", "updated_at"),
+        Index("ix_inspections_work_order", "work_order_id"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    owner_user_id: Mapped[int] = mapped_column(
+        ForeignKey("user_accounts.id", ondelete="CASCADE"), nullable=False
+    )
+    vehicle_id: Mapped[int] = mapped_column(
+        ForeignKey("vehicles.id", ondelete="CASCADE"), nullable=False
+    )
+    work_order_id: Mapped[int | None] = mapped_column(
+        ForeignKey("work_orders.id", ondelete="SET NULL"), nullable=True
+    )
+    technician_id: Mapped[int | None] = mapped_column(
+        ForeignKey("technicians.id", ondelete="SET NULL"), nullable=True
+    )
+    inspection_type: Mapped[str | None] = mapped_column(String(120))
+    items: Mapped[list[dict[str, object]]] = mapped_column(JSON, nullable=False, default=list)
+    overall_notes: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )

@@ -55,6 +55,60 @@ const state = {
   myDay: {
     profile: null,
   },
+  serviceDesk: {
+    items: [],
+    selectedRequestId: null,
+    selectedRequest: null,
+    page: 1,
+    pageSize: 20,
+    total: 0,
+    hasMore: false,
+    search: "",
+    statusFilter: "",
+  },
+  diagnostics: {
+    items: [],
+    selectedFindingId: null,
+    selectedFinding: null,
+    page: 1,
+    pageSize: 20,
+    total: 0,
+    hasMore: false,
+    vehicleFilterId: null,
+  },
+  inspections: {
+    items: [],
+    selectedInspectionId: null,
+    selectedInspection: null,
+    page: 1,
+    pageSize: 20,
+    total: 0,
+    hasMore: false,
+    vehicleFilterId: null,
+    draftItems: [],
+  },
+  parts: {
+    items: [],
+    selectedPartId: null,
+    selectedPart: null,
+    page: 1,
+    pageSize: 20,
+    total: 0,
+    hasMore: false,
+    search: "",
+    archivedOnly: false,
+  },
+  vendors: {
+    items: [],
+    selectedVendorId: null,
+    selectedVendor: null,
+    page: 1,
+    pageSize: 20,
+    total: 0,
+    hasMore: false,
+    search: "",
+    archivedOnly: false,
+  },
   estimates: {
     selectedEstimateId: null,
     selectedEstimate: null,
@@ -132,6 +186,11 @@ const viewMeta = {
   square: { eyebrow: "Payment integration", title: "Square" },
   reports: { eyebrow: "Owner reporting", title: "Reports" },
   scheduling: { eyebrow: "Not yet built", title: "Scheduling" },
+  "service-desk": { eyebrow: "Intake queue", title: "Service Desk" },
+  diagnostics: { eyebrow: "Findings", title: "Diagnostics" },
+  inspections: { eyebrow: "Digital inspections", title: "Inspections" },
+  parts: { eyebrow: "Inventory", title: "Parts" },
+  vendors: { eyebrow: "Vendor directory", title: "Vendors" },
   chat: { eyebrow: "Owner channel", title: "Talk to Optimus" },
   estimate: { eyebrow: "Pricing workflow", title: "Job estimator" },
   approval: { eyebrow: "Customer authorization", title: "Estimate approval" },
@@ -364,6 +423,11 @@ function navigate(view) {
   if (view === "notifications" && state.auth.authenticated) void loadNotifications();
   if (view === "square" && state.auth.authenticated) void loadSquareDashboard();
   if (view === "reports" && state.auth.authenticated) void loadReports();
+  if (view === "service-desk" && state.auth.authenticated) void loadServiceDesk();
+  if (view === "diagnostics" && state.auth.authenticated) void loadDiagnostics();
+  if (view === "inspections" && state.auth.authenticated) void loadInspections();
+  if (view === "parts" && state.auth.authenticated) void loadParts();
+  if (view === "vendors" && state.auth.authenticated) void loadVendors();
   if (view === "technicians" && state.auth.authenticated) void loadTechnicians();
   if (view === "my-day" && state.auth.authenticated) void loadMyDay();
   if (view === "chat") {
@@ -3524,6 +3588,1079 @@ function initializeReports() {
   });
 }
 
+async function loadVehicleOptionsInto(selectId, placeholder) {
+  const select = $(selectId);
+  if (!select) return;
+  const currentValue = select.value;
+  try {
+    const response = await apiFetch("/api/vehicles?page=1&page_size=100&archived=false");
+    const data = await readApiPayload(response);
+    if (!response.ok || !data) throw apiError(response, data, "Vehicle options failed");
+    select.innerHTML = [`<option value="">${escapeHtml(placeholder)}</option>`, ...data.items.map((vehicle) => (
+      `<option value="${vehicle.id}">${escapeHtml(vehicle.display_name)}</option>`
+    ))].join("");
+    if (currentValue) select.value = currentValue;
+  } catch {
+    // Dropdown population is a convenience; a failure here shouldn't block the view.
+  }
+}
+
+// ---- Service Desk (intake queue) ----
+
+function renderServiceDeskList() {
+  const container = $("service-desk-list");
+  if (!state.serviceDesk.items.length) {
+    container.innerHTML = '<div class="empty-card"><strong>No intake requests</strong><p>New customer contacts will appear here.</p></div>';
+  } else {
+    container.innerHTML = state.serviceDesk.items.map((item) => `
+      <button type="button" class="customer-list-item${state.serviceDesk.selectedRequestId === item.id ? " is-active" : ""}" data-service-desk-id="${item.id}">
+        <strong>${escapeHtml(item.customer_name)}</strong>
+        <span>${escapeHtml(item.vehicle_description || "No vehicle noted")} · ${escapeHtml(item.status)}</span>
+      </button>`).join("");
+    $$("[data-service-desk-id]", container).forEach((button) => {
+      button.addEventListener("click", () => {
+        void selectServiceDeskRequest(Number(button.dataset.serviceDeskId));
+      });
+    });
+  }
+  $("service-desk-page-status").textContent = `Page ${state.serviceDesk.page} · ${state.serviceDesk.total} total`;
+  $("service-desk-prev").disabled = state.serviceDesk.page <= 1;
+  $("service-desk-next").disabled = !state.serviceDesk.hasMore;
+}
+
+async function loadServiceDesk() {
+  if (!await requireAuthenticated("login")) return;
+  const list = $("service-desk-list");
+  list.innerHTML = '<div class="loading-panel"><span class="loading-spinner"></span><div><strong>Loading intake requests</strong></div></div>';
+  const searchParams = new URLSearchParams({
+    page: String(state.serviceDesk.page),
+    page_size: String(state.serviceDesk.pageSize),
+  });
+  if (state.serviceDesk.search.trim()) searchParams.set("search", state.serviceDesk.search.trim());
+  if (state.serviceDesk.statusFilter) searchParams.set("status", state.serviceDesk.statusFilter);
+  try {
+    const response = await apiFetch(`/api/intake-requests?${searchParams.toString()}`);
+    const data = await readApiPayload(response);
+    if (!response.ok || !data) throw apiError(response, data, "Intake request listing failed");
+    state.serviceDesk.items = data.items;
+    state.serviceDesk.total = data.total;
+    state.serviceDesk.hasMore = data.has_more;
+    renderServiceDeskList();
+  } catch (error) {
+    list.innerHTML = `<div class="error-card"><strong>Intake request listing failed</strong><p>${escapeHtml(error.message)}</p></div>`;
+    showToast(`Intake request listing failed: ${error.message}`, "error");
+  }
+}
+
+function renderServiceDeskDetail(request = null) {
+  const detail = $("service-desk-detail");
+  const convertForm = $("service-desk-convert-form");
+  if (!request) {
+    detail.innerHTML = "<p>Select an intake request from the list or create a new one.</p>";
+    convertForm.hidden = true;
+    return;
+  }
+  detail.innerHTML = `
+    <div class="customer-detail-header">
+      <strong>${escapeHtml(request.customer_name)}</strong>
+      <span>${escapeHtml(request.status)}</span>
+    </div>
+    <p>${escapeHtml(request.complaint)}</p>
+    <div class="customer-detail-grid">
+      <div><span>Phone</span><strong>${escapeHtml(request.phone || "Not set")}</strong></div>
+      <div><span>Email</span><strong>${escapeHtml(request.email || "Not set")}</strong></div>
+      <div><span>Vehicle</span><strong>${escapeHtml(request.vehicle_description || "Not noted")}</strong></div>
+      <div><span>Source</span><strong>${escapeHtml(request.source)}</strong></div>
+    </div>
+    ${request.notes ? `<div class="customer-detail-notes"><span>Internal notes</span><p>${escapeHtml(request.notes)}</p></div>` : ""}
+    ${request.converted_customer_id ? `<div class="customer-detail-notes"><span>Converted</span><p>Linked to customer #${request.converted_customer_id}${request.converted_vehicle_id ? ` and vehicle #${request.converted_vehicle_id}` : ""}.</p></div>` : ""}`;
+  convertForm.hidden = request.status === "converted";
+}
+
+async function selectServiceDeskRequest(requestId) {
+  try {
+    const response = await apiFetch(`/api/intake-requests/${requestId}`);
+    const data = await readApiPayload(response);
+    if (!response.ok || !data) throw apiError(response, data, "Intake request load failed");
+    state.serviceDesk.selectedRequestId = data.id;
+    state.serviceDesk.selectedRequest = data;
+    renderServiceDeskDetail(data);
+    populateServiceDeskForm(data);
+    renderServiceDeskList();
+  } catch (error) {
+    showToast(`Intake request load failed: ${error.message}`, "error");
+  }
+}
+
+function populateServiceDeskForm(request = null) {
+  $("service-desk-id").value = request ? String(request.id) : "";
+  $("service-desk-customer-name").value = request ? request.customer_name : "";
+  $("service-desk-phone").value = request ? request.phone || "" : "";
+  $("service-desk-email").value = request ? request.email || "" : "";
+  $("service-desk-vehicle-description").value = request ? request.vehicle_description || "" : "";
+  $("service-desk-source").value = request ? request.source : "phone";
+  $("service-desk-complaint").value = request ? request.complaint : "";
+  $("service-desk-notes").value = request ? request.notes || "" : "";
+  $("service-desk-form-title").textContent = request ? "Edit intake request" : "Create intake request";
+  $("service-desk-form-mode").textContent = request ? "EDIT" : "CREATE";
+}
+
+async function submitServiceDeskForm(event) {
+  event.preventDefault();
+  if (!await requireAuthenticated("login")) return;
+  const requestId = $("service-desk-id").value.trim();
+  const submit = $("service-desk-save");
+  submit.disabled = true;
+  submit.textContent = requestId ? "Saving…" : "Creating…";
+  const payload = {
+    customer_name: $("service-desk-customer-name").value.trim(),
+    phone: $("service-desk-phone").value.trim() || null,
+    email: $("service-desk-email").value.trim() || null,
+    vehicle_description: $("service-desk-vehicle-description").value.trim() || null,
+    source: $("service-desk-source").value,
+    complaint: $("service-desk-complaint").value.trim(),
+    notes: $("service-desk-notes").value.trim() || null,
+  };
+  try {
+    const response = await apiFetch(requestId ? `/api/intake-requests/${requestId}` : "/api/intake-requests", {
+      method: requestId ? "PATCH" : "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const data = await readApiPayload(response);
+    if (!response.ok || !data) throw apiError(response, data, "Intake request save failed");
+    state.serviceDesk.selectedRequestId = data.id;
+    state.serviceDesk.selectedRequest = data;
+    populateServiceDeskForm(data);
+    renderServiceDeskDetail(data);
+    state.serviceDesk.page = 1;
+    await loadServiceDesk();
+    showToast(requestId ? "Intake request updated." : "Intake request created.", "success");
+  } catch (error) {
+    showToast(`Intake request save failed: ${error.message}`, "error");
+  } finally {
+    submit.disabled = false;
+    submit.textContent = "Save request";
+  }
+}
+
+async function submitServiceDeskConvert(event) {
+  event.preventDefault();
+  const request = state.serviceDesk.selectedRequest;
+  if (!request) return;
+  const submit = $("service-desk-convert-save");
+  submit.disabled = true;
+  try {
+    const payload = {
+      vehicle_year: $("service-desk-convert-vehicle-year").value ? Number($("service-desk-convert-vehicle-year").value) : null,
+      vehicle_make: $("service-desk-convert-vehicle-make").value.trim() || null,
+      vehicle_model: $("service-desk-convert-vehicle-model").value.trim() || null,
+    };
+    const response = await apiFetch(`/api/intake-requests/${request.id}/convert`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const data = await readApiPayload(response);
+    if (!response.ok || !data) throw apiError(response, data, "Conversion failed");
+    state.serviceDesk.selectedRequest = data.intake_request;
+    renderServiceDeskDetail(data.intake_request);
+    await loadServiceDesk();
+    showToast(`Converted to customer ${data.customer.display_name}.`, "success");
+  } catch (error) {
+    showToast(`Conversion failed: ${error.message}`, "error");
+  } finally {
+    submit.disabled = false;
+  }
+}
+
+function initializeServiceDesk() {
+  $("service-desk-new").addEventListener("click", () => {
+    state.serviceDesk.selectedRequestId = null;
+    state.serviceDesk.selectedRequest = null;
+    populateServiceDeskForm(null);
+    renderServiceDeskDetail(null);
+    renderServiceDeskList();
+  });
+  $("service-desk-cancel").addEventListener("click", () => {
+    populateServiceDeskForm(state.serviceDesk.selectedRequest);
+  });
+  $("service-desk-form").addEventListener("submit", submitServiceDeskForm);
+  $("service-desk-convert-form").addEventListener("submit", submitServiceDeskConvert);
+  $("service-desk-refresh").addEventListener("click", () => void loadServiceDesk());
+  $("service-desk-search").addEventListener("input", () => {
+    state.serviceDesk.search = $("service-desk-search").value;
+    state.serviceDesk.page = 1;
+    void loadServiceDesk();
+  });
+  $("service-desk-status-filter").addEventListener("change", () => {
+    state.serviceDesk.statusFilter = $("service-desk-status-filter").value;
+    state.serviceDesk.page = 1;
+    void loadServiceDesk();
+  });
+  $("service-desk-prev").addEventListener("click", () => {
+    if (state.serviceDesk.page > 1) {
+      state.serviceDesk.page -= 1;
+      void loadServiceDesk();
+    }
+  });
+  $("service-desk-next").addEventListener("click", () => {
+    if (state.serviceDesk.hasMore) {
+      state.serviceDesk.page += 1;
+      void loadServiceDesk();
+    }
+  });
+}
+
+// ---- Diagnostics ----
+
+function renderDiagnosticsList() {
+  const container = $("diagnostics-list");
+  if (!state.diagnostics.items.length) {
+    container.innerHTML = '<div class="empty-card"><strong>No findings</strong><p>Create a diagnostic finding for a vehicle.</p></div>';
+  } else {
+    container.innerHTML = state.diagnostics.items.map((item) => `
+      <button type="button" class="customer-list-item${state.diagnostics.selectedFindingId === item.id ? " is-active" : ""}" data-diagnostics-id="${item.id}">
+        <strong>${escapeHtml(item.vehicle_display_name || "Vehicle")}</strong>
+        <span>${escapeHtml(item.symptoms.slice(0, 80))}</span>
+      </button>`).join("");
+    $$("[data-diagnostics-id]", container).forEach((button) => {
+      button.addEventListener("click", () => {
+        void selectDiagnosticFinding(Number(button.dataset.diagnosticsId));
+      });
+    });
+  }
+  $("diagnostics-page-status").textContent = `Page ${state.diagnostics.page} · ${state.diagnostics.total} total`;
+  $("diagnostics-prev").disabled = state.diagnostics.page <= 1;
+  $("diagnostics-next").disabled = !state.diagnostics.hasMore;
+}
+
+async function loadDiagnostics() {
+  if (!await requireAuthenticated("login")) return;
+  void loadVehicleOptionsInto("diagnostics-vehicle-filter", "All vehicles");
+  void loadVehicleOptionsInto("diagnostics-vehicle-id", "Select a vehicle");
+  const list = $("diagnostics-list");
+  list.innerHTML = '<div class="loading-panel"><span class="loading-spinner"></span><div><strong>Loading findings</strong></div></div>';
+  const searchParams = new URLSearchParams({
+    page: String(state.diagnostics.page),
+    page_size: String(state.diagnostics.pageSize),
+  });
+  if (state.diagnostics.vehicleFilterId) searchParams.set("vehicle_id", String(state.diagnostics.vehicleFilterId));
+  try {
+    const response = await apiFetch(`/api/diagnostic-findings?${searchParams.toString()}`);
+    const data = await readApiPayload(response);
+    if (!response.ok || !data) throw apiError(response, data, "Diagnostic finding listing failed");
+    state.diagnostics.items = data.items;
+    state.diagnostics.total = data.total;
+    state.diagnostics.hasMore = data.has_more;
+    renderDiagnosticsList();
+  } catch (error) {
+    list.innerHTML = `<div class="error-card"><strong>Diagnostic finding listing failed</strong><p>${escapeHtml(error.message)}</p></div>`;
+    showToast(`Diagnostic finding listing failed: ${error.message}`, "error");
+  }
+}
+
+function renderDiagnosticsDetail(finding = null) {
+  const detail = $("diagnostics-detail");
+  $("diagnostics-delete").hidden = !finding;
+  if (!finding) {
+    detail.innerHTML = "<p>Select a finding from the list or create a new one.</p>";
+    return;
+  }
+  detail.innerHTML = `
+    <div class="customer-detail-header">
+      <strong>${escapeHtml(finding.vehicle_display_name || "Vehicle")}</strong>
+      <span>${new Date(finding.updated_at).toLocaleString()}</span>
+    </div>
+    <div class="customer-detail-grid">
+      <div><span>Codes</span><strong>${escapeHtml(finding.codes || "None recorded")}</strong></div>
+      <div><span>Technician</span><strong>${escapeHtml(finding.technician_display_name || "Unassigned")}</strong></div>
+      <div><span>Work order</span><strong>${finding.work_order_id ? `#${finding.work_order_id}` : "None"}</strong></div>
+    </div>
+    <div class="customer-detail-notes"><span>Symptoms</span><p>${escapeHtml(finding.symptoms)}</p></div>
+    ${finding.tests_performed ? `<div class="customer-detail-notes"><span>Tests performed</span><p>${escapeHtml(finding.tests_performed)}</p></div>` : ""}
+    ${finding.conclusion ? `<div class="customer-detail-notes"><span>Conclusion</span><p>${escapeHtml(finding.conclusion)}</p></div>` : ""}`;
+}
+
+async function selectDiagnosticFinding(findingId) {
+  try {
+    const response = await apiFetch(`/api/diagnostic-findings/${findingId}`);
+    const data = await readApiPayload(response);
+    if (!response.ok || !data) throw apiError(response, data, "Finding load failed");
+    state.diagnostics.selectedFindingId = data.id;
+    state.diagnostics.selectedFinding = data;
+    renderDiagnosticsDetail(data);
+    populateDiagnosticsForm(data);
+    renderDiagnosticsList();
+  } catch (error) {
+    showToast(`Finding load failed: ${error.message}`, "error");
+  }
+}
+
+function populateDiagnosticsForm(finding = null) {
+  $("diagnostics-id").value = finding ? String(finding.id) : "";
+  $("diagnostics-vehicle-id").value = finding ? String(finding.vehicle_id) : "";
+  $("diagnostics-work-order-id").value = finding && finding.work_order_id ? String(finding.work_order_id) : "";
+  $("diagnostics-codes").value = finding ? finding.codes || "" : "";
+  $("diagnostics-symptoms").value = finding ? finding.symptoms : "";
+  $("diagnostics-tests-performed").value = finding ? finding.tests_performed || "" : "";
+  $("diagnostics-conclusion").value = finding ? finding.conclusion || "" : "";
+  $("diagnostics-form-title").textContent = finding ? "Edit finding" : "Create finding";
+  $("diagnostics-form-mode").textContent = finding ? "EDIT" : "CREATE";
+}
+
+async function submitDiagnosticsForm(event) {
+  event.preventDefault();
+  if (!await requireAuthenticated("login")) return;
+  const vehicleId = $("diagnostics-vehicle-id").value;
+  if (!vehicleId) {
+    showToast("Select a vehicle first.", "error");
+    return;
+  }
+  const findingId = $("diagnostics-id").value.trim();
+  const submit = $("diagnostics-save");
+  submit.disabled = true;
+  submit.textContent = findingId ? "Saving…" : "Creating…";
+  const workOrderId = $("diagnostics-work-order-id").value.trim();
+  const payload = {
+    vehicle_id: Number(vehicleId),
+    work_order_id: workOrderId ? Number(workOrderId) : null,
+    codes: $("diagnostics-codes").value.trim() || null,
+    symptoms: $("diagnostics-symptoms").value.trim(),
+    tests_performed: $("diagnostics-tests-performed").value.trim() || null,
+    conclusion: $("diagnostics-conclusion").value.trim() || null,
+  };
+  if (findingId) delete payload.vehicle_id;
+  try {
+    const response = await apiFetch(findingId ? `/api/diagnostic-findings/${findingId}` : "/api/diagnostic-findings", {
+      method: findingId ? "PATCH" : "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const data = await readApiPayload(response);
+    if (!response.ok || !data) throw apiError(response, data, "Finding save failed");
+    state.diagnostics.selectedFindingId = data.id;
+    state.diagnostics.selectedFinding = data;
+    populateDiagnosticsForm(data);
+    renderDiagnosticsDetail(data);
+    state.diagnostics.page = 1;
+    await loadDiagnostics();
+    showToast(findingId ? "Finding updated." : "Finding created.", "success");
+  } catch (error) {
+    showToast(`Finding save failed: ${error.message}`, "error");
+  } finally {
+    submit.disabled = false;
+    submit.textContent = "Save finding";
+  }
+}
+
+async function deleteSelectedDiagnosticFinding() {
+  const finding = state.diagnostics.selectedFinding;
+  if (!finding) return;
+  if (!window.confirm("Delete this diagnostic finding?")) return;
+  try {
+    const response = await apiFetch(`/api/diagnostic-findings/${finding.id}`, { method: "DELETE" });
+    if (!response.ok) throw apiError(response, await readApiPayload(response), "Finding delete failed");
+    state.diagnostics.selectedFindingId = null;
+    state.diagnostics.selectedFinding = null;
+    populateDiagnosticsForm(null);
+    renderDiagnosticsDetail(null);
+    await loadDiagnostics();
+    showToast("Finding deleted.", "success");
+  } catch (error) {
+    showToast(`Finding delete failed: ${error.message}`, "error");
+  }
+}
+
+function initializeDiagnostics() {
+  $("diagnostics-new").addEventListener("click", () => {
+    state.diagnostics.selectedFindingId = null;
+    state.diagnostics.selectedFinding = null;
+    populateDiagnosticsForm(null);
+    renderDiagnosticsDetail(null);
+    renderDiagnosticsList();
+  });
+  $("diagnostics-cancel").addEventListener("click", () => {
+    populateDiagnosticsForm(state.diagnostics.selectedFinding);
+  });
+  $("diagnostics-form").addEventListener("submit", submitDiagnosticsForm);
+  $("diagnostics-delete").addEventListener("click", () => void deleteSelectedDiagnosticFinding());
+  $("diagnostics-refresh").addEventListener("click", () => void loadDiagnostics());
+  $("diagnostics-vehicle-filter").addEventListener("change", () => {
+    const value = $("diagnostics-vehicle-filter").value;
+    state.diagnostics.vehicleFilterId = value ? Number(value) : null;
+    state.diagnostics.page = 1;
+    void loadDiagnostics();
+  });
+  $("diagnostics-prev").addEventListener("click", () => {
+    if (state.diagnostics.page > 1) {
+      state.diagnostics.page -= 1;
+      void loadDiagnostics();
+    }
+  });
+  $("diagnostics-next").addEventListener("click", () => {
+    if (state.diagnostics.hasMore) {
+      state.diagnostics.page += 1;
+      void loadDiagnostics();
+    }
+  });
+}
+
+// ---- Inspections ----
+
+function renderInspectionsList() {
+  const container = $("inspections-list");
+  if (!state.inspections.items.length) {
+    container.innerHTML = '<div class="empty-card"><strong>No inspections</strong><p>Create an inspection for a vehicle.</p></div>';
+  } else {
+    container.innerHTML = state.inspections.items.map((item) => `
+      <button type="button" class="customer-list-item${state.inspections.selectedInspectionId === item.id ? " is-active" : ""}" data-inspections-id="${item.id}">
+        <strong>${escapeHtml(item.vehicle_display_name || "Vehicle")}</strong>
+        <span>${escapeHtml(item.inspection_type || "Inspection")}${item.has_failed_items ? " · Failed items" : item.has_attention_items ? " · Needs attention" : ""}</span>
+      </button>`).join("");
+    $$("[data-inspections-id]", container).forEach((button) => {
+      button.addEventListener("click", () => {
+        void selectInspection(Number(button.dataset.inspectionsId));
+      });
+    });
+  }
+  $("inspections-page-status").textContent = `Page ${state.inspections.page} · ${state.inspections.total} total`;
+  $("inspections-prev").disabled = state.inspections.page <= 1;
+  $("inspections-next").disabled = !state.inspections.hasMore;
+}
+
+async function loadInspections() {
+  if (!await requireAuthenticated("login")) return;
+  void loadVehicleOptionsInto("inspections-vehicle-filter", "All vehicles");
+  void loadVehicleOptionsInto("inspections-vehicle-id", "Select a vehicle");
+  const list = $("inspections-list");
+  list.innerHTML = '<div class="loading-panel"><span class="loading-spinner"></span><div><strong>Loading inspections</strong></div></div>';
+  const searchParams = new URLSearchParams({
+    page: String(state.inspections.page),
+    page_size: String(state.inspections.pageSize),
+  });
+  if (state.inspections.vehicleFilterId) searchParams.set("vehicle_id", String(state.inspections.vehicleFilterId));
+  try {
+    const response = await apiFetch(`/api/inspections?${searchParams.toString()}`);
+    const data = await readApiPayload(response);
+    if (!response.ok || !data) throw apiError(response, data, "Inspection listing failed");
+    state.inspections.items = data.items;
+    state.inspections.total = data.total;
+    state.inspections.hasMore = data.has_more;
+    renderInspectionsList();
+  } catch (error) {
+    list.innerHTML = `<div class="error-card"><strong>Inspection listing failed</strong><p>${escapeHtml(error.message)}</p></div>`;
+    showToast(`Inspection listing failed: ${error.message}`, "error");
+  }
+}
+
+function renderInspectionsDetail(inspection = null) {
+  const detail = $("inspections-detail");
+  $("inspections-delete").hidden = !inspection;
+  if (!inspection) {
+    detail.innerHTML = "<p>Select an inspection from the list or create a new one.</p>";
+    return;
+  }
+  const itemRows = inspection.items.map((item) => `
+    <li><strong>${escapeHtml(item.label)}</strong> · ${escapeHtml(item.status)}${item.note ? ` · ${escapeHtml(item.note)}` : ""}</li>
+  `).join("") || "<li>No checklist items recorded.</li>";
+  detail.innerHTML = `
+    <div class="customer-detail-header">
+      <strong>${escapeHtml(inspection.vehicle_display_name || "Vehicle")}</strong>
+      <span>${escapeHtml(inspection.inspection_type || "Inspection")}</span>
+    </div>
+    <div class="customer-detail-grid">
+      <div><span>Technician</span><strong>${escapeHtml(inspection.technician_display_name || "Unassigned")}</strong></div>
+      <div><span>Work order</span><strong>${inspection.work_order_id ? `#${inspection.work_order_id}` : "None"}</strong></div>
+    </div>
+    <div class="customer-history-section"><h4>Checklist</h4><ul>${itemRows}</ul></div>
+    ${inspection.overall_notes ? `<div class="customer-detail-notes"><span>Overall notes</span><p>${escapeHtml(inspection.overall_notes)}</p></div>` : ""}`;
+}
+
+function renderInspectionsDraftItems() {
+  const container = $("inspections-items-list");
+  if (!state.inspections.draftItems.length) {
+    container.innerHTML = "<p>No items added yet.</p>";
+    return;
+  }
+  container.innerHTML = state.inspections.draftItems.map((item, index) => `
+    <div class="customer-detail-grid">
+      <div><span>${escapeHtml(item.label)}</span><strong>${escapeHtml(item.status)}${item.note ? ` · ${escapeHtml(item.note)}` : ""}</strong></div>
+      <button type="button" class="text-button" data-remove-item-index="${index}">Remove</button>
+    </div>`).join("");
+  $$("[data-remove-item-index]", container).forEach((button) => {
+    button.addEventListener("click", () => {
+      state.inspections.draftItems.splice(Number(button.dataset.removeItemIndex), 1);
+      renderInspectionsDraftItems();
+    });
+  });
+}
+
+async function selectInspection(inspectionId) {
+  try {
+    const response = await apiFetch(`/api/inspections/${inspectionId}`);
+    const data = await readApiPayload(response);
+    if (!response.ok || !data) throw apiError(response, data, "Inspection load failed");
+    state.inspections.selectedInspectionId = data.id;
+    state.inspections.selectedInspection = data;
+    renderInspectionsDetail(data);
+    populateInspectionsForm(data);
+    renderInspectionsList();
+  } catch (error) {
+    showToast(`Inspection load failed: ${error.message}`, "error");
+  }
+}
+
+function populateInspectionsForm(inspection = null) {
+  $("inspections-id").value = inspection ? String(inspection.id) : "";
+  $("inspections-vehicle-id").value = inspection ? String(inspection.vehicle_id) : "";
+  $("inspections-work-order-id").value = inspection && inspection.work_order_id ? String(inspection.work_order_id) : "";
+  $("inspections-type").value = inspection ? inspection.inspection_type || "" : "";
+  $("inspections-overall-notes").value = inspection ? inspection.overall_notes || "" : "";
+  state.inspections.draftItems = inspection ? inspection.items.map((item) => ({ ...item })) : [];
+  renderInspectionsDraftItems();
+  $("inspections-form-title").textContent = inspection ? "Edit inspection" : "Create inspection";
+  $("inspections-form-mode").textContent = inspection ? "EDIT" : "CREATE";
+}
+
+function addInspectionDraftItem() {
+  const label = $("inspections-item-label").value.trim();
+  if (!label) {
+    showToast("Enter an item label first.", "error");
+    return;
+  }
+  state.inspections.draftItems.push({
+    label,
+    status: $("inspections-item-status").value,
+    note: $("inspections-item-note").value.trim() || null,
+  });
+  $("inspections-item-label").value = "";
+  $("inspections-item-note").value = "";
+  renderInspectionsDraftItems();
+}
+
+async function submitInspectionsForm(event) {
+  event.preventDefault();
+  if (!await requireAuthenticated("login")) return;
+  const vehicleId = $("inspections-vehicle-id").value;
+  if (!vehicleId) {
+    showToast("Select a vehicle first.", "error");
+    return;
+  }
+  const inspectionId = $("inspections-id").value.trim();
+  const submit = $("inspections-save");
+  submit.disabled = true;
+  submit.textContent = inspectionId ? "Saving…" : "Creating…";
+  const workOrderId = $("inspections-work-order-id").value.trim();
+  const payload = {
+    vehicle_id: Number(vehicleId),
+    work_order_id: workOrderId ? Number(workOrderId) : null,
+    inspection_type: $("inspections-type").value.trim() || null,
+    items: state.inspections.draftItems,
+    overall_notes: $("inspections-overall-notes").value.trim() || null,
+  };
+  if (inspectionId) delete payload.vehicle_id;
+  try {
+    const response = await apiFetch(inspectionId ? `/api/inspections/${inspectionId}` : "/api/inspections", {
+      method: inspectionId ? "PATCH" : "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const data = await readApiPayload(response);
+    if (!response.ok || !data) throw apiError(response, data, "Inspection save failed");
+    state.inspections.selectedInspectionId = data.id;
+    state.inspections.selectedInspection = data;
+    populateInspectionsForm(data);
+    renderInspectionsDetail(data);
+    state.inspections.page = 1;
+    await loadInspections();
+    showToast(inspectionId ? "Inspection updated." : "Inspection created.", "success");
+  } catch (error) {
+    showToast(`Inspection save failed: ${error.message}`, "error");
+  } finally {
+    submit.disabled = false;
+    submit.textContent = "Save inspection";
+  }
+}
+
+async function deleteSelectedInspection() {
+  const inspection = state.inspections.selectedInspection;
+  if (!inspection) return;
+  if (!window.confirm("Delete this inspection?")) return;
+  try {
+    const response = await apiFetch(`/api/inspections/${inspection.id}`, { method: "DELETE" });
+    if (!response.ok) throw apiError(response, await readApiPayload(response), "Inspection delete failed");
+    state.inspections.selectedInspectionId = null;
+    state.inspections.selectedInspection = null;
+    populateInspectionsForm(null);
+    renderInspectionsDetail(null);
+    await loadInspections();
+    showToast("Inspection deleted.", "success");
+  } catch (error) {
+    showToast(`Inspection delete failed: ${error.message}`, "error");
+  }
+}
+
+function initializeInspections() {
+  $("inspections-new").addEventListener("click", () => {
+    state.inspections.selectedInspectionId = null;
+    state.inspections.selectedInspection = null;
+    populateInspectionsForm(null);
+    renderInspectionsDetail(null);
+    renderInspectionsList();
+  });
+  $("inspections-cancel").addEventListener("click", () => {
+    populateInspectionsForm(state.inspections.selectedInspection);
+  });
+  $("inspections-form").addEventListener("submit", submitInspectionsForm);
+  $("inspections-item-add").addEventListener("click", addInspectionDraftItem);
+  $("inspections-delete").addEventListener("click", () => void deleteSelectedInspection());
+  $("inspections-refresh").addEventListener("click", () => void loadInspections());
+  $("inspections-vehicle-filter").addEventListener("change", () => {
+    const value = $("inspections-vehicle-filter").value;
+    state.inspections.vehicleFilterId = value ? Number(value) : null;
+    state.inspections.page = 1;
+    void loadInspections();
+  });
+  $("inspections-prev").addEventListener("click", () => {
+    if (state.inspections.page > 1) {
+      state.inspections.page -= 1;
+      void loadInspections();
+    }
+  });
+  $("inspections-next").addEventListener("click", () => {
+    if (state.inspections.hasMore) {
+      state.inspections.page += 1;
+      void loadInspections();
+    }
+  });
+}
+
+// ---- Vendors ----
+
+function renderVendorsList() {
+  const container = $("vendors-list");
+  if (!state.vendors.items.length) {
+    container.innerHTML = '<div class="empty-card"><strong>No vendors</strong><p>Create the first vendor record.</p></div>';
+  } else {
+    container.innerHTML = state.vendors.items.map((item) => `
+      <button type="button" class="customer-list-item${state.vendors.selectedVendorId === item.id ? " is-active" : ""}" data-vendor-id="${item.id}">
+        <strong>${escapeHtml(item.name)}</strong>
+        <span>${escapeHtml(item.contact_name || "No contact set")} · ${item.part_count} part${item.part_count === 1 ? "" : "s"}</span>
+      </button>`).join("");
+    $$("[data-vendor-id]", container).forEach((button) => {
+      button.addEventListener("click", () => {
+        void selectVendor(Number(button.dataset.vendorId));
+      });
+    });
+  }
+  $("vendors-page-status").textContent = `Page ${state.vendors.page} · ${state.vendors.total} total`;
+  $("vendors-prev").disabled = state.vendors.page <= 1;
+  $("vendors-next").disabled = !state.vendors.hasMore;
+}
+
+async function loadVendors() {
+  if (!await requireAuthenticated("login")) return;
+  const list = $("vendors-list");
+  list.innerHTML = '<div class="loading-panel"><span class="loading-spinner"></span><div><strong>Loading vendors</strong></div></div>';
+  const searchParams = new URLSearchParams({
+    page: String(state.vendors.page),
+    page_size: String(state.vendors.pageSize),
+    archived: String(state.vendors.archivedOnly),
+  });
+  if (state.vendors.search.trim()) searchParams.set("search", state.vendors.search.trim());
+  try {
+    const response = await apiFetch(`/api/vendors?${searchParams.toString()}`);
+    const data = await readApiPayload(response);
+    if (!response.ok || !data) throw apiError(response, data, "Vendor listing failed");
+    state.vendors.items = data.items;
+    state.vendors.total = data.total;
+    state.vendors.hasMore = data.has_more;
+    renderVendorsList();
+  } catch (error) {
+    list.innerHTML = `<div class="error-card"><strong>Vendor listing failed</strong><p>${escapeHtml(error.message)}</p></div>`;
+    showToast(`Vendor listing failed: ${error.message}`, "error");
+  }
+}
+
+function renderVendorsDetail(vendor = null) {
+  const detail = $("vendors-detail");
+  $("vendors-archive").hidden = !vendor;
+  if (!vendor) {
+    detail.innerHTML = "<p>Select a vendor from the list or create a new record.</p>";
+    return;
+  }
+  const address = [vendor.address_line_1, vendor.address_line_2, [vendor.city, vendor.state, vendor.postal_code].filter(Boolean).join(", ")]
+    .filter(Boolean).map((line) => escapeHtml(line)).join("<br>");
+  detail.innerHTML = `
+    <div class="customer-detail-header">
+      <strong>${escapeHtml(vendor.name)}</strong>
+      <span>${vendor.is_archived ? "Archived" : "Active"}</span>
+    </div>
+    <div class="customer-detail-grid">
+      <div><span>Contact</span><strong>${escapeHtml(vendor.contact_name || "Not set")}</strong></div>
+      <div><span>Phone</span><strong>${escapeHtml(vendor.phone || "Not set")}</strong></div>
+      <div><span>Email</span><strong>${escapeHtml(vendor.email || "Not set")}</strong></div>
+      <div><span>Active parts</span><strong>${vendor.part_count}</strong></div>
+    </div>
+    ${address ? `<div class="customer-detail-notes"><span>Address</span><p>${address}</p></div>` : ""}
+    ${vendor.notes ? `<div class="customer-detail-notes"><span>Notes</span><p>${escapeHtml(vendor.notes)}</p></div>` : ""}`;
+}
+
+async function selectVendor(vendorId) {
+  try {
+    const response = await apiFetch(`/api/vendors/${vendorId}`);
+    const data = await readApiPayload(response);
+    if (!response.ok || !data) throw apiError(response, data, "Vendor load failed");
+    state.vendors.selectedVendorId = data.id;
+    state.vendors.selectedVendor = data;
+    renderVendorsDetail(data);
+    populateVendorsForm(data);
+    renderVendorsList();
+  } catch (error) {
+    showToast(`Vendor load failed: ${error.message}`, "error");
+  }
+}
+
+function populateVendorsForm(vendor = null) {
+  $("vendors-id").value = vendor ? String(vendor.id) : "";
+  $("vendors-name").value = vendor ? vendor.name : "";
+  $("vendors-contact-name").value = vendor ? vendor.contact_name || "" : "";
+  $("vendors-phone").value = vendor ? vendor.phone || "" : "";
+  $("vendors-email").value = vendor ? vendor.email || "" : "";
+  $("vendors-address-line-1").value = vendor ? vendor.address_line_1 || "" : "";
+  $("vendors-address-line-2").value = vendor ? vendor.address_line_2 || "" : "";
+  $("vendors-city").value = vendor ? vendor.city || "" : "";
+  $("vendors-state").value = vendor ? vendor.state || "" : "";
+  $("vendors-postal-code").value = vendor ? vendor.postal_code || "" : "";
+  $("vendors-notes").value = vendor ? vendor.notes || "" : "";
+  $("vendors-form-title").textContent = vendor ? "Edit vendor" : "Create vendor";
+  $("vendors-form-mode").textContent = vendor ? "EDIT" : "CREATE";
+}
+
+async function submitVendorsForm(event) {
+  event.preventDefault();
+  if (!await requireAuthenticated("login")) return;
+  const vendorId = $("vendors-id").value.trim();
+  const submit = $("vendors-save");
+  submit.disabled = true;
+  submit.textContent = vendorId ? "Saving…" : "Creating…";
+  const payload = {
+    name: $("vendors-name").value.trim(),
+    contact_name: $("vendors-contact-name").value.trim() || null,
+    phone: $("vendors-phone").value.trim() || null,
+    email: $("vendors-email").value.trim() || null,
+    address_line_1: $("vendors-address-line-1").value.trim() || null,
+    address_line_2: $("vendors-address-line-2").value.trim() || null,
+    city: $("vendors-city").value.trim() || null,
+    state: $("vendors-state").value.trim() || null,
+    postal_code: $("vendors-postal-code").value.trim() || null,
+    notes: $("vendors-notes").value.trim() || null,
+  };
+  try {
+    const response = await apiFetch(vendorId ? `/api/vendors/${vendorId}` : "/api/vendors", {
+      method: vendorId ? "PATCH" : "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const data = await readApiPayload(response);
+    if (!response.ok || !data) throw apiError(response, data, "Vendor save failed");
+    state.vendors.selectedVendorId = data.id;
+    state.vendors.selectedVendor = data;
+    populateVendorsForm(data);
+    renderVendorsDetail(data);
+    state.vendors.page = 1;
+    await loadVendors();
+    showToast(vendorId ? "Vendor updated." : "Vendor created.", "success");
+  } catch (error) {
+    showToast(`Vendor save failed: ${error.message}`, "error");
+  } finally {
+    submit.disabled = false;
+    submit.textContent = "Save vendor";
+  }
+}
+
+async function archiveSelectedVendor() {
+  const vendor = state.vendors.selectedVendor;
+  if (!vendor) return;
+  if (!window.confirm(`Archive ${vendor.name}?`)) return;
+  try {
+    const response = await apiFetch(`/api/vendors/${vendor.id}`, { method: "DELETE" });
+    const data = await readApiPayload(response);
+    if (!response.ok || !data) throw apiError(response, data, "Vendor archive failed");
+    state.vendors.selectedVendorId = null;
+    state.vendors.selectedVendor = null;
+    populateVendorsForm(null);
+    renderVendorsDetail(null);
+    await loadVendors();
+    showToast("Vendor archived.", "success");
+  } catch (error) {
+    showToast(`Vendor archive failed: ${error.message}`, "error");
+  }
+}
+
+function initializeVendors() {
+  $("vendors-new").addEventListener("click", () => {
+    state.vendors.selectedVendorId = null;
+    state.vendors.selectedVendor = null;
+    populateVendorsForm(null);
+    renderVendorsDetail(null);
+    renderVendorsList();
+  });
+  $("vendors-cancel").addEventListener("click", () => {
+    populateVendorsForm(state.vendors.selectedVendor);
+  });
+  $("vendors-form").addEventListener("submit", submitVendorsForm);
+  $("vendors-archive").addEventListener("click", () => void archiveSelectedVendor());
+  $("vendors-refresh").addEventListener("click", () => void loadVendors());
+  $("vendors-search").addEventListener("input", () => {
+    state.vendors.search = $("vendors-search").value;
+    state.vendors.page = 1;
+    void loadVendors();
+  });
+  $("vendors-archived-only").addEventListener("change", () => {
+    state.vendors.archivedOnly = $("vendors-archived-only").checked;
+    state.vendors.page = 1;
+    void loadVendors();
+  });
+  $("vendors-prev").addEventListener("click", () => {
+    if (state.vendors.page > 1) {
+      state.vendors.page -= 1;
+      void loadVendors();
+    }
+  });
+  $("vendors-next").addEventListener("click", () => {
+    if (state.vendors.hasMore) {
+      state.vendors.page += 1;
+      void loadVendors();
+    }
+  });
+}
+
+// ---- Parts ----
+
+async function loadVendorOptionsInto(selectId) {
+  const select = $(selectId);
+  if (!select) return;
+  const currentValue = select.value;
+  try {
+    const response = await apiFetch("/api/vendors?page=1&page_size=100&archived=false");
+    const data = await readApiPayload(response);
+    if (!response.ok || !data) throw apiError(response, data, "Vendor options failed");
+    select.innerHTML = ['<option value="">No vendor</option>', ...data.items.map((vendor) => (
+      `<option value="${vendor.id}">${escapeHtml(vendor.name)}</option>`
+    ))].join("");
+    if (currentValue) select.value = currentValue;
+  } catch {
+    // Dropdown population is a convenience; a failure here shouldn't block the view.
+  }
+}
+
+function renderPartsList() {
+  const container = $("parts-list");
+  if (!state.parts.items.length) {
+    container.innerHTML = '<div class="empty-card"><strong>No parts</strong><p>Create the first part record.</p></div>';
+  } else {
+    container.innerHTML = state.parts.items.map((item) => `
+      <button type="button" class="customer-list-item${state.parts.selectedPartId === item.id ? " is-active" : ""}" data-part-id="${item.id}">
+        <strong>${escapeHtml(item.part_number)}${item.is_below_reorder_threshold ? " · Reorder" : ""}</strong>
+        <span>${escapeHtml(item.description)} · Qty ${item.quantity_on_hand}</span>
+      </button>`).join("");
+    $$("[data-part-id]", container).forEach((button) => {
+      button.addEventListener("click", () => {
+        void selectPart(Number(button.dataset.partId));
+      });
+    });
+  }
+  $("parts-page-status").textContent = `Page ${state.parts.page} · ${state.parts.total} total`;
+  $("parts-prev").disabled = state.parts.page <= 1;
+  $("parts-next").disabled = !state.parts.hasMore;
+}
+
+async function loadParts() {
+  if (!await requireAuthenticated("login")) return;
+  void loadVendorOptionsInto("parts-vendor-id");
+  const list = $("parts-list");
+  list.innerHTML = '<div class="loading-panel"><span class="loading-spinner"></span><div><strong>Loading parts</strong></div></div>';
+  const searchParams = new URLSearchParams({
+    page: String(state.parts.page),
+    page_size: String(state.parts.pageSize),
+    archived: String(state.parts.archivedOnly),
+  });
+  if (state.parts.search.trim()) searchParams.set("search", state.parts.search.trim());
+  try {
+    const response = await apiFetch(`/api/parts?${searchParams.toString()}`);
+    const data = await readApiPayload(response);
+    if (!response.ok || !data) throw apiError(response, data, "Part listing failed");
+    state.parts.items = data.items;
+    state.parts.total = data.total;
+    state.parts.hasMore = data.has_more;
+    renderPartsList();
+  } catch (error) {
+    list.innerHTML = `<div class="error-card"><strong>Part listing failed</strong><p>${escapeHtml(error.message)}</p></div>`;
+    showToast(`Part listing failed: ${error.message}`, "error");
+  }
+}
+
+function renderPartsDetail(part = null) {
+  const detail = $("parts-detail");
+  $("parts-archive").hidden = !part;
+  if (!part) {
+    detail.innerHTML = "<p>Select a part from the list or create a new record.</p>";
+    return;
+  }
+  detail.innerHTML = `
+    <div class="customer-detail-header">
+      <strong>${escapeHtml(part.part_number)}</strong>
+      <span>${part.is_archived ? "Archived" : "Active"}</span>
+    </div>
+    <p>${escapeHtml(part.description)}</p>
+    <div class="customer-detail-grid">
+      <div><span>Category</span><strong>${escapeHtml(part.category || "Not set")}</strong></div>
+      <div><span>Vendor</span><strong>${escapeHtml(part.vendor_name || "None")}</strong></div>
+      <div><span>Quantity on hand</span><strong>${part.quantity_on_hand}${part.is_below_reorder_threshold ? " (below reorder threshold)" : ""}</strong></div>
+      <div><span>Reorder threshold</span><strong>${part.reorder_threshold ?? "Not set"}</strong></div>
+      <div><span>Unit cost</span><strong>${part.unit_cost != null ? money(part.unit_cost) : "Not set"}</strong></div>
+      <div><span>Unit price</span><strong>${part.unit_price != null ? money(part.unit_price) : "Not set"}</strong></div>
+      <div><span>Location</span><strong>${escapeHtml(part.location || "Not set")}</strong></div>
+    </div>
+    ${part.notes ? `<div class="customer-detail-notes"><span>Notes</span><p>${escapeHtml(part.notes)}</p></div>` : ""}`;
+}
+
+async function selectPart(partId) {
+  try {
+    const response = await apiFetch(`/api/parts/${partId}`);
+    const data = await readApiPayload(response);
+    if (!response.ok || !data) throw apiError(response, data, "Part load failed");
+    state.parts.selectedPartId = data.id;
+    state.parts.selectedPart = data;
+    renderPartsDetail(data);
+    populatePartsForm(data);
+    renderPartsList();
+  } catch (error) {
+    showToast(`Part load failed: ${error.message}`, "error");
+  }
+}
+
+function populatePartsForm(part = null) {
+  $("parts-id").value = part ? String(part.id) : "";
+  $("parts-part-number").value = part ? part.part_number : "";
+  $("parts-category").value = part ? part.category || "" : "";
+  $("parts-vendor-id").value = part && part.vendor_id ? String(part.vendor_id) : "";
+  $("parts-description").value = part ? part.description : "";
+  $("parts-quantity").value = part ? String(part.quantity_on_hand) : "0";
+  $("parts-reorder-threshold").value = part && part.reorder_threshold != null ? String(part.reorder_threshold) : "";
+  $("parts-unit-cost").value = part && part.unit_cost != null ? String(part.unit_cost) : "";
+  $("parts-unit-price").value = part && part.unit_price != null ? String(part.unit_price) : "";
+  $("parts-location").value = part ? part.location || "" : "";
+  $("parts-notes").value = part ? part.notes || "" : "";
+  $("parts-form-title").textContent = part ? "Edit part" : "Create part";
+  $("parts-form-mode").textContent = part ? "EDIT" : "CREATE";
+}
+
+async function submitPartsForm(event) {
+  event.preventDefault();
+  if (!await requireAuthenticated("login")) return;
+  const partId = $("parts-id").value.trim();
+  const submit = $("parts-save");
+  submit.disabled = true;
+  submit.textContent = partId ? "Saving…" : "Creating…";
+  const vendorId = $("parts-vendor-id").value;
+  const reorderThreshold = $("parts-reorder-threshold").value;
+  const unitCost = $("parts-unit-cost").value;
+  const unitPrice = $("parts-unit-price").value;
+  const payload = {
+    part_number: $("parts-part-number").value.trim(),
+    description: $("parts-description").value.trim(),
+    category: $("parts-category").value.trim() || null,
+    quantity_on_hand: Number($("parts-quantity").value || 0),
+    reorder_threshold: reorderThreshold ? Number(reorderThreshold) : null,
+    unit_cost: unitCost ? Number(unitCost) : null,
+    unit_price: unitPrice ? Number(unitPrice) : null,
+    location: $("parts-location").value.trim() || null,
+    notes: $("parts-notes").value.trim() || null,
+    vendor_id: vendorId ? Number(vendorId) : null,
+  };
+  try {
+    const response = await apiFetch(partId ? `/api/parts/${partId}` : "/api/parts", {
+      method: partId ? "PATCH" : "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const data = await readApiPayload(response);
+    if (!response.ok || !data) throw apiError(response, data, "Part save failed");
+    state.parts.selectedPartId = data.id;
+    state.parts.selectedPart = data;
+    populatePartsForm(data);
+    renderPartsDetail(data);
+    state.parts.page = 1;
+    await loadParts();
+    showToast(partId ? "Part updated." : "Part created.", "success");
+  } catch (error) {
+    showToast(`Part save failed: ${error.message}`, "error");
+  } finally {
+    submit.disabled = false;
+    submit.textContent = "Save part";
+  }
+}
+
+async function archiveSelectedPart() {
+  const part = state.parts.selectedPart;
+  if (!part) return;
+  if (!window.confirm(`Archive ${part.part_number}?`)) return;
+  try {
+    const response = await apiFetch(`/api/parts/${part.id}`, { method: "DELETE" });
+    const data = await readApiPayload(response);
+    if (!response.ok || !data) throw apiError(response, data, "Part archive failed");
+    state.parts.selectedPartId = null;
+    state.parts.selectedPart = null;
+    populatePartsForm(null);
+    renderPartsDetail(null);
+    await loadParts();
+    showToast("Part archived.", "success");
+  } catch (error) {
+    showToast(`Part archive failed: ${error.message}`, "error");
+  }
+}
+
+function initializeParts() {
+  $("parts-new").addEventListener("click", () => {
+    state.parts.selectedPartId = null;
+    state.parts.selectedPart = null;
+    populatePartsForm(null);
+    renderPartsDetail(null);
+    renderPartsList();
+  });
+  $("parts-cancel").addEventListener("click", () => {
+    populatePartsForm(state.parts.selectedPart);
+  });
+  $("parts-form").addEventListener("submit", submitPartsForm);
+  $("parts-archive").addEventListener("click", () => void archiveSelectedPart());
+  $("parts-refresh").addEventListener("click", () => void loadParts());
+  $("parts-search").addEventListener("input", () => {
+    state.parts.search = $("parts-search").value;
+    state.parts.page = 1;
+    void loadParts();
+  });
+  $("parts-archived-only").addEventListener("change", () => {
+    state.parts.archivedOnly = $("parts-archived-only").checked;
+    state.parts.page = 1;
+    void loadParts();
+  });
+  $("parts-prev").addEventListener("click", () => {
+    if (state.parts.page > 1) {
+      state.parts.page -= 1;
+      void loadParts();
+    }
+  });
+  $("parts-next").addEventListener("click", () => {
+    if (state.parts.hasMore) {
+      state.parts.page += 1;
+      void loadParts();
+    }
+  });
+}
+
 function setStatus(id, text, online = null) {
   $(id).textContent = text;
   const dot = $(`${id}-dot`);
@@ -3668,7 +4805,7 @@ async function loadReports() {
     });
     const [summaryResponse, invoicesResponse] = await Promise.all([
       apiFetch(`/api/dashboard/summary?${searchParams.toString()}`),
-      apiFetch("/api/invoices?page_size=200"),
+      apiFetch("/api/invoices?page_size=100"),
     ]);
     const summary = await readApiPayload(summaryResponse);
     const invoicesData = await readApiPayload(invoicesResponse);
@@ -4136,6 +5273,11 @@ function initializeApp() {
   initializeNotifications();
   initializeSquareDashboard();
   initializeReports();
+  initializeServiceDesk();
+  initializeDiagnostics();
+  initializeInspections();
+  initializeVendors();
+  initializeParts();
   initializeEstimate();
   initializeSystem();
   initializeAuth();
