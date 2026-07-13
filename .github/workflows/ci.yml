@@ -28,7 +28,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 2
+          fetch-depth: 0
+
+      - name: Fetch PR base ref for git diff --check
+        if: github.event_name == 'pull_request'
+        run: git fetch origin "${{ github.base_ref }}"
 
       - uses: astral-sh/setup-uv@v5
         with:
