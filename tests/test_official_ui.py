@@ -110,7 +110,7 @@ def test_shop_management_ui_grouped_nav_and_new_modules() -> None:
     assert "scheduling:" in javascript
     assert "async function loadReports" in javascript
     assert '"/api/dashboard/summary?' in javascript or "/api/dashboard/summary?" in javascript
-    assert "/api/invoices?page_size=200" in javascript
+    assert "/api/invoices?page_size=100" in javascript
 
     # The center-timeline + right-rail pattern must exist for the modules
     # that got restructured, and must be defined in CSS.
@@ -221,8 +221,8 @@ def test_overview_dashboard_and_approval_queue_markup() -> None:
 
     assert 'data-view-panel="approval-queue"' in html
     assert 'data-view="approval-queue"' in html
-    assert html.count("nav-item is-disabled") == 5
-    assert html.count("nav-soon-badge") == 6
+    assert html.count("nav-item is-disabled") == 0
+    assert html.count("nav-soon-badge") == 1
 
     assert "async function loadDashboardSummary" in javascript
     assert "/api/dashboard/summary" in javascript

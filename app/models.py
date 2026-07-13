@@ -1528,3 +1528,385 @@ class DashboardSummaryResponse(BaseModel):
     current_operations: DashboardCurrentOperations
     financial_obligations: DashboardFinancialObligations
     insights: list[DashboardInsight]
+
+
+class VendorBase(BaseModel):
+    name: NonBlank = Field(max_length=180)
+    contact_name: str | None = Field(default=None, max_length=180)
+    phone: str | None = Field(default=None, max_length=40)
+    email: str | None = Field(default=None, max_length=180)
+    address_line_1: str | None = Field(default=None, max_length=180)
+    address_line_2: str | None = Field(default=None, max_length=180)
+    city: str | None = Field(default=None, max_length=120)
+    state: str | None = Field(default=None, max_length=80)
+    postal_code: str | None = Field(default=None, max_length=20)
+    notes: str | None = Field(default=None, max_length=4000)
+
+    @field_validator(
+        "contact_name",
+        "phone",
+        "email",
+        "address_line_1",
+        "address_line_2",
+        "city",
+        "state",
+        "postal_code",
+        "notes",
+        mode="before",
+    )
+    @classmethod
+    def strip_vendor_strings(cls, value: object) -> object:
+        if isinstance(value, str):
+            stripped = value.strip()
+            return stripped or None
+        return value
+
+
+class VendorCreate(VendorBase):
+    pass
+
+
+class VendorUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=180)
+    contact_name: str | None = Field(default=None, max_length=180)
+    phone: str | None = Field(default=None, max_length=40)
+    email: str | None = Field(default=None, max_length=180)
+    address_line_1: str | None = Field(default=None, max_length=180)
+    address_line_2: str | None = Field(default=None, max_length=180)
+    city: str | None = Field(default=None, max_length=120)
+    state: str | None = Field(default=None, max_length=80)
+    postal_code: str | None = Field(default=None, max_length=20)
+    notes: str | None = Field(default=None, max_length=4000)
+
+    @field_validator(
+        "name",
+        "contact_name",
+        "phone",
+        "email",
+        "address_line_1",
+        "address_line_2",
+        "city",
+        "state",
+        "postal_code",
+        "notes",
+        mode="before",
+    )
+    @classmethod
+    def strip_vendor_update_strings(cls, value: object) -> object:
+        if isinstance(value, str):
+            stripped = value.strip()
+            return stripped or None
+        return value
+
+
+class VendorRead(VendorBase):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    is_archived: bool
+    part_count: int
+    created_at: datetime
+    updated_at: datetime
+
+
+class VendorListResponse(BaseModel):
+    items: list[VendorRead]
+    page: int
+    page_size: int
+    total: int
+    has_more: bool
+
+
+class VendorArchiveResponse(BaseModel):
+    ok: bool = True
+    vendor: VendorRead
+
+
+class PartBase(BaseModel):
+    part_number: NonBlank = Field(max_length=120)
+    description: NonBlank = Field(max_length=300)
+    category: str | None = Field(default=None, max_length=120)
+    quantity_on_hand: int = Field(default=0, ge=0)
+    reorder_threshold: int | None = Field(default=None, ge=0)
+    unit_cost: float | None = Field(default=None, ge=0)
+    unit_price: float | None = Field(default=None, ge=0)
+    location: str | None = Field(default=None, max_length=120)
+    notes: str | None = Field(default=None, max_length=4000)
+    vendor_id: int | None = None
+
+    @field_validator("part_number", "description", "category", "location", "notes", mode="before")
+    @classmethod
+    def strip_part_strings(cls, value: object) -> object:
+        if isinstance(value, str):
+            stripped = value.strip()
+            return stripped or None
+        return value
+
+
+class PartCreate(PartBase):
+    pass
+
+
+class PartUpdate(BaseModel):
+    part_number: str | None = Field(default=None, min_length=1, max_length=120)
+    description: str | None = Field(default=None, min_length=1, max_length=300)
+    category: str | None = Field(default=None, max_length=120)
+    quantity_on_hand: int | None = Field(default=None, ge=0)
+    reorder_threshold: int | None = Field(default=None, ge=0)
+    unit_cost: float | None = Field(default=None, ge=0)
+    unit_price: float | None = Field(default=None, ge=0)
+    location: str | None = Field(default=None, max_length=120)
+    notes: str | None = Field(default=None, max_length=4000)
+    vendor_id: int | None = None
+
+    @field_validator("part_number", "description", "category", "location", "notes", mode="before")
+    @classmethod
+    def strip_part_update_strings(cls, value: object) -> object:
+        if isinstance(value, str):
+            stripped = value.strip()
+            return stripped or None
+        return value
+
+
+class PartRead(PartBase):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    vendor_name: str | None = None
+    is_archived: bool
+    is_below_reorder_threshold: bool
+    created_at: datetime
+    updated_at: datetime
+
+
+class PartListResponse(BaseModel):
+    items: list[PartRead]
+    page: int
+    page_size: int
+    total: int
+    has_more: bool
+
+
+class PartArchiveResponse(BaseModel):
+    ok: bool = True
+    part: PartRead
+
+
+class IntakeSourceCode(StrEnum):
+    PHONE = "phone"
+    WALK_IN = "walk_in"
+    WEB = "web"
+    REFERRAL = "referral"
+
+
+class IntakeStatus(StrEnum):
+    NEW = "new"
+    CONTACTED = "contacted"
+    SCHEDULED = "scheduled"
+    CONVERTED = "converted"
+    DISMISSED = "dismissed"
+
+
+class IntakeRequestBase(BaseModel):
+    customer_name: NonBlank = Field(max_length=200)
+    phone: str | None = Field(default=None, max_length=40)
+    email: str | None = Field(default=None, max_length=180)
+    vehicle_description: str | None = Field(default=None, max_length=300)
+    complaint: NonBlank = Field(max_length=4000)
+    source: IntakeSourceCode = IntakeSourceCode.PHONE
+    notes: str | None = Field(default=None, max_length=4000)
+
+    @field_validator("phone", "email", "vehicle_description", "notes", mode="before")
+    @classmethod
+    def strip_intake_strings(cls, value: object) -> object:
+        if isinstance(value, str):
+            stripped = value.strip()
+            return stripped or None
+        return value
+
+
+class IntakeRequestCreate(IntakeRequestBase):
+    pass
+
+
+class IntakeRequestUpdate(BaseModel):
+    customer_name: str | None = Field(default=None, min_length=1, max_length=200)
+    phone: str | None = Field(default=None, max_length=40)
+    email: str | None = Field(default=None, max_length=180)
+    vehicle_description: str | None = Field(default=None, max_length=300)
+    complaint: str | None = Field(default=None, min_length=1, max_length=4000)
+    source: IntakeSourceCode | None = None
+    status: IntakeStatus | None = None
+    notes: str | None = Field(default=None, max_length=4000)
+
+    @field_validator("phone", "email", "vehicle_description", "notes", mode="before")
+    @classmethod
+    def strip_intake_update_strings(cls, value: object) -> object:
+        if isinstance(value, str):
+            stripped = value.strip()
+            return stripped or None
+        return value
+
+
+class IntakeRequestRead(IntakeRequestBase):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    status: IntakeStatus
+    converted_customer_id: int | None = None
+    converted_vehicle_id: int | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class IntakeRequestListResponse(BaseModel):
+    items: list[IntakeRequestRead]
+    page: int
+    page_size: int
+    total: int
+    has_more: bool
+
+
+class IntakeRequestConvertRequest(BaseModel):
+    """Vehicle fields are optional -- an intake request can convert to just
+    a customer record when no vehicle detail was captured yet."""
+
+    vehicle_year: int | None = Field(default=None, ge=1900, le=2100)
+    vehicle_make: str | None = Field(default=None, max_length=100)
+    vehicle_model: str | None = Field(default=None, max_length=100)
+    vehicle_vin: str | None = Field(default=None, max_length=17)
+
+
+class IntakeRequestConvertResponse(BaseModel):
+    ok: bool = True
+    intake_request: IntakeRequestRead
+    customer: CustomerRead
+    vehicle: VehicleRead | None = None
+
+
+class DiagnosticFindingBase(BaseModel):
+    vehicle_id: int
+    work_order_id: int | None = None
+    technician_id: int | None = None
+    codes: str | None = Field(default=None, max_length=2000)
+    symptoms: NonBlank = Field(max_length=4000)
+    tests_performed: str | None = Field(default=None, max_length=4000)
+    conclusion: str | None = Field(default=None, max_length=4000)
+
+    @field_validator("codes", "tests_performed", "conclusion", mode="before")
+    @classmethod
+    def strip_diagnostic_strings(cls, value: object) -> object:
+        if isinstance(value, str):
+            stripped = value.strip()
+            return stripped or None
+        return value
+
+
+class DiagnosticFindingCreate(DiagnosticFindingBase):
+    pass
+
+
+class DiagnosticFindingUpdate(BaseModel):
+    work_order_id: int | None = None
+    technician_id: int | None = None
+    codes: str | None = Field(default=None, max_length=2000)
+    symptoms: str | None = Field(default=None, min_length=1, max_length=4000)
+    tests_performed: str | None = Field(default=None, max_length=4000)
+    conclusion: str | None = Field(default=None, max_length=4000)
+
+    @field_validator("codes", "tests_performed", "conclusion", mode="before")
+    @classmethod
+    def strip_diagnostic_update_strings(cls, value: object) -> object:
+        if isinstance(value, str):
+            stripped = value.strip()
+            return stripped or None
+        return value
+
+
+class DiagnosticFindingRead(DiagnosticFindingBase):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    vehicle_display_name: str | None = None
+    technician_display_name: str | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class DiagnosticFindingListResponse(BaseModel):
+    items: list[DiagnosticFindingRead]
+    page: int
+    page_size: int
+    total: int
+    has_more: bool
+
+
+class InspectionItem(BaseModel):
+    label: NonBlank = Field(max_length=200)
+    status: Literal["ok", "attention", "fail"] = "ok"
+    note: str | None = Field(default=None, max_length=1000)
+
+    @field_validator("note", mode="before")
+    @classmethod
+    def strip_inspection_item_note(cls, value: object) -> object:
+        if isinstance(value, str):
+            stripped = value.strip()
+            return stripped or None
+        return value
+
+
+class InspectionBase(BaseModel):
+    vehicle_id: int
+    work_order_id: int | None = None
+    technician_id: int | None = None
+    inspection_type: str | None = Field(default=None, max_length=120)
+    items: list[InspectionItem] = Field(default_factory=list, max_length=200)
+    overall_notes: str | None = Field(default=None, max_length=4000)
+
+    @field_validator("inspection_type", "overall_notes", mode="before")
+    @classmethod
+    def strip_inspection_strings(cls, value: object) -> object:
+        if isinstance(value, str):
+            stripped = value.strip()
+            return stripped or None
+        return value
+
+
+class InspectionCreate(InspectionBase):
+    pass
+
+
+class InspectionUpdate(BaseModel):
+    work_order_id: int | None = None
+    technician_id: int | None = None
+    inspection_type: str | None = Field(default=None, max_length=120)
+    items: list[InspectionItem] | None = Field(default=None, max_length=200)
+    overall_notes: str | None = Field(default=None, max_length=4000)
+
+    @field_validator("inspection_type", "overall_notes", mode="before")
+    @classmethod
+    def strip_inspection_update_strings(cls, value: object) -> object:
+        if isinstance(value, str):
+            stripped = value.strip()
+            return stripped or None
+        return value
+
+
+class InspectionRead(InspectionBase):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    vehicle_display_name: str | None = None
+    technician_display_name: str | None = None
+    has_attention_items: bool
+    has_failed_items: bool
+    created_at: datetime
+    updated_at: datetime
+
+
+class InspectionListResponse(BaseModel):
+    items: list[InspectionRead]
+    page: int
+    page_size: int
+    total: int
+    has_more: bool

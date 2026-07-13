@@ -267,20 +267,17 @@
 
         <div class="nav-group">
           <span class="nav-group-label">Service &amp; diagnostics</span>
-          <button class="nav-item is-disabled" type="button" aria-disabled="true" title="Not built yet — no service-desk/intake queue data model exists yet.">
+          <button class="nav-item" type="button" data-view="service-desk" data-owner-only="true">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a7 7 0 0 0-7 7v4a3 3 0 0 0 3 3h1v-7H6v-1a6 6 0 0 1 12 0v1h-3v7h1a3 3 0 0 0 3-3v-1h1v-3h-1v-.6A7 7 0 0 0 12 3Zm-1 18h2v1h-2v-1Z"/></svg>
             <span>Service Desk</span>
-            <span class="nav-soon-badge">Soon</span>
           </button>
-          <button class="nav-item is-disabled" type="button" aria-disabled="true" title="Not built yet — no diagnostic-findings data model exists yet.">
+          <button class="nav-item" type="button" data-view="diagnostics" data-owner-only="true">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12h4l2-7 4 14 2-9 2 4h4"/></svg>
             <span>Diagnostics</span>
-            <span class="nav-soon-badge">Soon</span>
           </button>
-          <button class="nav-item is-disabled" type="button" aria-disabled="true" title="Not built yet — no digital-inspection data model exists yet.">
+          <button class="nav-item" type="button" data-view="inspections" data-owner-only="true">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 2h10a2 2 0 0 1 2 2v16a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2Zm1 5h8V5H8v2Zm-.2 4.8 1.4-1.4L10 12.2l3.8-3.8 1.4 1.4L10 15Z"/></svg>
             <span>Inspections</span>
-            <span class="nav-soon-badge">Soon</span>
           </button>
         </div>
 
@@ -308,15 +305,13 @@
             <span>Scheduling</span>
             <span class="nav-soon-badge">Soon</span>
           </button>
-          <button class="nav-item is-disabled" type="button" aria-disabled="true" title="Not built yet — no parts-inventory data model exists yet.">
+          <button class="nav-item" type="button" data-view="parts" data-owner-only="true">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v14H4V5Zm3 3v3h3V8H7Zm5 0v3h5V8h-5ZM7 13v3h10v-3H7Z"/></svg>
             <span>Parts</span>
-            <span class="nav-soon-badge">Soon</span>
           </button>
-          <button class="nav-item is-disabled" type="button" aria-disabled="true" title="Not built yet — no vendor/purchase-order data model exists yet.">
+          <button class="nav-item" type="button" data-view="vendors" data-owner-only="true">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7h11v9H3V7Zm11 3h4l3 3v3h-7v-6ZM6 18a2 2 0 1 0 0 4 2 2 0 0 0 0-4Zm12 0a2 2 0 1 0 0 4 2 2 0 0 0 0-4Z"/></svg>
             <span>Vendors</span>
-            <span class="nav-soon-badge">Soon</span>
           </button>
         </div>
 
@@ -917,6 +912,399 @@
                   <div class="customers-form-actions">
                     <button class="text-button" type="button" id="vehicle-cancel">Clear</button>
                     <button class="primary-button compact" type="submit" id="vehicle-save">Save vehicle</button>
+                  </div>
+                </div>
+              </form>
+            </section>
+          </div>
+        </section>
+
+        <section class="app-view" id="view-service-desk" data-view-panel="service-desk" hidden>
+          <div class="customers-layout">
+            <section class="panel customers-list-panel">
+              <div class="panel-heading">
+                <div><span class="section-kicker"><i></i> Intake queue</span><h2>Service Desk</h2><p>New customer contacts before a customer or vehicle record exists.</p></div>
+                <button class="secondary-button compact" type="button" id="service-desk-new">New request</button>
+              </div>
+              <div class="vehicles-toolbar">
+                <label class="field full">
+                  Search
+                  <input id="service-desk-search" placeholder="Search name, vehicle, or complaint">
+                </label>
+                <label class="field">
+                  Status filter
+                  <select id="service-desk-status-filter">
+                    <option value="">All statuses</option>
+                    <option value="new">New</option>
+                    <option value="contacted">Contacted</option>
+                    <option value="scheduled">Scheduled</option>
+                    <option value="converted">Converted</option>
+                    <option value="dismissed">Dismissed</option>
+                  </select>
+                </label>
+                <button class="secondary-button compact" type="button" id="service-desk-refresh">Refresh</button>
+              </div>
+              <div id="service-desk-list" class="customers-list" aria-live="polite"></div>
+              <div class="customers-pagination">
+                <button class="secondary-button compact" type="button" id="service-desk-prev">Previous</button>
+                <span id="service-desk-page-status">Page 1</span>
+                <button class="secondary-button compact" type="button" id="service-desk-next">Next</button>
+              </div>
+            </section>
+
+            <section class="customers-detail-stack">
+              <section class="panel" id="service-desk-detail-panel">
+                <div class="panel-heading">
+                  <div><span class="section-kicker"><i></i> Detail view</span><h3>Selected request</h3></div>
+                </div>
+                <div id="service-desk-detail" class="customer-detail-card">
+                  <p>Select an intake request from the list or create a new one.</p>
+                </div>
+                <form class="estimate-submit-row" id="service-desk-convert-form">
+                  <div><strong>Convert to customer</strong><span>Creates a real customer record (and optionally a vehicle) from this request.</span></div>
+                  <div class="customers-form-actions">
+                    <input id="service-desk-convert-vehicle-year" class="convert-field-narrow" type="number" min="1900" max="2100" placeholder="Year">
+                    <input id="service-desk-convert-vehicle-make" class="convert-field-narrow" placeholder="Make">
+                    <input id="service-desk-convert-vehicle-model" class="convert-field-narrow" placeholder="Model">
+                    <button class="primary-button compact" type="submit" id="service-desk-convert-save">Convert</button>
+                  </div>
+                </form>
+              </section>
+
+              <form class="panel estimate-form-panel" id="service-desk-form">
+                <div class="panel-heading">
+                  <div><span class="section-kicker"><i></i> Record editor</span><h3 id="service-desk-form-title">Create intake request</h3></div>
+                  <span class="estimate-number" id="service-desk-form-mode">CREATE</span>
+                </div>
+                <input id="service-desk-id" type="hidden">
+                <fieldset>
+                  <legend><span>01</span> Contact</legend>
+                  <div class="form-grid three">
+                    <label class="field">Customer name <input id="service-desk-customer-name" maxlength="200"></label>
+                    <label class="field">Phone <input id="service-desk-phone" maxlength="40"></label>
+                    <label class="field">Email <input id="service-desk-email" maxlength="180"></label>
+                  </div>
+                  <div class="form-grid two">
+                    <label class="field">Vehicle description <input id="service-desk-vehicle-description" maxlength="300" placeholder="2018 Honda Civic"></label>
+                    <label class="field">Source
+                      <select id="service-desk-source">
+                        <option value="phone">Phone</option>
+                        <option value="walk_in">Walk-in</option>
+                        <option value="web">Web</option>
+                        <option value="referral">Referral</option>
+                      </select>
+                    </label>
+                  </div>
+                </fieldset>
+                <fieldset>
+                  <legend><span>02</span> Complaint</legend>
+                  <label class="field full">Complaint <textarea id="service-desk-complaint" maxlength="4000"></textarea></label>
+                  <label class="field full">Internal notes <textarea id="service-desk-notes" maxlength="4000"></textarea></label>
+                </fieldset>
+                <div class="estimate-submit-row">
+                  <div><strong id="service-desk-form-status-title">Intake request</strong><span id="service-desk-form-status-detail">Create or edit an intake request.</span></div>
+                  <div class="customers-form-actions">
+                    <button class="text-button" type="button" id="service-desk-cancel">Clear</button>
+                    <button class="primary-button compact" type="submit" id="service-desk-save">Save request</button>
+                  </div>
+                </div>
+              </form>
+            </section>
+          </div>
+        </section>
+
+        <section class="app-view" id="view-diagnostics" data-view-panel="diagnostics" hidden>
+          <div class="customers-layout">
+            <section class="panel customers-list-panel">
+              <div class="panel-heading">
+                <div><span class="section-kicker"><i></i> Findings</span><h2>Diagnostics</h2><p>Codes, symptoms, tests performed, and conclusions tied to a vehicle.</p></div>
+                <button class="secondary-button compact" type="button" id="diagnostics-new">New finding</button>
+              </div>
+              <div class="vehicles-toolbar">
+                <label class="field full">
+                  Vehicle
+                  <select id="diagnostics-vehicle-filter"><option value="">All vehicles</option></select>
+                </label>
+                <button class="secondary-button compact" type="button" id="diagnostics-refresh">Refresh</button>
+              </div>
+              <div id="diagnostics-list" class="customers-list" aria-live="polite"></div>
+              <div class="customers-pagination">
+                <button class="secondary-button compact" type="button" id="diagnostics-prev">Previous</button>
+                <span id="diagnostics-page-status">Page 1</span>
+                <button class="secondary-button compact" type="button" id="diagnostics-next">Next</button>
+              </div>
+            </section>
+
+            <section class="customers-detail-stack">
+              <section class="panel" id="diagnostics-detail-panel">
+                <div class="panel-heading">
+                  <div><span class="section-kicker"><i></i> Detail view</span><h3>Selected finding</h3></div>
+                  <button class="text-button" type="button" id="diagnostics-delete">Delete</button>
+                </div>
+                <div id="diagnostics-detail" class="customer-detail-card">
+                  <p>Select a finding from the list or create a new one.</p>
+                </div>
+              </section>
+
+              <form class="panel estimate-form-panel" id="diagnostics-form">
+                <div class="panel-heading">
+                  <div><span class="section-kicker"><i></i> Record editor</span><h3 id="diagnostics-form-title">Create finding</h3></div>
+                  <span class="estimate-number" id="diagnostics-form-mode">CREATE</span>
+                </div>
+                <input id="diagnostics-id" type="hidden">
+                <fieldset>
+                  <legend><span>01</span> Vehicle &amp; work order</legend>
+                  <div class="form-grid two">
+                    <label class="field">Vehicle <select id="diagnostics-vehicle-id"><option value="">Select a vehicle</option></select></label>
+                    <label class="field">Work order ID (optional) <input id="diagnostics-work-order-id" type="number" min="1"></label>
+                  </div>
+                </fieldset>
+                <fieldset>
+                  <legend><span>02</span> Findings</legend>
+                  <label class="field full">Codes <input id="diagnostics-codes" maxlength="2000" placeholder="P0301, P0171"></label>
+                  <label class="field full">Symptoms <textarea id="diagnostics-symptoms" maxlength="4000"></textarea></label>
+                  <label class="field full">Tests performed <textarea id="diagnostics-tests-performed" maxlength="4000"></textarea></label>
+                  <label class="field full">Conclusion <textarea id="diagnostics-conclusion" maxlength="4000"></textarea></label>
+                </fieldset>
+                <div class="estimate-submit-row">
+                  <div><strong id="diagnostics-form-status-title">Diagnostic finding</strong><span id="diagnostics-form-status-detail">Create or edit a finding.</span></div>
+                  <div class="customers-form-actions">
+                    <button class="text-button" type="button" id="diagnostics-cancel">Clear</button>
+                    <button class="primary-button compact" type="submit" id="diagnostics-save">Save finding</button>
+                  </div>
+                </div>
+              </form>
+            </section>
+          </div>
+        </section>
+
+        <section class="app-view" id="view-inspections" data-view-panel="inspections" hidden>
+          <div class="customers-layout">
+            <section class="panel customers-list-panel">
+              <div class="panel-heading">
+                <div><span class="section-kicker"><i></i> Digital inspections</span><h2>Inspections</h2><p>Checklist-style vehicle inspections with per-item status.</p></div>
+                <button class="secondary-button compact" type="button" id="inspections-new">New inspection</button>
+              </div>
+              <div class="vehicles-toolbar">
+                <label class="field full">
+                  Vehicle
+                  <select id="inspections-vehicle-filter"><option value="">All vehicles</option></select>
+                </label>
+                <button class="secondary-button compact" type="button" id="inspections-refresh">Refresh</button>
+              </div>
+              <div id="inspections-list" class="customers-list" aria-live="polite"></div>
+              <div class="customers-pagination">
+                <button class="secondary-button compact" type="button" id="inspections-prev">Previous</button>
+                <span id="inspections-page-status">Page 1</span>
+                <button class="secondary-button compact" type="button" id="inspections-next">Next</button>
+              </div>
+            </section>
+
+            <section class="customers-detail-stack">
+              <section class="panel" id="inspections-detail-panel">
+                <div class="panel-heading">
+                  <div><span class="section-kicker"><i></i> Detail view</span><h3>Selected inspection</h3></div>
+                  <button class="text-button" type="button" id="inspections-delete">Delete</button>
+                </div>
+                <div id="inspections-detail" class="customer-detail-card">
+                  <p>Select an inspection from the list or create a new one.</p>
+                </div>
+              </section>
+
+              <form class="panel estimate-form-panel" id="inspections-form">
+                <div class="panel-heading">
+                  <div><span class="section-kicker"><i></i> Record editor</span><h3 id="inspections-form-title">Create inspection</h3></div>
+                  <span class="estimate-number" id="inspections-form-mode">CREATE</span>
+                </div>
+                <input id="inspections-id" type="hidden">
+                <fieldset>
+                  <legend><span>01</span> Vehicle &amp; work order</legend>
+                  <div class="form-grid two">
+                    <label class="field">Vehicle <select id="inspections-vehicle-id"><option value="">Select a vehicle</option></select></label>
+                    <label class="field">Work order ID (optional) <input id="inspections-work-order-id" type="number" min="1"></label>
+                  </div>
+                  <label class="field full">Inspection type <input id="inspections-type" maxlength="120" placeholder="Multi-point"></label>
+                </fieldset>
+                <fieldset>
+                  <legend><span>02</span> Checklist items</legend>
+                  <div class="form-grid three">
+                    <label class="field">Item label <input id="inspections-item-label" maxlength="200"></label>
+                    <label class="field">Status
+                      <select id="inspections-item-status">
+                        <option value="ok">OK</option>
+                        <option value="attention">Needs attention</option>
+                        <option value="fail">Fail</option>
+                      </select>
+                    </label>
+                    <label class="field">Note <input id="inspections-item-note" maxlength="1000"></label>
+                  </div>
+                  <div class="estimate-submit-row">
+                    <div><strong>Add item</strong><span>Items are added to the checklist below.</span></div>
+                    <button class="secondary-button compact" type="button" id="inspections-item-add">Add item</button>
+                  </div>
+                  <div id="inspections-items-list" class="customer-history-section"></div>
+                  <label class="field full">Overall notes <textarea id="inspections-overall-notes" maxlength="4000"></textarea></label>
+                </fieldset>
+                <div class="estimate-submit-row">
+                  <div><strong id="inspections-form-status-title">Inspection</strong><span id="inspections-form-status-detail">Create or edit an inspection.</span></div>
+                  <div class="customers-form-actions">
+                    <button class="text-button" type="button" id="inspections-cancel">Clear</button>
+                    <button class="primary-button compact" type="submit" id="inspections-save">Save inspection</button>
+                  </div>
+                </div>
+              </form>
+            </section>
+          </div>
+        </section>
+
+        <section class="app-view" id="view-parts" data-view-panel="parts" hidden>
+          <div class="customers-layout">
+            <section class="panel customers-list-panel">
+              <div class="panel-heading">
+                <div><span class="section-kicker"><i></i> Inventory</span><h2>Parts</h2><p>Owner-scoped parts inventory with reorder tracking.</p></div>
+                <button class="secondary-button compact" type="button" id="parts-new">New part</button>
+              </div>
+              <div class="vehicles-toolbar">
+                <label class="field full">
+                  Search
+                  <input id="parts-search" placeholder="Search part number, description, or category">
+                </label>
+                <label class="toggle-field">
+                  <input id="parts-archived-only" type="checkbox">
+                  <span>Show archived</span>
+                </label>
+                <button class="secondary-button compact" type="button" id="parts-refresh">Refresh</button>
+              </div>
+              <div id="parts-list" class="customers-list" aria-live="polite"></div>
+              <div class="customers-pagination">
+                <button class="secondary-button compact" type="button" id="parts-prev">Previous</button>
+                <span id="parts-page-status">Page 1</span>
+                <button class="secondary-button compact" type="button" id="parts-next">Next</button>
+              </div>
+            </section>
+
+            <section class="customers-detail-stack">
+              <section class="panel" id="parts-detail-panel">
+                <div class="panel-heading">
+                  <div><span class="section-kicker"><i></i> Detail view</span><h3>Selected part</h3></div>
+                  <button class="text-button" type="button" id="parts-archive">Archive</button>
+                </div>
+                <div id="parts-detail" class="customer-detail-card">
+                  <p>Select a part from the list or create a new record.</p>
+                </div>
+              </section>
+
+              <form class="panel estimate-form-panel" id="parts-form">
+                <div class="panel-heading">
+                  <div><span class="section-kicker"><i></i> Record editor</span><h3 id="parts-form-title">Create part</h3></div>
+                  <span class="estimate-number" id="parts-form-mode">CREATE</span>
+                </div>
+                <input id="parts-id" type="hidden">
+                <fieldset>
+                  <legend><span>01</span> Identity</legend>
+                  <div class="form-grid three">
+                    <label class="field">Part number <input id="parts-part-number" maxlength="120"></label>
+                    <label class="field">Category <input id="parts-category" maxlength="120"></label>
+                    <label class="field">Vendor <select id="parts-vendor-id"><option value="">No vendor</option></select></label>
+                  </div>
+                  <label class="field full">Description <input id="parts-description" maxlength="300"></label>
+                </fieldset>
+                <fieldset>
+                  <legend><span>02</span> Stock &amp; pricing</legend>
+                  <div class="form-grid four">
+                    <label class="field">Quantity on hand <input id="parts-quantity" type="number" min="0" value="0"></label>
+                    <label class="field">Reorder threshold <input id="parts-reorder-threshold" type="number" min="0"></label>
+                    <label class="field">Unit cost <div class="input-prefix"><span>$</span><input id="parts-unit-cost" type="number" min="0" step="0.01"></div></label>
+                    <label class="field">Unit price <div class="input-prefix"><span>$</span><input id="parts-unit-price" type="number" min="0" step="0.01"></div></label>
+                  </div>
+                  <label class="field full">Location <input id="parts-location" maxlength="120" placeholder="Van shelf B2"></label>
+                  <label class="field full">Notes <textarea id="parts-notes" maxlength="4000"></textarea></label>
+                </fieldset>
+                <div class="estimate-submit-row">
+                  <div><strong id="parts-form-status-title">Part record</strong><span id="parts-form-status-detail">Create or edit a part.</span></div>
+                  <div class="customers-form-actions">
+                    <button class="text-button" type="button" id="parts-cancel">Clear</button>
+                    <button class="primary-button compact" type="submit" id="parts-save">Save part</button>
+                  </div>
+                </div>
+              </form>
+            </section>
+          </div>
+        </section>
+
+        <section class="app-view" id="view-vendors" data-view-panel="vendors" hidden>
+          <div class="customers-layout">
+            <section class="panel customers-list-panel">
+              <div class="panel-heading">
+                <div><span class="section-kicker"><i></i> Vendor directory</span><h2>Vendors</h2><p>Parts suppliers and their contact information.</p></div>
+                <button class="secondary-button compact" type="button" id="vendors-new">New vendor</button>
+              </div>
+              <div class="vehicles-toolbar">
+                <label class="field full">
+                  Search
+                  <input id="vendors-search" placeholder="Search name, contact, or email">
+                </label>
+                <label class="toggle-field">
+                  <input id="vendors-archived-only" type="checkbox">
+                  <span>Show archived</span>
+                </label>
+                <button class="secondary-button compact" type="button" id="vendors-refresh">Refresh</button>
+              </div>
+              <div id="vendors-list" class="customers-list" aria-live="polite"></div>
+              <div class="customers-pagination">
+                <button class="secondary-button compact" type="button" id="vendors-prev">Previous</button>
+                <span id="vendors-page-status">Page 1</span>
+                <button class="secondary-button compact" type="button" id="vendors-next">Next</button>
+              </div>
+            </section>
+
+            <section class="customers-detail-stack">
+              <section class="panel" id="vendors-detail-panel">
+                <div class="panel-heading">
+                  <div><span class="section-kicker"><i></i> Detail view</span><h3>Selected vendor</h3></div>
+                  <button class="text-button" type="button" id="vendors-archive">Archive</button>
+                </div>
+                <div id="vendors-detail" class="customer-detail-card">
+                  <p>Select a vendor from the list or create a new record.</p>
+                </div>
+              </section>
+
+              <form class="panel estimate-form-panel" id="vendors-form">
+                <div class="panel-heading">
+                  <div><span class="section-kicker"><i></i> Record editor</span><h3 id="vendors-form-title">Create vendor</h3></div>
+                  <span class="estimate-number" id="vendors-form-mode">CREATE</span>
+                </div>
+                <input id="vendors-id" type="hidden">
+                <fieldset>
+                  <legend><span>01</span> Identity</legend>
+                  <div class="form-grid two">
+                    <label class="field">Vendor name <input id="vendors-name" maxlength="180"></label>
+                    <label class="field">Contact name <input id="vendors-contact-name" maxlength="180"></label>
+                  </div>
+                  <div class="form-grid two">
+                    <label class="field">Phone <input id="vendors-phone" maxlength="40"></label>
+                    <label class="field">Email <input id="vendors-email" maxlength="180"></label>
+                  </div>
+                </fieldset>
+                <fieldset>
+                  <legend><span>02</span> Address</legend>
+                  <label class="field full">Address line 1 <input id="vendors-address-line-1" maxlength="180"></label>
+                  <label class="field full">Address line 2 <input id="vendors-address-line-2" maxlength="180"></label>
+                  <div class="form-grid three">
+                    <label class="field">City <input id="vendors-city" maxlength="120"></label>
+                    <label class="field">State <input id="vendors-state" maxlength="80"></label>
+                    <label class="field">Postal code <input id="vendors-postal-code" maxlength="20"></label>
+                  </div>
+                </fieldset>
+                <fieldset>
+                  <legend><span>03</span> Notes</legend>
+                  <label class="field full">Notes <textarea id="vendors-notes" maxlength="4000"></textarea></label>
+                </fieldset>
+                <div class="estimate-submit-row">
+                  <div><strong id="vendors-form-status-title">Vendor record</strong><span id="vendors-form-status-detail">Create or edit a vendor.</span></div>
+                  <div class="customers-form-actions">
+                    <button class="text-button" type="button" id="vendors-cancel">Clear</button>
+                    <button class="primary-button compact" type="submit" id="vendors-save">Save vendor</button>
                   </div>
                 </div>
               </form>

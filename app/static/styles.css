@@ -391,6 +391,8 @@ button[disabled] { cursor: wait; opacity: .6; transform: none !important; }
   background: rgba(16, 54, 86, .42);
 }
 
+.convert-field-narrow { width: 100px; min-height: 38px; padding: 6px 9px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: rgba(255,255,255,.02); color: var(--text); font-size: .78rem; }
+
 .customers-pagination,
 .customers-form-actions {
   display: flex;
