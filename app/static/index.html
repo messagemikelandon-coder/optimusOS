@@ -1944,7 +1944,7 @@
         </section>
 
         <section class="app-view" id="view-estimate" data-view-panel="estimate" hidden>
-          <div class="estimate-layout">
+          <div class="estimate-layout" id="estimate-layout">
             <form id="estimate-form" class="panel estimate-form-panel">
               <div class="panel-heading">
                 <div><span class="section-kicker"><i></i> Structured workflow</span><h2>Build a job estimate</h2><p>Research current parts, labor, practical time, special tools, and risk factors.</p></div>
@@ -2025,21 +2025,27 @@
               </div>
             </form>
 
-            <aside class="estimate-side-rail">
-              <section class="panel readiness-card">
-                <span class="section-kicker"><i></i> Estimate readiness</span>
-                <div class="readiness-gauge"><div><strong>LIVE</strong><span>web research</span></div></div>
-                <ul>
-                  <li><i></i> Vehicle fitment review</li>
-                  <li><i></i> Local retailer comparison</li>
-                  <li><i></i> Labor-time analysis</li>
-                  <li><i></i> Tool and risk review</li>
-                </ul>
-              </section>
-              <section class="panel estimate-policy-card">
-                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2 4 5v6c0 5.2 3.4 9.7 8 11 4.6-1.3 8-5.8 8-11V5l-8-3Zm-1 14-4-4 1.4-1.4L11 13.2l4.6-4.6L17 10l-6 6Z"/></svg>
-                <div><strong>Evidence standard</strong><p>Unknown price or inventory stays unknown. Optimus does not manufacture availability.</p></div>
-              </section>
+            <aside class="estimate-side-rail" id="estimate-side-rail">
+              <button type="button" class="side-rail-toggle" id="estimate-side-rail-toggle" aria-expanded="true" aria-controls="estimate-side-rail-body" title="Collapse estimate readiness panel">
+                <span>Estimate readiness</span>
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15.5 5 8.5 12l7 7"/></svg>
+              </button>
+              <div class="side-rail-body" id="estimate-side-rail-body">
+                <section class="panel readiness-card">
+                  <span class="section-kicker"><i></i> Estimate readiness</span>
+                  <div class="readiness-gauge"><div><strong>LIVE</strong><span>web research</span></div></div>
+                  <ul>
+                    <li><i></i> Vehicle fitment review</li>
+                    <li><i></i> Local retailer comparison</li>
+                    <li><i></i> Labor-time analysis</li>
+                    <li><i></i> Tool and risk review</li>
+                  </ul>
+                </section>
+                <section class="panel estimate-policy-card">
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2 4 5v6c0 5.2 3.4 9.7 8 11 4.6-1.3 8-5.8 8-11V5l-8-3Zm-1 14-4-4 1.4-1.4L11 13.2l4.6-4.6L17 10l-6 6Z"/></svg>
+                  <div><strong>Evidence standard</strong><p>Unknown price or inventory stays unknown. Optimus does not manufacture availability.</p></div>
+                </section>
+              </div>
             </aside>
             <section id="result" class="estimate-result panel" hidden aria-live="polite"></section>
           </div>

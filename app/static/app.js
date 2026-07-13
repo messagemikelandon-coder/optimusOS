@@ -881,6 +881,7 @@ function renderEstimate(data) {
       ${estimate.research.request_id ? `<section class="result-section"><h3>Research trace</h3><p>${escapeHtml(estimate.research.request_id)} · ${escapeHtml(estimate.research.research_mode || "standard")}</p></section>` : ""}
     </div>`;
   result.hidden = false;
+  $("estimate-form").hidden = true;
   result.scrollIntoView({ behavior: "smooth", block: "start" });
   $("copy-estimate").addEventListener("click", async () => {
     try {
@@ -904,6 +905,7 @@ function renderEstimate(data) {
   });
   $("new-estimate").addEventListener("click", () => {
     result.hidden = true;
+    $("estimate-form").hidden = false;
     $("vin").focus();
     window.scrollTo({ top: 0, behavior: "smooth" });
   });
@@ -989,9 +991,32 @@ async function sendSelectedEstimateForApproval() {
   }
 }
 
+function setEstimateRailCollapsed(collapsed) {
+  const layout = $("estimate-layout");
+  const toggle = $("estimate-side-rail-toggle");
+  layout.classList.toggle("rail-collapsed", collapsed);
+  toggle.setAttribute("aria-expanded", String(!collapsed));
+  toggle.title = collapsed ? "Expand estimate readiness panel" : "Collapse estimate readiness panel";
+  try {
+    localStorage.setItem("estimateRailCollapsed", collapsed ? "1" : "0");
+  } catch {
+    // Collapse preference is a convenience only; ignore storage failures (e.g. private browsing).
+  }
+}
+
 function initializeEstimate() {
   ["labor-rate", "mobile-fee", "supplies", "tax-rate"].forEach((id) => $(id).addEventListener("input", savePricingPreferences));
   syncEstimateRecordSummary();
+  let railCollapsed = false;
+  try {
+    railCollapsed = localStorage.getItem("estimateRailCollapsed") === "1";
+  } catch {
+    // Ignore storage access failures and default to expanded.
+  }
+  setEstimateRailCollapsed(railCollapsed);
+  $("estimate-side-rail-toggle").addEventListener("click", () => {
+    setEstimateRailCollapsed(!$("estimate-layout").classList.contains("rail-collapsed"));
+  });
   $("estimate-open-customer").addEventListener("click", () => navigate("customers"));
   $("estimate-open-vehicle").addEventListener("click", () => navigate("vehicles"));
   $("estimate-form").addEventListener("submit", async (event) => {
