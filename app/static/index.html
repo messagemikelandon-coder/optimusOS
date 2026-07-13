@@ -300,10 +300,9 @@
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h12v3h2v15H4V6h2V3Zm2 3h8V5H8v1Zm0 4h8V8H8v2Zm0 4h5v-2H8v2Zm7.2 6-3.6-3.6 1.4-1.4 2.2 2.2 4.4-4.4L21 15l-5.8 5Z"/></svg>
             <span>Work orders</span>
           </button>
-          <button class="nav-item" type="button" data-view="scheduling">
+          <button class="nav-item" type="button" data-view="scheduling" data-owner-only="true">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 2v2H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2h-2V2h-2v2H9V2H7Zm-2 6h14v10H5V8Z"/></svg>
             <span>Scheduling</span>
-            <span class="nav-soon-badge">Soon</span>
           </button>
           <button class="nav-item" type="button" data-view="parts" data-owner-only="true">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v14H4V5Zm3 3v3h3V8H7Zm5 0v3h5V8h-5ZM7 13v3h10v-3H7Z"/></svg>
@@ -1930,15 +1929,185 @@
         <section class="app-view" id="view-scheduling" data-view-panel="scheduling" hidden>
           <section class="panel">
             <div class="panel-heading">
-              <div><span class="section-kicker"><i></i> Not yet built</span><h2>Scheduling</h2><p>Appointment and calendar scheduling has no backend data model yet.</p></div>
+              <div><span class="section-kicker"><i></i> Appointments</span><h2>Scheduling</h2><p>Create, move, confirm, and cancel appointments across technicians and bays.</p></div>
+              <button class="secondary-button compact" type="button" id="scheduling-new">New appointment</button>
             </div>
-            <div class="empty-card">
-              <strong>What's here today</strong>
-              <p>Work orders already carry a single "Scheduled for" date/time (visible on each work order's detail rail). There is no calendar view, no appointment/technician-availability model, and no conflict detection yet.</p>
+            <div class="scheduling-toolbar">
+              <div class="scheduling-view-toggle" role="group" aria-label="Calendar view">
+                <button class="secondary-button compact is-active" type="button" id="scheduling-view-day" data-scheduling-view="day">Day</button>
+                <button class="secondary-button compact" type="button" id="scheduling-view-week" data-scheduling-view="week">Week</button>
+              </div>
+              <div class="scheduling-date-nav">
+                <button class="secondary-button compact" type="button" id="scheduling-prev" aria-label="Previous">&lsaquo;</button>
+                <button class="secondary-button compact" type="button" id="scheduling-today">Today</button>
+                <button class="secondary-button compact" type="button" id="scheduling-next" aria-label="Next">&rsaquo;</button>
+                <strong id="scheduling-date-label">&nbsp;</strong>
+              </div>
+              <label class="field compact">
+                Technician
+                <select id="scheduling-technician-filter"><option value="">All technicians</option></select>
+              </label>
+              <button class="secondary-button compact" type="button" id="scheduling-refresh">Refresh</button>
             </div>
-            <div class="empty-card report-gap-note">
-              <strong>What real scheduling would require</strong>
-              <p>An appointment data model (start/end time, technician, bay, status), availability rules, and API endpoints to create/move/cancel appointments &mdash; none of which exist in the backend today. This page is a placeholder so the navigation structure is honest about what's built versus planned.</p>
+            <div id="scheduling-list" class="scheduling-agenda" aria-live="polite"></div>
+          </section>
+
+          <div class="customers-layout">
+            <section class="customers-detail-stack">
+              <section class="panel" id="scheduling-detail-panel">
+                <div class="panel-heading">
+                  <div><span class="section-kicker"><i></i> Detail view</span><h3>Selected appointment</h3></div>
+                </div>
+                <div id="scheduling-detail" class="customer-detail-card">
+                  <p>Select an appointment from the calendar or create a new one.</p>
+                </div>
+                <div class="customers-form-actions" id="scheduling-detail-actions" hidden>
+                  <button class="secondary-button compact" type="button" id="scheduling-edit">Edit</button>
+                  <button class="secondary-button compact" type="button" id="scheduling-move-toggle">Move</button>
+                  <button class="secondary-button compact" type="button" id="scheduling-confirm" hidden>Confirm</button>
+                  <button class="text-button" type="button" id="scheduling-cancel-toggle">Cancel appointment</button>
+                </div>
+
+                <form class="estimate-submit-row" id="scheduling-move-form" hidden>
+                  <div><strong>Move appointment</strong><span>Revalidates technician, bay, buffer, and working-hours rules for the new slot.</span></div>
+                  <div class="form-grid two">
+                    <label class="field">New start <input id="scheduling-move-start" type="datetime-local" required></label>
+                    <label class="field">New end <input id="scheduling-move-end" type="datetime-local" required></label>
+                    <label class="field">Technician <select id="scheduling-move-technician"></select></label>
+                    <label class="field">Bay <select id="scheduling-move-bay"><option value="">No bay</option></select></label>
+                  </div>
+                  <div class="customers-form-actions">
+                    <button class="text-button" type="button" id="scheduling-move-cancel">Cancel</button>
+                    <button class="primary-button compact" type="submit" id="scheduling-move-save">Save move</button>
+                  </div>
+                </form>
+
+                <form class="estimate-submit-row" id="scheduling-cancel-form" hidden>
+                  <div><strong>Cancel appointment</strong><span>Releases the technician/bay slot immediately.</span></div>
+                  <label class="field full">Cancellation reason <textarea id="scheduling-cancel-reason" maxlength="500" required></textarea></label>
+                  <div class="customers-form-actions">
+                    <button class="text-button" type="button" id="scheduling-cancel-dismiss">Back</button>
+                    <button class="primary-button compact" type="submit" id="scheduling-cancel-save">Confirm cancellation</button>
+                  </div>
+                </form>
+              </section>
+
+              <form class="panel estimate-form-panel" id="scheduling-form">
+                <div class="panel-heading">
+                  <div><span class="section-kicker"><i></i> Record editor</span><h3 id="scheduling-form-title">Create appointment</h3></div>
+                  <span class="estimate-number" id="scheduling-form-mode">CREATE</span>
+                </div>
+                <input id="scheduling-id" type="hidden">
+                <fieldset>
+                  <legend><span>01</span> Customer &amp; vehicle</legend>
+                  <div class="form-grid two">
+                    <label class="field">Customer <select id="scheduling-customer-id" required><option value="">Select a customer</option></select></label>
+                    <label class="field">Vehicle <select id="scheduling-vehicle-id" required><option value="">Select a customer first</option></select></label>
+                  </div>
+                  <label class="field full">Work order (optional) <select id="scheduling-work-order-id"><option value="">No linked work order</option></select></label>
+                </fieldset>
+                <fieldset>
+                  <legend><span>02</span> Service</legend>
+                  <div class="form-grid two">
+                    <label class="field">Service type <input id="scheduling-service-type" maxlength="160" required placeholder="Oil change, brake inspection..."></label>
+                    <label class="field">Location
+                      <select id="scheduling-service-location">
+                        <option value="shop">Shop</option>
+                        <option value="mobile">Mobile</option>
+                      </select>
+                    </label>
+                    <label class="field">Technician <select id="scheduling-technician-id" required></select></label>
+                    <label class="field">Bay (optional) <select id="scheduling-bay-id"><option value="">No bay</option></select></label>
+                  </div>
+                </fieldset>
+                <fieldset>
+                  <legend><span>03</span> Timing</legend>
+                  <div class="form-grid two">
+                    <label class="field">Start <input id="scheduling-start-time" type="datetime-local" required></label>
+                    <label class="field">End <input id="scheduling-end-time" type="datetime-local" required></label>
+                    <label class="field">Travel buffer (minutes) <input id="scheduling-travel-buffer" type="number" min="0" max="480" value="0"></label>
+                    <label class="field">Status
+                      <select id="scheduling-status">
+                        <option value="tentative">Tentative</option>
+                        <option value="confirmed">Confirmed</option>
+                        <option value="in_progress">In progress</option>
+                        <option value="completed">Completed</option>
+                        <option value="no_show">No-show</option>
+                      </select>
+                    </label>
+                  </div>
+                </fieldset>
+                <fieldset>
+                  <legend><span>04</span> Notes</legend>
+                  <label class="field full">Customer-visible notes <textarea id="scheduling-customer-notes" maxlength="4000"></textarea></label>
+                  <label class="field full">Internal notes <textarea id="scheduling-internal-notes" maxlength="4000"></textarea></label>
+                </fieldset>
+                <div class="estimate-submit-row">
+                  <div><strong id="scheduling-form-status-title">Appointment</strong><span id="scheduling-form-status-detail">New appointments default to tentative until confirmed.</span></div>
+                  <div class="customers-form-actions">
+                    <button class="text-button" type="button" id="scheduling-clear">Clear</button>
+                    <button class="primary-button compact" type="submit" id="scheduling-save">Save appointment</button>
+                  </div>
+                </div>
+              </form>
+            </section>
+          </div>
+
+          <section class="panel">
+            <div class="panel-heading">
+              <div><span class="section-kicker"><i></i> Shop setup</span><h3>Bays, working hours &amp; blocked time</h3><p>Configure the resources availability rules check against.</p></div>
+            </div>
+            <div class="scheduling-setup-grid">
+              <div class="scheduling-setup-column">
+                <h4>Bays</h4>
+                <div id="bays-list" class="customers-list scheduling-setup-list" aria-live="polite"></div>
+                <form class="scheduling-inline-form" id="bay-form">
+                  <label class="field full">Name <input id="bay-name" maxlength="120" required placeholder="Bay 1"></label>
+                  <label class="field full">Notes <input id="bay-notes" maxlength="2000"></label>
+                  <button class="secondary-button compact" type="submit" id="bay-save">Add bay</button>
+                </form>
+              </div>
+              <div class="scheduling-setup-column">
+                <h4>Working hours</h4>
+                <label class="field full">Technician
+                  <select id="working-hours-technician"></select>
+                </label>
+                <div id="working-hours-list" class="customers-list scheduling-setup-list" aria-live="polite"></div>
+                <form class="scheduling-inline-form" id="working-hours-form">
+                  <label class="field full">Day
+                    <select id="working-hours-day">
+                      <option value="0">Monday</option>
+                      <option value="1">Tuesday</option>
+                      <option value="2">Wednesday</option>
+                      <option value="3">Thursday</option>
+                      <option value="4">Friday</option>
+                      <option value="5">Saturday</option>
+                      <option value="6">Sunday</option>
+                    </select>
+                  </label>
+                  <div class="form-grid two">
+                    <label class="field">Start <input id="working-hours-start" type="time" value="08:00" required></label>
+                    <label class="field">End <input id="working-hours-end" type="time" value="17:00" required></label>
+                  </div>
+                  <button class="secondary-button compact" type="submit" id="working-hours-save">Add hours</button>
+                </form>
+              </div>
+              <div class="scheduling-setup-column">
+                <h4>Blocked time</h4>
+                <div id="schedule-blocks-list" class="customers-list scheduling-setup-list" aria-live="polite"></div>
+                <form class="scheduling-inline-form" id="schedule-block-form">
+                  <div class="form-grid two">
+                    <label class="field">Technician <select id="schedule-block-technician"><option value="">Shop-wide</option></select></label>
+                    <label class="field">Bay <select id="schedule-block-bay"><option value="">Any bay</option></select></label>
+                  </div>
+                  <div class="form-grid two">
+                    <label class="field">Start <input id="schedule-block-start" type="datetime-local" required></label>
+                    <label class="field">End <input id="schedule-block-end" type="datetime-local" required></label>
+                  </div>
+                  <label class="field full">Reason <input id="schedule-block-reason" maxlength="200" required placeholder="Vacation, holiday, Army duty..."></label>
+                  <button class="secondary-button compact" type="submit" id="schedule-block-save">Add block</button>
+                </form>
+              </div>
             </div>
           </section>
         </section>

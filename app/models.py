@@ -1910,3 +1910,305 @@ class InspectionListResponse(BaseModel):
     page_size: int
     total: int
     has_more: bool
+
+
+class AppointmentStatus(StrEnum):
+    TENTATIVE = "tentative"
+    CONFIRMED = "confirmed"
+    IN_PROGRESS = "in_progress"
+    COMPLETED = "completed"
+    CANCELED = "canceled"
+    NO_SHOW = "no_show"
+
+
+class ServiceLocation(StrEnum):
+    SHOP = "shop"
+    MOBILE = "mobile"
+
+
+class BayBase(BaseModel):
+    name: NonBlank = Field(max_length=120)
+    notes: str | None = Field(default=None, max_length=2000)
+
+    @field_validator("notes", mode="before")
+    @classmethod
+    def strip_bay_notes(cls, value: object) -> object:
+        if isinstance(value, str):
+            stripped = value.strip()
+            return stripped or None
+        return value
+
+
+class BayCreate(BayBase):
+    pass
+
+
+class BayUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=120)
+    notes: str | None = Field(default=None, max_length=2000)
+
+    @field_validator("notes", mode="before")
+    @classmethod
+    def strip_bay_update_notes(cls, value: object) -> object:
+        if isinstance(value, str):
+            stripped = value.strip()
+            return stripped or None
+        return value
+
+
+class BayRead(BayBase):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    is_archived: bool
+    created_at: datetime
+    updated_at: datetime
+
+
+class BayListResponse(BaseModel):
+    items: list[BayRead]
+    page: int
+    page_size: int
+    total: int
+    has_more: bool
+
+
+class BayArchiveResponse(BaseModel):
+    bay: BayRead
+
+
+class WorkingHoursBase(BaseModel):
+    technician_id: int
+    day_of_week: int = Field(ge=0, le=6)
+    start_minute: int = Field(ge=0, lt=1440)
+    end_minute: int = Field(gt=0, le=1440)
+
+    @model_validator(mode="after")
+    def require_end_after_start(self) -> WorkingHoursBase:
+        if self.end_minute <= self.start_minute:
+            raise ValueError("end_minute must be later than start_minute.")
+        return self
+
+
+class WorkingHoursCreate(WorkingHoursBase):
+    pass
+
+
+class WorkingHoursUpdate(BaseModel):
+    day_of_week: int | None = Field(default=None, ge=0, le=6)
+    start_minute: int | None = Field(default=None, ge=0, lt=1440)
+    end_minute: int | None = Field(default=None, gt=0, le=1440)
+
+
+class WorkingHoursRead(WorkingHoursBase):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    created_at: datetime
+    updated_at: datetime
+
+
+class WorkingHoursListResponse(BaseModel):
+    items: list[WorkingHoursRead]
+
+
+class ScheduleBlockBase(BaseModel):
+    technician_id: int | None = None
+    bay_id: int | None = None
+    start_time: datetime
+    end_time: datetime
+    reason: NonBlank = Field(max_length=200)
+    notes: str | None = Field(default=None, max_length=2000)
+
+    @field_validator("notes", mode="before")
+    @classmethod
+    def strip_schedule_block_notes(cls, value: object) -> object:
+        if isinstance(value, str):
+            stripped = value.strip()
+            return stripped or None
+        return value
+
+    @model_validator(mode="after")
+    def require_end_after_start(self) -> ScheduleBlockBase:
+        if self.end_time <= self.start_time:
+            raise ValueError("end_time must be later than start_time.")
+        return self
+
+    @model_validator(mode="after")
+    def require_single_scope(self) -> ScheduleBlockBase:
+        if self.technician_id is not None and self.bay_id is not None:
+            raise ValueError(
+                "A schedule block can target a technician or a bay, not both -- create two"
+                " separate blocks if both need to be unavailable."
+            )
+        return self
+
+
+class ScheduleBlockCreate(ScheduleBlockBase):
+    pass
+
+
+class ScheduleBlockUpdate(BaseModel):
+    technician_id: int | None = None
+    bay_id: int | None = None
+    start_time: datetime | None = None
+    end_time: datetime | None = None
+    reason: str | None = Field(default=None, min_length=1, max_length=200)
+    notes: str | None = Field(default=None, max_length=2000)
+
+    @field_validator("notes", mode="before")
+    @classmethod
+    def strip_schedule_block_update_notes(cls, value: object) -> object:
+        if isinstance(value, str):
+            stripped = value.strip()
+            return stripped or None
+        return value
+
+
+class ScheduleBlockRead(ScheduleBlockBase):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    technician_display_name: str | None = None
+    bay_name: str | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class ScheduleBlockListResponse(BaseModel):
+    items: list[ScheduleBlockRead]
+    page: int
+    page_size: int
+    total: int
+    has_more: bool
+
+
+class AppointmentBase(BaseModel):
+    customer_id: int
+    vehicle_id: int
+    work_order_id: int | None = None
+    technician_id: int
+    bay_id: int | None = None
+    service_type: NonBlank = Field(max_length=160)
+    service_location: ServiceLocation = ServiceLocation.SHOP
+    start_time: datetime
+    end_time: datetime
+    travel_buffer_minutes: int = Field(default=0, ge=0, le=480)
+    customer_notes: str | None = Field(default=None, max_length=4000)
+    internal_notes: str | None = Field(default=None, max_length=4000)
+
+    @field_validator("customer_notes", "internal_notes", mode="before")
+    @classmethod
+    def strip_appointment_notes(cls, value: object) -> object:
+        if isinstance(value, str):
+            stripped = value.strip()
+            return stripped or None
+        return value
+
+    @model_validator(mode="after")
+    def require_end_after_start(self) -> AppointmentBase:
+        if self.end_time <= self.start_time:
+            raise ValueError("end_time must be later than start_time.")
+        return self
+
+
+class AppointmentCreate(AppointmentBase):
+    status: Literal[AppointmentStatus.TENTATIVE, AppointmentStatus.CONFIRMED] = (
+        AppointmentStatus.TENTATIVE
+    )
+
+
+class AppointmentUpdate(BaseModel):
+    customer_id: int | None = None
+    vehicle_id: int | None = None
+    work_order_id: int | None = None
+    technician_id: int | None = None
+    bay_id: int | None = None
+    service_type: str | None = Field(default=None, min_length=1, max_length=160)
+    service_location: ServiceLocation | None = None
+    start_time: datetime | None = None
+    end_time: datetime | None = None
+    travel_buffer_minutes: int | None = Field(default=None, ge=0, le=480)
+    status: (
+        Literal[
+            AppointmentStatus.TENTATIVE,
+            AppointmentStatus.CONFIRMED,
+            AppointmentStatus.IN_PROGRESS,
+            AppointmentStatus.COMPLETED,
+            AppointmentStatus.NO_SHOW,
+        ]
+        | None
+    ) = None
+    customer_notes: str | None = Field(default=None, max_length=4000)
+    internal_notes: str | None = Field(default=None, max_length=4000)
+
+    @field_validator("customer_notes", "internal_notes", mode="before")
+    @classmethod
+    def strip_appointment_update_notes(cls, value: object) -> object:
+        if isinstance(value, str):
+            stripped = value.strip()
+            return stripped or None
+        return value
+
+
+class AppointmentMoveRequest(BaseModel):
+    start_time: datetime
+    end_time: datetime
+    technician_id: int | None = None
+    bay_id: int | None = None
+    travel_buffer_minutes: int | None = Field(default=None, ge=0, le=480)
+
+    @model_validator(mode="after")
+    def require_end_after_start(self) -> AppointmentMoveRequest:
+        if self.end_time <= self.start_time:
+            raise ValueError("end_time must be later than start_time.")
+        return self
+
+
+class AppointmentCancelRequest(BaseModel):
+    cancellation_reason: NonBlank = Field(max_length=500)
+
+
+class AppointmentRead(AppointmentBase):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    status: AppointmentStatus
+    customer_display_name: str | None = None
+    vehicle_display_name: str | None = None
+    technician_display_name: str | None = None
+    bay_name: str | None = None
+    created_at: datetime
+    updated_at: datetime
+    canceled_at: datetime | None = None
+    cancellation_reason: str | None = None
+
+
+class AppointmentListResponse(BaseModel):
+    items: list[AppointmentRead]
+    page: int
+    page_size: int
+    total: int
+    has_more: bool
+
+
+class AppointmentConflictDetail(BaseModel):
+    code: str
+    message: str
+    conflicting_appointment_id: int | None = None
+    conflicting_schedule_block_id: int | None = None
+
+
+class AvailabilityWindow(BaseModel):
+    start_time: datetime
+    end_time: datetime
+
+
+class AvailabilityResponse(BaseModel):
+    technician_id: int
+    bay_id: int | None = None
+    date_from: datetime
+    date_to: datetime
+    working_windows: list[AvailabilityWindow]
+    busy_windows: list[AvailabilityWindow]
+    blocked_windows: list[AvailabilityWindow]

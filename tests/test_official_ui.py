@@ -222,7 +222,8 @@ def test_overview_dashboard_and_approval_queue_markup() -> None:
     assert 'data-view-panel="approval-queue"' in html
     assert 'data-view="approval-queue"' in html
     assert html.count("nav-item is-disabled") == 0
-    assert html.count("nav-soon-badge") == 1
+    # Scheduling was the last "Coming soon" stub; it's now a real module.
+    assert html.count("nav-soon-badge") == 0
 
     assert "async function loadDashboardSummary" in javascript
     assert "/api/dashboard/summary" in javascript

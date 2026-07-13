@@ -103,10 +103,23 @@ from app.invoice_store import (
     render_invoice_pdf,
 )
 from app.models import (
+    AppointmentCancelRequest,
+    AppointmentCreate,
+    AppointmentListResponse,
+    AppointmentMoveRequest,
+    AppointmentRead,
+    AppointmentStatus,
+    AppointmentUpdate,
     AuthLoginRequest,
     AuthMeResponse,
     AuthSessionResponse,
     AuthUser,
+    AvailabilityResponse,
+    BayArchiveResponse,
+    BayCreate,
+    BayListResponse,
+    BayRead,
+    BayUpdate,
     ChatRequest,
     ChatResponse,
     ContextDeleteResponse,
@@ -164,6 +177,10 @@ from app.models import (
     PartRead,
     PartUpdate,
     ResolvedLocation,
+    ScheduleBlockCreate,
+    ScheduleBlockListResponse,
+    ScheduleBlockRead,
+    ScheduleBlockUpdate,
     TechnicianArchiveResponse,
     TechnicianClockResponse,
     TechnicianCreate,
@@ -183,6 +200,10 @@ from app.models import (
     VendorListResponse,
     VendorRead,
     VendorUpdate,
+    WorkingHoursCreate,
+    WorkingHoursListResponse,
+    WorkingHoursRead,
+    WorkingHoursUpdate,
     WorkOrderAssignTechnicianRequest,
     WorkOrderListResponse,
     WorkOrderNoteCreate,
@@ -210,6 +231,32 @@ from app.part_store import (
 )
 from app.payment_store import PaymentNotFoundError, record_payment, void_payment
 from app.rate_limit import RateLimitExceeded, SlidingWindowRateLimiter
+from app.scheduling_store import (
+    SchedulingConflictError,
+    SchedulingNotFoundError,
+    SchedulingStoreError,
+    archive_bay,
+    cancel_appointment,
+    create_appointment,
+    create_bay,
+    create_schedule_block,
+    create_working_hours,
+    delete_schedule_block,
+    delete_working_hours,
+    get_appointment,
+    get_availability,
+    get_bay,
+    get_schedule_block,
+    list_appointments,
+    list_bays,
+    list_schedule_blocks,
+    list_working_hours,
+    move_appointment,
+    update_appointment,
+    update_bay,
+    update_schedule_block,
+    update_working_hours,
+)
 from app.services.http import SafeHttpClient
 from app.services.location import LocationService
 from app.services.optimus_chat import OptimusChatService
@@ -2463,4 +2510,468 @@ async def get_dashboard_summary_record(
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Dashboard storage is unavailable.",
+        ) from exc
+
+
+# ---- Scheduling: bays ----
+
+
+@app.post("/api/bays", response_model=BayRead)
+async def create_bay_record(
+    payload: BayCreate,
+    db: DbSessionDep,
+    auth: OwnerAuthContextDep,
+) -> BayRead:
+    try:
+        return create_bay(db=db, auth=auth, payload=payload)
+    except SchedulingStoreError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Bay creation failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Bay storage is unavailable."
+        ) from exc
+
+
+@app.get("/api/bays", response_model=BayListResponse)
+async def list_bay_records(
+    db: DbSessionDep,
+    settings: SettingsDep,
+    auth: OwnerAuthContextDep,
+    page: int = Query(default=1),
+    page_size: int = Query(default=20),
+    archived: bool = False,
+) -> BayListResponse:
+    try:
+        return list_bays(
+            db=db, auth=auth, settings=settings, page=page, page_size=page_size, archived=archived
+        )
+    except SchedulingStoreError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Bay listing failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Bay storage is unavailable."
+        ) from exc
+
+
+@app.get("/api/bays/{bay_id}", response_model=BayRead)
+async def get_bay_record(bay_id: int, db: DbSessionDep, auth: OwnerAuthContextDep) -> BayRead:
+    try:
+        return get_bay(db=db, auth=auth, bay_id=bay_id)
+    except SchedulingNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Bay retrieval failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Bay storage is unavailable."
+        ) from exc
+
+
+@app.patch("/api/bays/{bay_id}", response_model=BayRead)
+async def update_bay_record(
+    bay_id: int,
+    payload: BayUpdate,
+    db: DbSessionDep,
+    auth: OwnerAuthContextDep,
+) -> BayRead:
+    try:
+        return update_bay(db=db, auth=auth, bay_id=bay_id, payload=payload)
+    except SchedulingNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except SchedulingStoreError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Bay update failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Bay storage is unavailable."
+        ) from exc
+
+
+@app.delete("/api/bays/{bay_id}", response_model=BayArchiveResponse)
+async def archive_bay_record(
+    bay_id: int, db: DbSessionDep, auth: OwnerAuthContextDep
+) -> BayArchiveResponse:
+    try:
+        return archive_bay(db=db, auth=auth, bay_id=bay_id)
+    except SchedulingNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Bay archive failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Bay storage is unavailable."
+        ) from exc
+
+
+# ---- Scheduling: technician working hours ----
+
+
+@app.post("/api/working-hours", response_model=WorkingHoursRead)
+async def create_working_hours_record(
+    payload: WorkingHoursCreate,
+    db: DbSessionDep,
+    auth: OwnerAuthContextDep,
+) -> WorkingHoursRead:
+    try:
+        return create_working_hours(db=db, auth=auth, payload=payload)
+    except SchedulingStoreError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Working hours creation failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Scheduling storage is unavailable.",
+        ) from exc
+
+
+@app.get("/api/working-hours", response_model=WorkingHoursListResponse)
+async def list_working_hours_records(
+    db: DbSessionDep,
+    auth: OwnerAuthContextDep,
+    technician_id: int = Query(...),
+) -> WorkingHoursListResponse:
+    try:
+        return list_working_hours(db=db, auth=auth, technician_id=technician_id)
+    except SchedulingStoreError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Working hours listing failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Scheduling storage is unavailable.",
+        ) from exc
+
+
+@app.patch("/api/working-hours/{working_hours_id}", response_model=WorkingHoursRead)
+async def update_working_hours_record(
+    working_hours_id: int,
+    payload: WorkingHoursUpdate,
+    db: DbSessionDep,
+    auth: OwnerAuthContextDep,
+) -> WorkingHoursRead:
+    try:
+        return update_working_hours(
+            db=db, auth=auth, working_hours_id=working_hours_id, payload=payload
+        )
+    except SchedulingNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except SchedulingStoreError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Working hours update failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Scheduling storage is unavailable.",
+        ) from exc
+
+
+@app.delete("/api/working-hours/{working_hours_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_working_hours_record(
+    working_hours_id: int, db: DbSessionDep, auth: OwnerAuthContextDep
+) -> None:
+    try:
+        delete_working_hours(db=db, auth=auth, working_hours_id=working_hours_id)
+    except SchedulingNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Working hours deletion failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Scheduling storage is unavailable.",
+        ) from exc
+
+
+# ---- Scheduling: schedule blocks ----
+
+
+@app.post("/api/schedule-blocks", response_model=ScheduleBlockRead)
+async def create_schedule_block_record(
+    payload: ScheduleBlockCreate,
+    db: DbSessionDep,
+    auth: OwnerAuthContextDep,
+) -> ScheduleBlockRead:
+    try:
+        return create_schedule_block(db=db, auth=auth, payload=payload)
+    except SchedulingStoreError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Schedule block creation failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Scheduling storage is unavailable.",
+        ) from exc
+
+
+@app.get("/api/schedule-blocks", response_model=ScheduleBlockListResponse)
+async def list_schedule_block_records(
+    db: DbSessionDep,
+    settings: SettingsDep,
+    auth: OwnerAuthContextDep,
+    page: int = Query(default=1),
+    page_size: int = Query(default=20),
+    technician_id: int | None = Query(default=None),
+    bay_id: int | None = Query(default=None),
+    date_from: Annotated[datetime | None, Query()] = None,
+    date_to: Annotated[datetime | None, Query()] = None,
+) -> ScheduleBlockListResponse:
+    try:
+        return list_schedule_blocks(
+            db=db,
+            auth=auth,
+            settings=settings,
+            page=page,
+            page_size=page_size,
+            technician_id=technician_id,
+            bay_id=bay_id,
+            date_from=date_from,
+            date_to=date_to,
+        )
+    except SchedulingStoreError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Schedule block listing failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Scheduling storage is unavailable.",
+        ) from exc
+
+
+@app.get("/api/schedule-blocks/{block_id}", response_model=ScheduleBlockRead)
+async def get_schedule_block_record(
+    block_id: int, db: DbSessionDep, auth: OwnerAuthContextDep
+) -> ScheduleBlockRead:
+    try:
+        return get_schedule_block(db=db, auth=auth, block_id=block_id)
+    except SchedulingNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Schedule block retrieval failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Scheduling storage is unavailable.",
+        ) from exc
+
+
+@app.patch("/api/schedule-blocks/{block_id}", response_model=ScheduleBlockRead)
+async def update_schedule_block_record(
+    block_id: int,
+    payload: ScheduleBlockUpdate,
+    db: DbSessionDep,
+    auth: OwnerAuthContextDep,
+) -> ScheduleBlockRead:
+    try:
+        return update_schedule_block(db=db, auth=auth, block_id=block_id, payload=payload)
+    except SchedulingNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except SchedulingStoreError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Schedule block update failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Scheduling storage is unavailable.",
+        ) from exc
+
+
+@app.delete("/api/schedule-blocks/{block_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_schedule_block_record(
+    block_id: int, db: DbSessionDep, auth: OwnerAuthContextDep
+) -> None:
+    try:
+        delete_schedule_block(db=db, auth=auth, block_id=block_id)
+    except SchedulingNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Schedule block deletion failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Scheduling storage is unavailable.",
+        ) from exc
+
+
+# ---- Scheduling: availability ----
+
+
+@app.get("/api/availability", response_model=AvailabilityResponse)
+async def get_availability_record(
+    db: DbSessionDep,
+    auth: OwnerAuthContextDep,
+    technician_id: Annotated[int, Query()],
+    date_from: Annotated[datetime, Query()],
+    date_to: Annotated[datetime, Query()],
+    bay_id: int | None = Query(default=None),
+) -> AvailabilityResponse:
+    try:
+        return get_availability(
+            db=db,
+            auth=auth,
+            technician_id=technician_id,
+            date_from=date_from,
+            date_to=date_to,
+            bay_id=bay_id,
+        )
+    except SchedulingNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except SchedulingStoreError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Availability lookup failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Scheduling storage is unavailable.",
+        ) from exc
+
+
+# ---- Scheduling: appointments ----
+
+
+@app.post("/api/appointments", response_model=AppointmentRead)
+async def create_appointment_record(
+    payload: AppointmentCreate,
+    db: DbSessionDep,
+    auth: OwnerAuthContextDep,
+) -> AppointmentRead:
+    try:
+        return create_appointment(db=db, auth=auth, payload=payload)
+    except SchedulingNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except SchedulingConflictError as exc:
+        raise HTTPException(status_code=409, detail=exc.as_detail()) from exc
+    except SchedulingStoreError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Appointment creation failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Scheduling storage is unavailable.",
+        ) from exc
+
+
+@app.get("/api/appointments", response_model=AppointmentListResponse)
+async def list_appointment_records(
+    db: DbSessionDep,
+    settings: SettingsDep,
+    auth: OwnerAuthContextDep,
+    page: int = Query(default=1),
+    page_size: int = Query(default=50),
+    date_from: Annotated[datetime | None, Query()] = None,
+    date_to: Annotated[datetime | None, Query()] = None,
+    technician_id: int | None = Query(default=None),
+    bay_id: int | None = Query(default=None),
+    status_filter: Annotated[AppointmentStatus | None, Query(alias="status")] = None,
+    customer_id: int | None = Query(default=None),
+    vehicle_id: int | None = Query(default=None),
+) -> AppointmentListResponse:
+    try:
+        return list_appointments(
+            db=db,
+            auth=auth,
+            settings=settings,
+            page=page,
+            page_size=page_size,
+            date_from=date_from,
+            date_to=date_to,
+            technician_id=technician_id,
+            bay_id=bay_id,
+            status_filter=status_filter,
+            customer_id=customer_id,
+            vehicle_id=vehicle_id,
+        )
+    except SchedulingStoreError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Appointment listing failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Scheduling storage is unavailable.",
+        ) from exc
+
+
+@app.get("/api/appointments/{appointment_id}", response_model=AppointmentRead)
+async def get_appointment_record(
+    appointment_id: int, db: DbSessionDep, auth: OwnerAuthContextDep
+) -> AppointmentRead:
+    try:
+        return get_appointment(db=db, auth=auth, appointment_id=appointment_id)
+    except SchedulingNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Appointment retrieval failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Scheduling storage is unavailable.",
+        ) from exc
+
+
+@app.patch("/api/appointments/{appointment_id}", response_model=AppointmentRead)
+async def update_appointment_record(
+    appointment_id: int,
+    payload: AppointmentUpdate,
+    db: DbSessionDep,
+    auth: OwnerAuthContextDep,
+) -> AppointmentRead:
+    try:
+        return update_appointment(db=db, auth=auth, appointment_id=appointment_id, payload=payload)
+    except SchedulingNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except SchedulingConflictError as exc:
+        raise HTTPException(status_code=409, detail=exc.as_detail()) from exc
+    except SchedulingStoreError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Appointment update failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Scheduling storage is unavailable.",
+        ) from exc
+
+
+@app.post("/api/appointments/{appointment_id}/move", response_model=AppointmentRead)
+async def move_appointment_record(
+    appointment_id: int,
+    payload: AppointmentMoveRequest,
+    db: DbSessionDep,
+    auth: OwnerAuthContextDep,
+) -> AppointmentRead:
+    try:
+        return move_appointment(db=db, auth=auth, appointment_id=appointment_id, payload=payload)
+    except SchedulingNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except SchedulingConflictError as exc:
+        raise HTTPException(status_code=409, detail=exc.as_detail()) from exc
+    except SchedulingStoreError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Appointment move failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Scheduling storage is unavailable.",
+        ) from exc
+
+
+@app.post("/api/appointments/{appointment_id}/cancel", response_model=AppointmentRead)
+async def cancel_appointment_record(
+    appointment_id: int,
+    payload: AppointmentCancelRequest,
+    db: DbSessionDep,
+    auth: OwnerAuthContextDep,
+) -> AppointmentRead:
+    try:
+        return cancel_appointment(
+            db=db,
+            auth=auth,
+            appointment_id=appointment_id,
+            cancellation_reason=payload.cancellation_reason,
+        )
+    except SchedulingNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except SchedulingConflictError as exc:
+        raise HTTPException(status_code=409, detail=exc.as_detail()) from exc
+    except SchedulingStoreError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Appointment cancellation failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Scheduling storage is unavailable.",
         ) from exc

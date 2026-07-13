@@ -1287,3 +1287,180 @@ class Inspection(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
     )
+
+
+class Bay(Base):
+    __tablename__ = "bays"
+    __table_args__ = (Index("ix_bays_owner_archived_name", "owner_user_id", "is_archived", "name"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    owner_user_id: Mapped[int] = mapped_column(
+        ForeignKey("user_accounts.id", ondelete="CASCADE"), nullable=False
+    )
+    name: Mapped[str] = mapped_column(String(120), nullable=False)
+    notes: Mapped[str | None] = mapped_column(Text)
+    is_archived: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+
+
+class WorkingHours(Base):
+    __tablename__ = "working_hours"
+    __table_args__ = (
+        CheckConstraint("day_of_week BETWEEN 0 AND 6", name="ck_working_hours_day_of_week"),
+        CheckConstraint(
+            "start_minute >= 0 AND start_minute < 1440", name="ck_working_hours_start_minute"
+        ),
+        CheckConstraint(
+            "end_minute > 0 AND end_minute <= 1440", name="ck_working_hours_end_minute"
+        ),
+        CheckConstraint("end_minute > start_minute", name="ck_working_hours_end_after_start"),
+        Index(
+            "ix_working_hours_owner_technician_day",
+            "owner_user_id",
+            "technician_id",
+            "day_of_week",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    owner_user_id: Mapped[int] = mapped_column(
+        ForeignKey("user_accounts.id", ondelete="CASCADE"), nullable=False
+    )
+    technician_id: Mapped[int] = mapped_column(
+        ForeignKey("technicians.id", ondelete="CASCADE"), nullable=False
+    )
+    # Day of week and minute-of-day are in the shop's local time
+    # (America/Chicago) since working hours recur weekly regardless of DST --
+    # see app/scheduling_store.py's local/UTC conversion helpers.
+    day_of_week: Mapped[int] = mapped_column(nullable=False)
+    start_minute: Mapped[int] = mapped_column(nullable=False)
+    end_minute: Mapped[int] = mapped_column(nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+
+
+class ScheduleBlock(Base):
+    __tablename__ = "schedule_blocks"
+    __table_args__ = (
+        CheckConstraint("end_time > start_time", name="ck_schedule_blocks_end_after_start"),
+        Index(
+            "ix_schedule_blocks_owner_technician_time",
+            "owner_user_id",
+            "technician_id",
+            "start_time",
+            "end_time",
+        ),
+        Index(
+            "ix_schedule_blocks_owner_bay_time",
+            "owner_user_id",
+            "bay_id",
+            "start_time",
+            "end_time",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    owner_user_id: Mapped[int] = mapped_column(
+        ForeignKey("user_accounts.id", ondelete="CASCADE"), nullable=False
+    )
+    # Both null = shop-wide block (holiday/closure). Technician-only or
+    # bay-only blocks apply regardless of the other dimension -- see
+    # app/scheduling_store.py's _schedule_block_applies for exact semantics.
+    technician_id: Mapped[int | None] = mapped_column(
+        ForeignKey("technicians.id", ondelete="CASCADE"), nullable=True
+    )
+    bay_id: Mapped[int | None] = mapped_column(
+        ForeignKey("bays.id", ondelete="CASCADE"), nullable=True
+    )
+    start_time: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    end_time: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    reason: Mapped[str] = mapped_column(String(200), nullable=False)
+    notes: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+
+
+class Appointment(Base):
+    __tablename__ = "appointments"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('tentative','confirmed','in_progress','completed','canceled','no_show')",
+            name="ck_appointments_status",
+        ),
+        CheckConstraint(
+            "service_location IN ('shop','mobile')", name="ck_appointments_service_location"
+        ),
+        CheckConstraint("end_time > start_time", name="ck_appointments_end_after_start"),
+        CheckConstraint("travel_buffer_minutes >= 0", name="ck_appointments_travel_buffer_nonneg"),
+        Index(
+            "ix_appointments_owner_technician_time",
+            "owner_user_id",
+            "technician_id",
+            "start_time",
+            "end_time",
+        ),
+        Index(
+            "ix_appointments_owner_bay_time", "owner_user_id", "bay_id", "start_time", "end_time"
+        ),
+        Index("ix_appointments_owner_status_start", "owner_user_id", "status", "start_time"),
+        Index("ix_appointments_owner_customer", "owner_user_id", "customer_id"),
+        Index("ix_appointments_owner_vehicle", "owner_user_id", "vehicle_id"),
+        Index("ix_appointments_work_order", "work_order_id"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    owner_user_id: Mapped[int] = mapped_column(
+        ForeignKey("user_accounts.id", ondelete="CASCADE"), nullable=False
+    )
+    customer_id: Mapped[int] = mapped_column(
+        ForeignKey("customers.id", ondelete="RESTRICT"), nullable=False
+    )
+    vehicle_id: Mapped[int] = mapped_column(
+        ForeignKey("vehicles.id", ondelete="RESTRICT"), nullable=False
+    )
+    work_order_id: Mapped[int | None] = mapped_column(
+        ForeignKey("work_orders.id", ondelete="SET NULL"), nullable=True
+    )
+    technician_id: Mapped[int] = mapped_column(
+        ForeignKey("technicians.id", ondelete="RESTRICT"), nullable=False
+    )
+    bay_id: Mapped[int | None] = mapped_column(
+        ForeignKey("bays.id", ondelete="SET NULL"), nullable=True
+    )
+    service_type: Mapped[str] = mapped_column(String(160), nullable=False)
+    service_location: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="shop", server_default="shop"
+    )
+    start_time: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    end_time: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    travel_buffer_minutes: Mapped[int] = mapped_column(
+        nullable=False, default=0, server_default="0"
+    )
+    status: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="tentative", server_default="tentative"
+    )
+    customer_notes: Mapped[str | None] = mapped_column(Text)
+    internal_notes: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+    canceled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    cancellation_reason: Mapped[str | None] = mapped_column(Text)
