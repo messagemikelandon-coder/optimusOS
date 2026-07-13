@@ -996,7 +996,7 @@ function setEstimateRailCollapsed(collapsed) {
   const toggle = $("estimate-side-rail-toggle");
   layout.classList.toggle("rail-collapsed", collapsed);
   toggle.setAttribute("aria-expanded", String(!collapsed));
-  toggle.title = collapsed ? "Expand estimate readiness panel" : "Collapse estimate readiness panel";
+  toggle.title = collapsed ? "Expand evidence standard panel" : "Collapse evidence standard panel";
   try {
     localStorage.setItem("estimateRailCollapsed", collapsed ? "1" : "0");
   } catch {
