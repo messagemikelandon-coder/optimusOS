@@ -5,76 +5,71 @@ Information owner: the active session author.
 Read when: starting or resuming work.
 Update when: a substantial task completes or context needs to be handed forward.
 Last verified date: 2026-07-13.
-Relevant sources: `docs/context/CURRENT_STATE.md`, `docs/context/KNOWN_ISSUES.md`, `docs/context/PLANS.md`, `git status`/`git log`, full local gate runs on 2026-07-13 (278 tests), live migration + Playwright verification against the real dev Docker stack.
+Relevant sources: `docs/context/CURRENT_STATE.md`, `docs/context/KNOWN_ISSUES.md`, `docs/context/PLANS.md`, `git log`/`git status` from a clean isolated worktree, a full local gate run against `origin/main`, `gh pr list --state merged`, `curl` against `https://staging.optimus-os.com`.
 
 ## Identity
 
 - Updated UTC: 2026-07-13.
-- Agent: Claude
-- Branch: `agent/claude/shop-management-ui`. Remote-tracked, local HEAD matches `origin/agent/claude/shop-management-ui` at commit `da3bd14` — **this session's own work is on top of that as an uncommitted working-tree diff, not yet committed.**
-- Worktree: primary (`/home/dejake/optimus-server`).
+- Agent: Claude.
+- `main` HEAD: `077f4d3` (merge of PR #23). Verified from a disposable isolated worktree (`git worktree`), not the shared primary worktree — see the concurrent-session note below for why.
+- Primary worktree (`/home/dejake/optimus-server`): clean as of this handoff, on branch `agent/claude/shop-management-ui`, only the pre-existing untracked `optimusOS/` stray directory present (leave alone, predates every session on record).
 
-## ⚠ Concurrent-session note (read before touching git)
+## Active task
 
-Mid-session, `git log` showed two commits (`da0937f`, `da3bd14`, both "Codex Deployment Engineer" / `Co-Authored-By: Claude Sonnet 5`, session id `session_01Eu4ePjsiBEVPbVK8MFGV3H` — **a different Claude session than this one**) had been pushed to this exact branch: unrelated job-estimator sidebar layout fixes (`app/static/app.js`/`index.html`/`styles.css`). This session did not make or request those commits. They do not touch any file this session edited (no merge conflict, all this session's tests still pass against the post-those-commits tree), so no corruption occurred — but it confirms **two agent sessions had write access to the same branch/worktree at overlapping times**, which `AGENTS.md` says should never happen ("Claude and Codex must never edit the same worktree concurrently," "exactly one active implementer owns a branch/worktree at a time"). Flag this to the owner; the next session should confirm who/what is authorized to write here before assuming exclusive ownership.
+1. Fixed the job estimator draft layout (a completed estimate was rendering squeezed into the narrow readiness-rail grid column instead of the main content area) and made the evidence-standard sidebar rail collapsible. Merged to `main` via **PR #21**.
+2. Removed the estimator's decorative "Estimate readiness" gauge/checklist box per owner follow-up request. Merged to `main` via **PR #22**. This edit had to be hand-isolated from a much larger, concurrent, uncommitted diff on the same three static files — see the concurrent-session note below.
+3. Discovered mid-session that a **different, simultaneous Claude Code session** was live-editing this exact shared worktree, building the Scheduling module. That session committed and merged its own work independently and correctly (**PR #23**) partway through this session, without my involvement — confirmed via `gh pr list` and a `git fetch`.
+4. Phase 1 documentation reconciliation (this owner-directed task): established a verified baseline from a clean isolated worktree (not the shared primary worktree, not carried-forward doc claims) and corrected stale/contradictory claims in `CURRENT_STATE.md`, `KNOWN_ISSUES.md`, and `PLANS.md` — see each file's diff for specifics. The most significant corrections: several Phase 5.6 sub-phases and the estimator fixes were documented as "uncommitted, pending owner approval" when they were in fact already merged to `main`; the staging droplet's recorded commit (`36b861b`) was many merges out of date and has been replaced with a live-verified marker check instead of a static claim.
 
-## Active task — Scheduling module (Phase 5.6 sub-phase 5)
+## Concurrent-session note (read before touching git on this branch)
 
-This session's only work: implemented the Scheduling/Appointments module end-to-end per the owner's detailed spec, closing out the last "Coming soon" nav stub from the original Overview Dashboard slice. Full detail in `docs/context/CURRENT_STATE.md`'s new "Phase 5.6 Sub-phase 5 — Scheduling Module" section — summary:
+Two Claude Code sessions had uncommitted, unpushed work on `agent/claude/shop-management-ui` at overlapping times without either being aware of the other — a direct violation of `AGENTS.md`'s "Claude and Codex must never edit the same worktree concurrently" / "exactly one active implementer owns a branch/worktree at a time" rule. No work was lost (full account in `docs/context/KNOWN_ISSUES.md`'s Historical Resolved Issues), but the root cause of *why* two sessions had concurrent write access at all was not determined this session. **Before starting new work on this branch, confirm no other session currently has it open.** If documentation work needs a guaranteed-clean view of `main` while someone else might be active in the primary worktree, use `EnterWorktree` (or plain `git worktree add`) to check out `origin/main` in an isolated location rather than trusting the primary worktree's state.
 
-- New migration `016_scheduling` (`bays`, `working_hours`, `schedule_blocks`, `appointments`).
-- New `app/scheduling_store.py`: conflict/availability engine (technician overlap + travel buffer, bay overlap, DST-aware America/Chicago working-hours, schedule-block conflicts, past-time rejection), row-locked via `SELECT ... FOR UPDATE` mirroring `payment_store.py`.
-- New `app/main.py` routes: the 7 spec'd appointment endpoints + `GET /api/availability` + full schedule-block CRUD (spec'd) + full bay/working-hours CRUD (a disclosed scope addition beyond the literal spec — otherwise unconfigurable).
-- New frontend: day/week agenda-style calendar (list+detail+form pattern, not a pixel grid) replacing the static placeholder, plus inline bay/working-hours/schedule-block management panels.
-- New `tests/test_scheduling_api.py` (23 tests, incl. a real DST-crossing assertion and cross-owner isolation).
-- Independent review (`optimus-reviewer`) found and this session fixed 2 real bugs: a `ScheduleBlock` could target both a technician and a bay at once (ambiguous OR-semantics broader than intended — now rejected at the model layer); the backend didn't block canceling a `completed` appointment even though the frontend hid that button (now enforced server-side). Both got regression tests.
-- Security review (`optimus-security-reviewer`): **PASS, no findings.**
-- One more bug found during this session's own Playwright verification (not by either review) and fixed: the toolbar's date-label/Day-Week-active-highlighting only updated after a *successful* fetch, so a failed load left it visually stuck — now updates unconditionally.
+## Verified baseline (from a clean `origin/main` checkout, not the working tree)
 
-## Verified baseline
-
-- Migration head before this session: `015_diagnostics_inspections`. After: `016_scheduling`, applied to the real dev Postgres and round-tripped (`downgrade 015_diagnostics_inspections` → 4 tables dropped, confirmed via `psql \dt` → `upgrade head` → tables recreated) to prove reversibility.
+- `env UV_CACHE_DIR=/tmp/uv-cache uv run ruff format --check .` → clean, 107 files.
+- `env UV_CACHE_DIR=/tmp/uv-cache uv run ruff check .` → all checks passed.
+- `env UV_CACHE_DIR=/tmp/uv-cache uv run pyright` → 0 errors, 0 warnings.
+- `env UV_CACHE_DIR=/tmp/uv-cache uv run pytest` → **278 passed**.
+- `node --check app/static/app.js` → OK.
+- Alembic migration chain: linear, single head, `016_scheduling` (down to `001_optimus_os_foundation`, no branching).
+- `docker compose config -q` and `docker compose -f docker-compose.yml -f ops/docker-compose.staging.yml config -q` (using only `.env.example` placeholder values, never real secrets) → both valid.
+- `.github/workflows/`: only `ai-coordination.yml` exists, and it only validates the AI handoff doc (`scripts/check_ai_handoff.py`) — there is no CI gate today that runs tests, lint, type-checking, or builds. Confirmed by reading the workflow file directly, not inferred.
+- Staging (`https://staging.optimus-os.com`): `/health` and `/ready` both return `200`. Served-HTML marker check shows a commit after PR #21 but before PR #22/#23 — i.e. the full-width estimator layout fix is live, but the readiness-box removal and Scheduling are not yet deployed.
 
 ## Evidence
 
-- `ruff format`/`ruff check .`: clean (whole repo). `pyright`: 0 errors (whole repo). `node --check app/static/app.js`: OK.
-- `pytest -q`: 278 passed (255 baseline + 23 new scheduling tests). One pre-existing test's stale assertion was corrected (`test_official_ui.py`'s `nav-soon-badge` count, `1`→`0`, since Scheduling was the last stub).
-- Live Docker proof: rebuilt `backend`/`worker` images (twice — once before the two review-driven bug fixes, once after, so the final image reflects the fixed code), confirmed `/health` healthy and all new routes correctly `401` unauthenticated via real `curl`.
-- Live Playwright proof: real browser against the live dev stack (nginx `:5173` → proxied to the rebuilt backend), client-side `state.auth.authenticated = true` bypass (no real session cookie exists — see Unverified). Confirmed the Scheduling view, create-appointment form, and week-view toggle all render correctly with the dark automotive design system intact, zero unexpected console errors (only the expected `401`s from the unauthenticated real API calls), and confirmed via before/after screenshots that the toolbar date-label bug above is actually fixed.
-- Independent review (`optimus-reviewer`) and security review (`optimus-security-reviewer`) both completed — see Active task above for findings.
+- PR #21/#22 (this session's own edits): a headless Playwright pass against the static files directly (no backend) confirmed pre-draft form/rail layout, post-draft full-width result rendering, the collapse/expand toggle (including `localStorage` persistence), and the "Start another" reset path, before and after the readiness-box removal. `tests/test_official_ui.py` (13 tests) green both times.
+- PR #23 (the other session's Scheduling work, verified after the fact rather than performed by this session): `gh pr view 23` shows independent review found and fixed 2 real bugs, security review PASS, 278 tests passing at merge time — taken as given, not re-verified independently by this session.
+- This session's own full gate re-run against a clean `origin/main` checkout (`077f4d3`): see Verified baseline above — all green, 278 tests.
+- Staging live-proof: `curl https://staging.optimus-os.com/health` and `/ready` both `200`; `curl .../static/index.html | grep` for `side-rail-toggle` (present), `readiness-card` (present), `nav-soon-badge` (present) — the marker combination that pins staging's deployed commit to after-PR#21-before-PR#22/#23.
 
 ## Unverified
 
 - No live/billable OpenAI calls were made this session.
-- **No real authenticated end-to-end browser proof exists for the Scheduling module** — same structural limitation as every other Phase 5.6 slice on this branch (no self-serve way to mint a second synthetic owner account; this session never read `.env` or used real owner credentials). The 23 passing backend tests (real route handlers against a real database) are the actual functional-correctness evidence, not the Playwright screenshots.
-- The `SELECT ... FOR UPDATE` row-lock in `scheduling_store.py` has no executable concurrency evidence (SQLite, used by the test suite, ignores `FOR UPDATE`) — verified only by code-pattern comparison to the already-proven `payment_store.py` usage. See `KNOWN_ISSUES.md`.
-- Everything carried over as unverified from the prior handoff (Phase 5.6 sub-phases 3/4/6/7, the UI redesign) remains unverified by this session — this session did not touch those files or re-verify them.
+- No real authenticated browser proof was captured this session for anything (this session's own changes were verified via a static-file Playwright pass with no backend, which is sufficient for a pure CSS/layout change but proves nothing about authenticated flows). The structural gap flagged by every prior Phase 5.6 handoff — no synthetic-account provisioning path exists, so no session has ever done a real authenticated end-to-end click-through — is unchanged and is now tracked as `docs/context/PLANS.md` Phase 6 Part B.
+- The exact commit the staging droplet is on was not determined precisely (no SSH access exercised this session) — only bracketed between PR #21 and PR #22 via live HTTP marker checks, which is weaker evidence than an actual `git rev-parse HEAD` on the droplet but is real, current-session evidence rather than a stale doc claim.
 
 ## Unrelated preexisting changes
 
-- Untracked stray `optimusOS/` directory (~45MB nested project clone with its own `.git`) at the repo root — predates this session, not part of any commit, still present, still "leave alone" per every prior handoff.
+- Untracked stray `optimusOS/` directory (~45MB nested project clone with its own `.git`) at the repo root — predates every session on record, not part of any commit, still present, still "leave alone" per every prior handoff.
 
 ## Blockers and risks
 
-- **This session's Scheduling work is uncommitted and unpushed**, sitting on top of the concurrent-session commits described above. Do not commit without a fresh explicit instruction — and when committing, be deliberate about what gets staged given the concurrent-write situation (confirm nothing from the other session's in-flight work gets swept in or clobbered).
-- Phase 5.6 sub-phases 3/4/6/7 + the UI redesign (documented in the prior handoff, now folded into `CURRENT_STATE.md`'s consolidated sections) are *also* still uncommitted on this same branch, from before this session started. All of Phase 5.6 (sub-phases 0-7) is now feature-complete on this branch; nothing has been committed since `425d784`.
-- Scheduling is strictly owner-only (no technician-facing schedule view) and has two disclosed MVP simplifications: a technician with zero configured working-hours rows is unrestricted rather than blocked, and the row-lock concurrency claim is unverified under real load. See `KNOWN_ISSUES.md`.
+- None blocking. The owner's Phase 6 production-readiness roadmap (Parts A-I, `docs/context/PLANS.md`) is approved to proceed; Scheduling is explicitly out of scope for all of it.
 
 ## Exact next task
 
-1. **Resolve the concurrent-session situation first** — confirm with the owner who/what has write access to this branch/worktree, before any further multi-session work happens here.
-2. Get the owner's sign-off on the local sandbox (server running at `http://127.0.0.1:8000` / `http://127.0.0.1:5173`, real login required to actually exercise Scheduling and every other uncommitted module).
-3. On approval: commit. Given the branch now contains the UI redesign + 5 full Phase 5.6 sub-phases (3,4,6,7) + Scheduling (5) all uncommitted together, decide with the owner whether to commit as one diff or split logically.
-4. Before merging: get a real authenticated click-through of Scheduling (create/move/cancel/confirm an appointment, configure a bay/working-hours/blocked-time entry) — same gap as every other Phase 5.6 module on this branch.
-5. Once merged: re-run the droplet update runbook for whatever the final merged state is.
+Per the owner's approved roadmap (`docs/context/PLANS.md` Phase 6), proceed to **Part A — CI enforcement**: replace the handoff-only GitHub Actions workflow with a real quality-gate workflow (ruff/pyright/pytest/node-check/Alembic/Docker-build/compose-config/secret-scan) running on PRs and pushes to `main`, using Postgres+Redis service containers. Work in a fresh branch/worktree, not the shared primary one, given the concurrent-session history above. Get an independent review before merge. Do not touch Scheduling files.
+
+Separately, and independent of Part A: the owner may want the staging droplet caught up to current `main` (it's missing PR #22 and PR #23) — that's a deploy action requiring explicit current-turn approval, not bundled into this handoff's next task by default.
 
 ## Carried over from prior sessions — not touched by this session
 
 - Ask the owner to re-test the three staging bugs reported after the Phase 5.5 deploy (notifications reachable via mobile nav + desktop sidebar; estimate "Refresh status" button; Square tab visible in both nav surfaces) — still the oldest open follow-up, not yet re-confirmed.
 - Payment-schedule installment percentage split remains an owner-confirmed placeholder (`docs/context/BUSINESS_RULES.md`).
-- No rate limiter on `POST /api/estimates`.
+- No rate limiter on `POST /api/estimates` — tracked as part of Phase 6 Part H (rate limiting re-verified for multi-instance reality).
 - Pre-existing work-order-completion commit-boundary race documented in `docs/context/KNOWN_ISSUES.md` (concurrent-race only, single-owner usage makes it near-impossible to hit).
 - Square: email-TLD and phone-format validation gaps found during an earlier sandbox smoke test are non-blocking, no fix requested yet. Staging still has no Square credentials configured.
-- Staging's actual current deployed commit is unconfirmed — re-verify before assuming any particular state (e.g. `curl https://staging.optimus-os.com/health` plus a look at served HTML markers).
-- Diagnostics/Inspections use hard delete (no soft-archive), a deliberate deviation from every other module's convention — worth a second opinion before shipping if considered a liability concern.
-- No `optimus-security-reviewer` pass has been run against Phase 5.6 sub-phases 3/4/6/7 (Vendors+Parts, Service Desk, Diagnostics+Inspections, Reports) — only Scheduling (sub-phase 5, this session) has had one.
+- Diagnostics/Inspections use hard delete (no soft-archive) — now explicitly tracked as Phase 6 Part D.
+- No `optimus-security-reviewer` pass has been run against Phase 5.6 sub-phases 3, 4, 6, 7 (Vendors+Parts, Service Desk, Diagnostics+Inspections, Reports) — only sub-phases 1, 2, and 5 (Scheduling) have had one. Worth closing before Phase 6 Part E gives technicians write access to Diagnostics/Inspections.
