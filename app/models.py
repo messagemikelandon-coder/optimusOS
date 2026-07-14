@@ -2212,3 +2212,19 @@ class AvailabilityResponse(BaseModel):
     working_windows: list[AvailabilityWindow]
     busy_windows: list[AvailabilityWindow]
     blocked_windows: list[AvailabilityWindow]
+
+
+class SyntheticTechnicianRequest(BaseModel):
+    owner_username: NonBlank = Field(max_length=120)
+
+
+class SyntheticAccountResponse(BaseModel):
+    user_id: int
+    username: str
+    password: str
+    role: Literal["owner", "technician"]
+    technician_id: int | None = None
+
+
+class SyntheticCleanupResponse(BaseModel):
+    deleted_count: int
