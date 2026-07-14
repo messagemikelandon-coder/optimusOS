@@ -883,6 +883,18 @@ class EstimateSendForApprovalRequest(BaseModel):
         return value
 
 
+class EstimateApprovalRevokeRequest(BaseModel):
+    reason: str | None = Field(default=None, max_length=1000)
+
+    @field_validator("reason", mode="before")
+    @classmethod
+    def strip_reason(cls, value: object) -> object:
+        if isinstance(value, str):
+            stripped = value.strip()
+            return stripped or None
+        return value
+
+
 class EstimateApprovalTokenRequest(BaseModel):
     token: NonBlank = Field(max_length=400)
 
@@ -1053,6 +1065,7 @@ class EstimateApprovalAuditResponse(BaseModel):
     estimate_id: int
     estimate_number: str
     status: EstimateStatus
+    active_approval_request_id: int | None = None
     events: list[EstimateApprovalEventRead]
 
 

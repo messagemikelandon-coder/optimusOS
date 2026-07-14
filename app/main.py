@@ -71,6 +71,7 @@ from app.estimate_store import (
     get_approval_view,
     get_estimate,
     list_estimates,
+    revoke_estimate_approval_request,
     send_estimate_for_approval,
     update_estimate,
 )
@@ -142,6 +143,7 @@ from app.models import (
     EstimateApprovalActionResponse,
     EstimateApprovalAuditResponse,
     EstimateApprovalPublicView,
+    EstimateApprovalRevokeRequest,
     EstimateApprovalSendResponse,
     EstimateApprovalTokenRequest,
     EstimateCreate,
@@ -2014,6 +2016,37 @@ async def send_estimate_record_for_approval(
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except SQLAlchemyError as exc:
         logger.warning("Estimate send-for-approval failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Estimate storage is unavailable.",
+        ) from exc
+
+
+@app.post(
+    "/api/estimates/{estimate_id}/approval-requests/{approval_request_id}/revoke",
+    response_model=EstimateRead,
+)
+async def revoke_estimate_approval_request_record(
+    estimate_id: int,
+    approval_request_id: int,
+    payload: EstimateApprovalRevokeRequest,
+    db: DbSessionDep,
+    auth: OwnerAuthContextDep,
+) -> EstimateRead:
+    try:
+        return revoke_estimate_approval_request(
+            db=db,
+            auth=auth,
+            estimate_id=estimate_id,
+            approval_request_id=approval_request_id,
+            reason=payload.reason,
+        )
+    except EstimateNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except EstimateStoreError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Estimate approval-link revoke failed due to storage error.")
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Estimate storage is unavailable.",

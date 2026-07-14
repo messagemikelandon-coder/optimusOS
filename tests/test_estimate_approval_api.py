@@ -23,6 +23,7 @@ from app.models import (
     Confidence,
     DecodedVehicle,
     EstimateApprovalActionRequest,
+    EstimateApprovalRevokeRequest,
     EstimateApprovalTokenRequest,
     EstimateCreate,
     EstimateDeclineActionRequest,
@@ -968,3 +969,172 @@ async def test_restart_persistence_for_approved_estimates(monkeypatch, tmp_path:
         assert [event.event_type for event in events] == ["sent", "approved"]
     finally:
         second_session.close()
+
+
+@pytest.mark.anyio
+async def test_revoke_active_approval_link_disables_it_and_frees_estimate_for_resend(
+    monkeypatch, settings, db_session: Session
+) -> None:  # type: ignore[no-untyped-def]
+    monkeypatch.setattr(OptimusResearchOrchestrator, "estimate_job", stub_estimate_job)
+    _, response = await login_as(settings, db_session)
+    auth = auth_context(settings, db_session, raw_cookie_from_response(response))
+    _, _, estimate = await create_estimate_for_auth(settings, db_session, auth)
+    await main.update_estimate_record(
+        estimate.id, EstimateUpdate(status=EstimateStatus.READY), db_session, auth
+    )
+    sent = await main.send_estimate_record_for_approval(
+        estimate.id,
+        EstimateSendForApprovalRequest(),
+        db_session,
+        auth,
+        request_for("/api/estimates/1/send-for-approval", method="POST"),
+    )
+    token = sent.approval_link.split("#token=", 1)[1]
+    history_before = await main.estimate_approval_history(estimate.id, db_session, auth)
+    assert history_before.active_approval_request_id is not None
+    approval_request_id = history_before.active_approval_request_id
+
+    revoked = await main.revoke_estimate_approval_request_record(
+        estimate.id,
+        approval_request_id,
+        EstimateApprovalRevokeRequest(reason="Sent to the wrong customer."),
+        db_session,
+        auth,
+    )
+    assert revoked.status is EstimateStatus.READY
+
+    # The revoked token must no longer work for the real public approval view.
+    with pytest.raises(HTTPException) as excinfo:
+        await main.approval_view(
+            EstimateApprovalTokenRequest(token=token),
+            db_session,
+            request_for("/api/estimate-approval/view", method="POST"),
+            settings,
+        )
+    assert excinfo.value.status_code == 404
+
+    history_after = await main.estimate_approval_history(estimate.id, db_session, auth)
+    assert history_after.active_approval_request_id is None
+    assert [event.event_type for event in history_after.events] == ["sent", "revoked"]
+    assert history_after.events[-1].decline_reason == "Sent to the wrong customer."
+
+    # A fresh link can be sent for the same (still-ready) revision.
+    resent = await main.send_estimate_record_for_approval(
+        estimate.id,
+        EstimateSendForApprovalRequest(),
+        db_session,
+        auth,
+        request_for("/api/estimates/1/send-for-approval", method="POST"),
+    )
+    assert resent.status is EstimateStatus.AWAITING_APPROVAL
+    new_token = resent.approval_link.split("#token=", 1)[1]
+    assert new_token != token
+
+
+@pytest.mark.anyio
+async def test_revoke_rejects_non_active_or_missing_approval_requests(
+    monkeypatch, settings, db_session: Session
+) -> None:  # type: ignore[no-untyped-def]
+    monkeypatch.setattr(OptimusResearchOrchestrator, "estimate_job", stub_estimate_job)
+    _, response = await login_as(settings, db_session)
+    auth = auth_context(settings, db_session, raw_cookie_from_response(response))
+    _, _, estimate = await create_estimate_for_auth(settings, db_session, auth)
+    await main.update_estimate_record(
+        estimate.id, EstimateUpdate(status=EstimateStatus.READY), db_session, auth
+    )
+    sent = await main.send_estimate_record_for_approval(
+        estimate.id,
+        EstimateSendForApprovalRequest(),
+        db_session,
+        auth,
+        request_for("/api/estimates/1/send-for-approval", method="POST"),
+    )
+    token = sent.approval_link.split("#token=", 1)[1]
+    history = await main.estimate_approval_history(estimate.id, db_session, auth)
+    approval_request_id = history.active_approval_request_id
+    assert approval_request_id is not None
+
+    await main.approval_approve(
+        EstimateApprovalActionRequest(
+            token=token,
+            revision_number=1,
+            approving_name="Jane Customer",
+            accepted_terms=True,
+            payment_option=EstimatePaymentOptionCode.PAY_IN_FULL,
+            typed_authorization="Approved",
+        ),
+        db_session,
+        request_for("/api/estimate-approval/approve", method="POST"),
+        settings,
+    )
+
+    # Already used -- cannot be revoked after the fact.
+    with pytest.raises(HTTPException) as excinfo:
+        await main.revoke_estimate_approval_request_record(
+            estimate.id,
+            approval_request_id,
+            EstimateApprovalRevokeRequest(),
+            db_session,
+            auth,
+        )
+    assert excinfo.value.status_code == 422
+
+    # Nonexistent approval-request id.
+    with pytest.raises(HTTPException) as excinfo:
+        await main.revoke_estimate_approval_request_record(
+            estimate.id,
+            999_999,
+            EstimateApprovalRevokeRequest(),
+            db_session,
+            auth,
+        )
+    assert excinfo.value.status_code == 404
+
+
+@pytest.mark.anyio
+async def test_revoke_approval_request_is_owner_scoped(
+    monkeypatch, settings, db_session: Session
+) -> None:  # type: ignore[no-untyped-def]
+    monkeypatch.setattr(OptimusResearchOrchestrator, "estimate_job", stub_estimate_job)
+    _, owner_response = await login_as(settings, db_session)
+    owner_auth = auth_context(settings, db_session, raw_cookie_from_response(owner_response))
+    _, _, estimate = await create_estimate_for_auth(settings, db_session, owner_auth)
+    await main.update_estimate_record(
+        estimate.id, EstimateUpdate(status=EstimateStatus.READY), db_session, owner_auth
+    )
+    sent = await main.send_estimate_record_for_approval(
+        estimate.id,
+        EstimateSendForApprovalRequest(),
+        db_session,
+        owner_auth,
+        request_for("/api/estimates/1/send-for-approval", method="POST"),
+    )
+    history = await main.estimate_approval_history(estimate.id, db_session, owner_auth)
+    approval_request_id = history.active_approval_request_id
+    assert approval_request_id is not None
+
+    create_user(db_session, username="other-owner", password="other-password-123")
+    _, other_response = await login_as(
+        settings, db_session, username="other-owner", password="other-password-123"
+    )
+    other_auth = auth_context(settings, db_session, raw_cookie_from_response(other_response))
+
+    with pytest.raises(HTTPException) as excinfo:
+        await main.revoke_estimate_approval_request_record(
+            estimate.id,
+            approval_request_id,
+            EstimateApprovalRevokeRequest(),
+            db_session,
+            other_auth,
+        )
+    assert excinfo.value.status_code == 404
+
+    # Untouched: the real owner's link still works.
+    token = sent.approval_link.split("#token=", 1)[1]
+    approval_view = await main.approval_view(
+        EstimateApprovalTokenRequest(token=token),
+        db_session,
+        request_for("/api/estimate-approval/view", method="POST"),
+        settings,
+    )
+    assert approval_view.revision.revision_number == 1

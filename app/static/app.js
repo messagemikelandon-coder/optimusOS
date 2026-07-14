@@ -863,6 +863,7 @@ function renderEstimate(data) {
       <button class="secondary-button compact" type="button" id="print-estimate">Print estimate</button>
       <button class="secondary-button compact" type="button" id="send-estimate-approval"${data.status === "approved" ? " disabled" : ""}>Send for approval</button>
       <button class="secondary-button compact" type="button" id="create-work-order"${canCreateWorkOrder ? "" : " disabled"}>Create work order</button>
+      <button class="text-button" type="button" id="revoke-estimate-approval"${data.approval_audit?.active_approval_request_id ? "" : " hidden"} title="Disable the currently active approval link.">Revoke approval link</button>
       <button class="text-button" type="button" id="refresh-estimate-record" title="Reload this estimate's current status from the server">Refresh status</button>
       <button class="text-button" type="button" id="new-estimate">Start another</button>
     </div>
@@ -911,6 +912,9 @@ function renderEstimate(data) {
   });
   $("create-work-order").addEventListener("click", () => {
     void createWorkOrderFromSelectedEstimate();
+  });
+  $("revoke-estimate-approval").addEventListener("click", () => {
+    void revokeSelectedEstimateApproval(data);
   });
   $("refresh-estimate-record").addEventListener("click", () => {
     void openEstimateRecord(data.id).then(() => {
@@ -1002,6 +1006,36 @@ async function sendSelectedEstimateForApproval() {
     showToast("Approval link copied to the clipboard.", "success");
   } catch (error) {
     showToast(`Estimate approval link failed: ${error.message}`, "error");
+  }
+}
+
+async function revokeSelectedEstimateApproval(data) {
+  const approvalRequestId = data.approval_audit?.active_approval_request_id;
+  if (!approvalRequestId) return;
+  if (
+    !window.confirm(
+      "Revoke this approval link? The customer will no longer be able to use it, and you'll need to send a new one."
+    )
+  ) {
+    return;
+  }
+  try {
+    const response = await apiFetch(
+      `/api/estimates/${data.id}/approval-requests/${approvalRequestId}/revoke`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      }
+    );
+    const updated = await readApiPayload(response);
+    if (!response.ok || !updated) throw apiError(response, updated, "Revoke approval link failed");
+    updated.approval_audit = await loadEstimateApprovalAudit(updated.id);
+    renderEstimate(updated);
+    void rememberSelectedEstimate(updated);
+    showToast("Approval link revoked.", "success");
+  } catch (error) {
+    showToast(`Revoke approval link failed: ${error.message}`, "error");
   }
 }
 
