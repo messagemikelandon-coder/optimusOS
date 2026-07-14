@@ -14,6 +14,7 @@ Requires-Dist: python-dotenv<2,>=1.0
 Requires-Dist: alembic<2,>=1.13
 Requires-Dist: psycopg[binary]<4,>=3.2
 Requires-Dist: sqlalchemy>=2.0.51
+Requires-Dist: redis<6,>=5.0
 Provides-Extra: dev
 Requires-Dist: pytest<10,>=8; extra == "dev"
 Requires-Dist: pytest-asyncio<2,>=0.24; extra == "dev"
