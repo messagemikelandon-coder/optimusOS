@@ -9,6 +9,7 @@ python-dotenv<2,>=1.0
 alembic<2,>=1.13
 psycopg[binary]<4,>=3.2
 sqlalchemy>=2.0.51
+redis<6,>=5.0
 
 [dev]
 pytest<10,>=8

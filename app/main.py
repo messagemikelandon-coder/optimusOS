@@ -12,6 +12,7 @@ from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response, s
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
+from redis.asyncio import Redis
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
@@ -235,7 +236,7 @@ from app.part_store import (
     update_part,
 )
 from app.payment_store import PaymentNotFoundError, record_payment, void_payment
-from app.rate_limit import RateLimitExceeded, SlidingWindowRateLimiter
+from app.rate_limit import RateLimiter, RateLimitExceeded, RedisSlidingWindowRateLimiter
 from app.scheduling_store import (
     SchedulingConflictError,
     SchedulingNotFoundError,
@@ -352,13 +353,28 @@ app.add_middleware(
     allow_headers=("Content-Type",),
 )
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
-_rate_limiter: SlidingWindowRateLimiter | None = None
+_rate_limiter: RateLimiter | None = None
+_rate_limiter_redis_url: str | None = None
 
 
-def get_rate_limiter(settings: Settings) -> SlidingWindowRateLimiter:
-    global _rate_limiter
-    if _rate_limiter is None or _rate_limiter.limit != settings.max_estimates_per_minute:
-        _rate_limiter = SlidingWindowRateLimiter(limit=settings.max_estimates_per_minute)
+def get_rate_limiter(settings: Settings) -> RateLimiter:
+    # Redis-backed so the limit is shared and correctly enforced across
+    # multiple app instances behind a load balancer, not just per-process.
+    # RedisSlidingWindowRateLimiter itself falls back to a best-effort
+    # in-process limiter if Redis is briefly unreachable (see
+    # app/rate_limit.py), so this never turns a transient Redis hiccup into
+    # a full outage of the public chat/approval endpoints it guards.
+    global _rate_limiter, _rate_limiter_redis_url
+    if (
+        _rate_limiter is None
+        or _rate_limiter.limit != settings.max_estimates_per_minute
+        or _rate_limiter_redis_url != settings.redis_url
+    ):
+        _rate_limiter = RedisSlidingWindowRateLimiter(
+            redis_client=Redis.from_url(settings.redis_url),
+            limit=settings.max_estimates_per_minute,
+        )
+        _rate_limiter_redis_url = settings.redis_url
     return _rate_limiter
 
 

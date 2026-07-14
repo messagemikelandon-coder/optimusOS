@@ -25,6 +25,18 @@ jobs:
   lint-typecheck-test:
     name: Lint, typecheck, unit tests, JS syntax
     runs-on: ubuntu-latest
+    services:
+      # Backs the Redis-dependent rate-limit tests in tests/test_rate_limit.py
+      # (skipped, not failed, when unreachable -- but real here, not mocked).
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - uses: actions/checkout@v4
         with:
