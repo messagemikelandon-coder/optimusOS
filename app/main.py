@@ -225,6 +225,7 @@ from app.notification_store import (
     mark_all_notifications_read,
     mark_notification_read,
 )
+from app.observability import configure_structured_logging, install_request_context_middleware
 from app.orchestrator import OptimusResearchOrchestrator
 from app.part_store import (
     PartNotFoundError,
@@ -327,7 +328,7 @@ from app.work_order_store import (
     update_work_order,
 )
 
-logging.basicConfig(level=get_settings().log_level)
+configure_structured_logging(get_settings().log_level)
 logger = logging.getLogger("optimus")
 STATIC_DIR = Path(__file__).parent / "static"
 SettingsDep = Annotated[Settings, Depends(get_settings)]
@@ -353,6 +354,7 @@ app.add_middleware(
     allow_headers=("Content-Type",),
 )
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+install_request_context_middleware(app, logger)
 _rate_limiter: RateLimiter | None = None
 _rate_limiter_redis_url: str | None = None
 
