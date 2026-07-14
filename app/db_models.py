@@ -464,6 +464,11 @@ class EstimateApprovalRequest(Base):
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="active")
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    revoked_by_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("user_accounts.id", ondelete="SET NULL"),
+        nullable=True,
+    )
     created_by_user_id: Mapped[int] = mapped_column(
         ForeignKey("user_accounts.id", ondelete="CASCADE"),
         nullable=False,
@@ -489,7 +494,8 @@ class EstimateApprovalEvent(Base):
     __table_args__ = (
         CheckConstraint(
             "event_type IN ("
-            "'sent', 'approved', 'declined', 'expired', 'superseded', 'archived', 'internal_recorded'"
+            "'sent', 'approved', 'declined', 'expired', 'superseded', 'archived', "
+            "'internal_recorded', 'revoked'"
             ")",
             name="ck_estimate_approval_events_type",
         ),

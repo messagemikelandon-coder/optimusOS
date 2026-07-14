@@ -817,6 +817,66 @@ def send_estimate_for_approval(
     )
 
 
+def revoke_estimate_approval_request(
+    *,
+    db: Session,
+    auth: AuthContext,
+    estimate_id: int,
+    approval_request_id: int,
+    reason: str | None = None,
+) -> EstimateRead:
+    estimate = _require_estimate(db, auth, estimate_id)
+    approval_request = db.scalar(
+        select(EstimateApprovalRequest).where(
+            EstimateApprovalRequest.id == approval_request_id,
+            EstimateApprovalRequest.estimate_id == estimate.id,
+        )
+    )
+    if approval_request is None:
+        raise EstimateNotFoundError("Approval request not found.")
+    if approval_request.status != "active":
+        raise EstimateStoreError(
+            f"Only an active approval link can be revoked (current status: "
+            f"{approval_request.status})."
+        )
+
+    approval_request.status = "revoked"
+    approval_request.revoked_at = datetime.now(UTC)
+    approval_request.revoked_by_user_id = auth.user.id
+    db.add(approval_request)
+
+    revision = approval_request.revision
+    # Revoking the link that's currently awaiting a customer response frees
+    # the estimate/revision back up so the owner can send a fresh link for
+    # the same revision, without requiring a brand-new (re-researched)
+    # revision -- send_estimate_for_approval only accepts draft/ready.
+    if estimate.status == EstimateStatus.AWAITING_APPROVAL.value:
+        estimate.status = EstimateStatus.READY.value
+        db.add(estimate)
+        revision.status = EstimateStatus.READY.value
+        db.add(revision)
+
+    _append_event(
+        db=db,
+        estimate=estimate,
+        revision=revision,
+        event_type="revoked",
+        actor_type="internal",
+        actor_name=auth.user.display_name,
+        approval_method=None,
+        accepted_terms=None,
+        payment_option=None,
+        payment_plan_acknowledged=None,
+        decline_reason=reason,
+        content_hash=revision.content_hash,
+        approval_request_id=approval_request.id,
+        actor_user_id=auth.user.id,
+    )
+    db.commit()
+    db.refresh(estimate)
+    return _estimate_to_read(estimate)
+
+
 def _resolve_active_approval_request(db: Session, token: str) -> EstimateApprovalRequest:
     approval_request = db.scalar(_approval_request_query(token))
     if approval_request is None:
@@ -1005,9 +1065,16 @@ def approval_history(
         .where(EstimateApprovalEvent.estimate_id == estimate.id)
         .order_by(EstimateApprovalEvent.created_at.asc(), EstimateApprovalEvent.id.asc())
     ).all()
+    active_request = db.scalar(
+        select(EstimateApprovalRequest.id).where(
+            EstimateApprovalRequest.estimate_id == estimate.id,
+            EstimateApprovalRequest.status == "active",
+        )
+    )
     return EstimateApprovalAuditResponse(
         estimate_id=estimate.id,
         estimate_number=estimate.estimate_number,
         status=EstimateStatus(estimate.status),
+        active_approval_request_id=active_request,
         events=[_event_to_read(event) for event in events],
     )
