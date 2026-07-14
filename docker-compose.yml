@@ -31,7 +31,10 @@ services:
       - no-new-privileges:true
 
   backend:
-    build: .
+    build:
+      context: .
+      args:
+        GIT_COMMIT: ${GIT_COMMIT:-unknown}
     env_file: .env
     environment:
       DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://optimus:optimus_local@postgres:5432/optimus_os}
@@ -53,7 +56,10 @@ services:
       - ALL
 
   worker:
-    build: .
+    build:
+      context: .
+      args:
+        GIT_COMMIT: ${GIT_COMMIT:-unknown}
     env_file: .env
     environment:
       DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://optimus:optimus_local@postgres:5432/optimus_os}

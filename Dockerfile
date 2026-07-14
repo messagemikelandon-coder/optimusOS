@@ -1,5 +1,11 @@
 FROM python:3.12-slim
 
+# Set at build time (docker-compose.yml passes GIT_COMMIT=$(git rev-parse
+# HEAD); defaults to "unknown" for a plain `docker build` without it) so
+# /health and the System UI can show exactly which commit is running.
+ARG GIT_COMMIT=unknown
+ENV GIT_COMMIT=$GIT_COMMIT
+
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
 

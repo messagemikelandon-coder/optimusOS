@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 
+from app import __version__
 from app.config import Settings
 from app.models import (
     ChatRequest,
@@ -21,7 +22,7 @@ class OptimusInternetSkill:
     """Owner-facing Optimus skill with direct chat, internet research, and estimates."""
 
     name = "optimus_owner_control"
-    version = "7.0.1"
+    version = __version__
 
     def __init__(self, settings: Settings | None = None) -> None:
         self.settings = settings or Settings()

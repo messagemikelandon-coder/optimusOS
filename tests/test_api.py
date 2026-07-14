@@ -75,14 +75,41 @@ async def test_health(settings) -> None:  # type: ignore[no-untyped-def]
     payload = await main.health(settings)
     assert payload["status"] == "ok"
     assert payload["auth_configured"] is True
+    assert payload["migration_head"]
+    assert payload["git_commit"]  # "unknown" in this dev/test environment, but always present
 
 
 @pytest.mark.anyio
-async def test_ready_reports_dependency_state(monkeypatch, settings) -> None:  # type: ignore[no-untyped-def]
+async def test_ready_reports_dependency_and_schema_state(monkeypatch, settings) -> None:  # type: ignore[no-untyped-def]
     monkeypatch.setattr(main, "_tcp_dependency_ready", lambda url, default_port: True)
     payload = await main.ready(settings)
     assert payload["status"] == "ready"
     assert payload["dependencies"] == {"postgres": True, "redis": True}
+    assert payload["migration_head"]
+    # The test schema is built directly from the ORM (Base.metadata.create_all),
+    # not via Alembic, so there's genuinely no alembic_version table here --
+    # correctly reported as "unmigrated", not silently ignored.
+    assert payload["schema_compatibility"] == "unmigrated"
+
+
+@pytest.mark.anyio
+async def test_ready_degrades_when_the_database_schema_is_unsupported(
+    monkeypatch, settings, db_session: Session
+) -> None:  # type: ignore[no-untyped-def]
+    monkeypatch.setattr(main, "_tcp_dependency_ready", lambda url, default_port: True)
+    db_session.execute(select(1))  # ensure the shared in-memory engine/connection is already open
+    db_session.connection().exec_driver_sql(
+        "CREATE TABLE alembic_version (version_num VARCHAR(32) NOT NULL)"
+    )
+    db_session.connection().exec_driver_sql(
+        "INSERT INTO alembic_version (version_num) VALUES ('999_totally_unknown_revision')"
+    )
+    db_session.commit()
+
+    payload = await main.ready(settings)
+    assert payload["status"] == "degraded"
+    assert payload["schema_compatibility"] == "unsupported"
+    assert payload["database_migration_revision"] == "999_totally_unknown_revision"
 
 
 @pytest.mark.anyio

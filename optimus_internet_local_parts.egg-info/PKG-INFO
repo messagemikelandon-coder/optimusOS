@@ -1,6 +1,6 @@
 Metadata-Version: 2.4
 Name: optimus-internet-local-parts
-Version: 7.0.1
+Version: 7.1.0
 Summary: Landon Motor Works Optimus command center with owner-controlled chat, web research, local parts lookup, labor analysis, and estimates
 Requires-Python: <3.14,>=3.12
 Requires-Dist: fastapi<1,>=0.115

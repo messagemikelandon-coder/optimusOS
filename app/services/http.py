@@ -5,6 +5,7 @@ from typing import Any
 
 import httpx
 
+from app import __version__
 from app.security import validate_https_url
 
 
@@ -23,7 +24,7 @@ class SafeHttpClient:
             timeout=self._timeout,
             follow_redirects=False,
             trust_env=False,
-            headers={"User-Agent": "Optimus-Landon-Motor-Works/7.0.1"},
+            headers={"User-Agent": f"Optimus-Landon-Motor-Works/{__version__}"},
         ) as client:
             response = await client.get(url, params=params)
             response.raise_for_status()

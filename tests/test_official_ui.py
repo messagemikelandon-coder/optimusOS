@@ -7,6 +7,7 @@ import anyio
 from starlette.requests import Request
 from starlette.responses import FileResponse
 
+from app import __version__
 from app.main import STATIC_DIR, get_settings, health, index, security_headers
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -340,7 +341,10 @@ def test_playwright_audit_supports_safe_authenticated_smoke_mode() -> None:
 
 def test_health_identifies_official_build() -> None:
     payload = anyio.run(health, get_settings())
-    assert payload["version"] == "7.0.1"
+    # Compares against the real source of truth (app/__init__.py) rather
+    # than a hardcoded duplicate string, so this test can never itself
+    # become the stale reference the next version bump breaks.
+    assert payload["version"] == __version__
     assert payload["business_name"] == "Landon Motor Works"
     assert payload["business_tagline"] == "Mobile Mechanic Intelligence"
 
