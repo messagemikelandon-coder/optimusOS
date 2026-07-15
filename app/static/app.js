@@ -75,6 +75,7 @@ const state = {
     total: 0,
     hasMore: false,
     vehicleFilterId: null,
+    archivedOnly: false,
   },
   inspections: {
     items: [],
@@ -86,6 +87,7 @@ const state = {
     hasMore: false,
     vehicleFilterId: null,
     draftItems: [],
+    archivedOnly: false,
   },
   parts: {
     items: [],
@@ -3917,6 +3919,7 @@ async function loadDiagnostics() {
   const searchParams = new URLSearchParams({
     page: String(state.diagnostics.page),
     page_size: String(state.diagnostics.pageSize),
+    archived: String(state.diagnostics.archivedOnly),
   });
   if (state.diagnostics.vehicleFilterId) searchParams.set("vehicle_id", String(state.diagnostics.vehicleFilterId));
   try {
@@ -3935,7 +3938,7 @@ async function loadDiagnostics() {
 
 function renderDiagnosticsDetail(finding = null) {
   const detail = $("diagnostics-detail");
-  $("diagnostics-delete").hidden = !finding;
+  $("diagnostics-archive").hidden = !finding;
   if (!finding) {
     detail.innerHTML = "<p>Select a finding from the list or create a new one.</p>";
     return;
@@ -3943,7 +3946,7 @@ function renderDiagnosticsDetail(finding = null) {
   detail.innerHTML = `
     <div class="customer-detail-header">
       <strong>${escapeHtml(finding.vehicle_display_name || "Vehicle")}</strong>
-      <span>${new Date(finding.updated_at).toLocaleString()}</span>
+      <span>${finding.is_archived ? "Archived" : "Active"} · ${new Date(finding.updated_at).toLocaleString()}</span>
     </div>
     <div class="customer-detail-grid">
       <div><span>Codes</span><strong>${escapeHtml(finding.codes || "None recorded")}</strong></div>
@@ -4027,21 +4030,21 @@ async function submitDiagnosticsForm(event) {
   }
 }
 
-async function deleteSelectedDiagnosticFinding() {
+async function archiveSelectedDiagnosticFinding() {
   const finding = state.diagnostics.selectedFinding;
   if (!finding) return;
-  if (!window.confirm("Delete this diagnostic finding?")) return;
+  if (!window.confirm("Archive this diagnostic finding? It will be hidden from the active list but its history is preserved.")) return;
   try {
     const response = await apiFetch(`/api/diagnostic-findings/${finding.id}`, { method: "DELETE" });
-    if (!response.ok) throw apiError(response, await readApiPayload(response), "Finding delete failed");
+    if (!response.ok) throw apiError(response, await readApiPayload(response), "Finding archive failed");
     state.diagnostics.selectedFindingId = null;
     state.diagnostics.selectedFinding = null;
     populateDiagnosticsForm(null);
     renderDiagnosticsDetail(null);
     await loadDiagnostics();
-    showToast("Finding deleted.", "success");
+    showToast("Finding archived.", "success");
   } catch (error) {
-    showToast(`Finding delete failed: ${error.message}`, "error");
+    showToast(`Finding archive failed: ${error.message}`, "error");
   }
 }
 
@@ -4057,8 +4060,13 @@ function initializeDiagnostics() {
     populateDiagnosticsForm(state.diagnostics.selectedFinding);
   });
   $("diagnostics-form").addEventListener("submit", submitDiagnosticsForm);
-  $("diagnostics-delete").addEventListener("click", () => void deleteSelectedDiagnosticFinding());
+  $("diagnostics-archive").addEventListener("click", () => void archiveSelectedDiagnosticFinding());
   $("diagnostics-refresh").addEventListener("click", () => void loadDiagnostics());
+  $("diagnostics-archived-only").addEventListener("change", () => {
+    state.diagnostics.archivedOnly = $("diagnostics-archived-only").checked;
+    state.diagnostics.page = 1;
+    void loadDiagnostics();
+  });
   $("diagnostics-vehicle-filter").addEventListener("change", () => {
     const value = $("diagnostics-vehicle-filter").value;
     state.diagnostics.vehicleFilterId = value ? Number(value) : null;
@@ -4111,6 +4119,7 @@ async function loadInspections() {
   const searchParams = new URLSearchParams({
     page: String(state.inspections.page),
     page_size: String(state.inspections.pageSize),
+    archived: String(state.inspections.archivedOnly),
   });
   if (state.inspections.vehicleFilterId) searchParams.set("vehicle_id", String(state.inspections.vehicleFilterId));
   try {
@@ -4129,7 +4138,7 @@ async function loadInspections() {
 
 function renderInspectionsDetail(inspection = null) {
   const detail = $("inspections-detail");
-  $("inspections-delete").hidden = !inspection;
+  $("inspections-archive").hidden = !inspection;
   if (!inspection) {
     detail.innerHTML = "<p>Select an inspection from the list or create a new one.</p>";
     return;
@@ -4140,7 +4149,7 @@ function renderInspectionsDetail(inspection = null) {
   detail.innerHTML = `
     <div class="customer-detail-header">
       <strong>${escapeHtml(inspection.vehicle_display_name || "Vehicle")}</strong>
-      <span>${escapeHtml(inspection.inspection_type || "Inspection")}</span>
+      <span>${escapeHtml(inspection.inspection_type || "Inspection")} · ${inspection.is_archived ? "Archived" : "Active"}</span>
     </div>
     <div class="customer-detail-grid">
       <div><span>Technician</span><strong>${escapeHtml(inspection.technician_display_name || "Unassigned")}</strong></div>
@@ -4256,21 +4265,21 @@ async function submitInspectionsForm(event) {
   }
 }
 
-async function deleteSelectedInspection() {
+async function archiveSelectedInspection() {
   const inspection = state.inspections.selectedInspection;
   if (!inspection) return;
-  if (!window.confirm("Delete this inspection?")) return;
+  if (!window.confirm("Archive this inspection? It will be hidden from the active list but its history is preserved.")) return;
   try {
     const response = await apiFetch(`/api/inspections/${inspection.id}`, { method: "DELETE" });
-    if (!response.ok) throw apiError(response, await readApiPayload(response), "Inspection delete failed");
+    if (!response.ok) throw apiError(response, await readApiPayload(response), "Inspection archive failed");
     state.inspections.selectedInspectionId = null;
     state.inspections.selectedInspection = null;
     populateInspectionsForm(null);
     renderInspectionsDetail(null);
     await loadInspections();
-    showToast("Inspection deleted.", "success");
+    showToast("Inspection archived.", "success");
   } catch (error) {
-    showToast(`Inspection delete failed: ${error.message}`, "error");
+    showToast(`Inspection archive failed: ${error.message}`, "error");
   }
 }
 
@@ -4287,8 +4296,13 @@ function initializeInspections() {
   });
   $("inspections-form").addEventListener("submit", submitInspectionsForm);
   $("inspections-item-add").addEventListener("click", addInspectionDraftItem);
-  $("inspections-delete").addEventListener("click", () => void deleteSelectedInspection());
+  $("inspections-archive").addEventListener("click", () => void archiveSelectedInspection());
   $("inspections-refresh").addEventListener("click", () => void loadInspections());
+  $("inspections-archived-only").addEventListener("change", () => {
+    state.inspections.archivedOnly = $("inspections-archived-only").checked;
+    state.inspections.page = 1;
+    void loadInspections();
+  });
   $("inspections-vehicle-filter").addEventListener("change", () => {
     const value = $("inspections-vehicle-filter").value;
     state.inspections.vehicleFilterId = value ? Number(value) : null;
