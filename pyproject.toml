@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "optimus-internet-local-parts"
-version = "7.0.1"
+version = "7.1.0"
 description = "Landon Motor Works Optimus command center with owner-controlled chat, web research, local parts lookup, labor analysis, and estimates"
 requires-python = ">=3.12,<3.14"
 dependencies = [

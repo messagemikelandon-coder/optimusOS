@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import socket
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -48,7 +49,7 @@ from app.customer_store import (
     update_customer,
 )
 from app.dashboard_store import get_dashboard_summary
-from app.db import get_db_session
+from app.db import get_db_session, get_engine
 from app.db_models import UserAccount
 from app.diagnostics_store import (
     DiagnosticFindingNotFoundError,
@@ -103,6 +104,11 @@ from app.invoice_store import (
     list_invoices,
     render_invoice_html,
     render_invoice_pdf,
+)
+from app.migration_compat import (
+    SchemaCompatibility,
+    check_schema_compatibility,
+    get_app_migration_head,
 )
 from app.models import (
     AppointmentCancelRequest,
@@ -331,6 +337,10 @@ from app.work_order_store import (
 configure_structured_logging(get_settings().log_level)
 logger = logging.getLogger("optimus")
 STATIC_DIR = Path(__file__).parent / "static"
+# Set at image build time (see Dockerfile's GIT_COMMIT build arg); "unknown"
+# for a local `uv run uvicorn` dev process that didn't go through a build.
+_GIT_COMMIT = os.environ.get("GIT_COMMIT", "unknown")
+_APP_MIGRATION_HEAD = get_app_migration_head()
 SettingsDep = Annotated[Settings, Depends(get_settings)]
 DbSessionDep = Annotated[Session, Depends(get_db_session)]
 AuthContextDep = Annotated[AuthContext, Depends(get_current_auth_context)]
@@ -444,6 +454,8 @@ async def health(settings: SettingsDep) -> dict[str, str | bool]:
     return {
         "status": "ok",
         "version": __version__,
+        "git_commit": _GIT_COMMIT,
+        "migration_head": _APP_MIGRATION_HEAD,
         "business_name": settings.business_name,
         "business_tagline": settings.business_tagline,
         "web_search_configured": bool(settings.openai_api_key),
@@ -476,14 +488,31 @@ def _tcp_dependency_ready(url: str, default_port: int, timeout_seconds: float = 
 async def ready(settings: SettingsDep) -> dict[str, object]:
     postgres_ready = _tcp_dependency_ready(settings.database_url, 5432)
     redis_ready = _tcp_dependency_ready(settings.redis_url, 6379)
-    ready_status = postgres_ready and redis_ready
+
+    schema_compatibility: str = SchemaCompatibility.UNREACHABLE.value
+    database_migration_revision: str | None = None
+    schema_safe_to_serve = False
+    if postgres_ready:
+        try:
+            report = check_schema_compatibility(get_engine(settings))
+            schema_compatibility = report.compatibility.value
+            database_migration_revision = report.database_migration_revision
+            schema_safe_to_serve = report.safe_to_serve
+        except SQLAlchemyError:
+            logger.warning("Schema compatibility check failed due to a storage error.")
+
+    ready_status = postgres_ready and redis_ready and schema_safe_to_serve
     return {
         "status": "ready" if ready_status else "degraded",
         "version": __version__,
+        "git_commit": _GIT_COMMIT,
+        "migration_head": _APP_MIGRATION_HEAD,
         "dependencies": {
             "postgres": postgres_ready,
             "redis": redis_ready,
         },
+        "database_migration_revision": database_migration_revision,
+        "schema_compatibility": schema_compatibility,
     }
 
 

@@ -551,7 +551,7 @@ wheels = [
 
 [[package]]
 name = "optimus-internet-local-parts"
-version = "7.0.1"
+version = "7.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "alembic" },

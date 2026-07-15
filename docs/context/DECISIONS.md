@@ -138,3 +138,15 @@ Relevant sources: `git show 060ab68 --stat --summary`, `app/main.py`, `app/auth.
 - Consequences: actual account creation, payment setup, droplet provisioning, and domain purchase are owner actions — no agent can perform these (real credentials, spending money, cloud provider actions all require explicit owner action per `AGENTS.md`). Once the droplet and domain exist, deployment configuration (Compose on the droplet, Cloudflare DNS/proxy settings, secrets handling) can proceed as agent-assisted work.
 - Files affected: `docs/context/PLANS.md`, `docs/context/CURRENT_STATE.md`, `docs/context/SESSION_HANDOFF.md`.
 - Revisit if: cost, region/latency requirements, or a preference change makes a different provider or a managed PaaS more suitable.
+
+## ADR-012
+
+- ID: ADR-012
+- Date: 2026-07-14
+- Status: Accepted
+- Context: The release process required a way to prevent an application version from starting against a database schema it doesn't understand, without breaking the existing documented deploy runbook (`scripts/optimusctl.sh update` then a separate `migrate` step), which creates a normal, expected window where new app code runs briefly against old-but-compatible schema.
+- Decision: `app/migration_compat.py::check_schema_compatibility()` classifies the database's schema state relative to the app's own Alembic head into five states (`matched`, `behind`, `unmigrated`, `unsupported`, `unreachable`). Only `unsupported` and `unreachable` are treated as unsafe to serve; `behind` and `unmigrated` are tolerated. Schema incompatibility degrades `/ready` (`status: "degraded"`, kept out of load-balancer rotation) rather than crashing the process outright.
+- Alternatives considered: crashing/refusing to start the process on any schema mismatch (rejected — would turn the runbook's normal deploy-order window into a routine outage, since `update` runs before `migrate`); doing no compatibility check at all (rejected — silently serving against an unrecognized/future/diverged schema is exactly the failure mode this decision exists to prevent).
+- Consequences: the deploy runbook's `update`-then-`migrate` ordering remains safe by design, not by luck; a genuinely unsupported schema (future revision this app predates, or a diverged history) correctly blocks readiness instead of serving unpredictable behavior. Changing which states block readiness requires updating this ADR and `docs/context/RELEASE_CHECKLIST.md` together, since the deploy runbook depends on the current tolerance boundary.
+- Files affected: `app/migration_compat.py`, `app/main.py`, `tests/test_migration_compat.py`, `tests/test_api.py`, `docs/context/RELEASE_CHECKLIST.md`.
+- Revisit if: the deploy runbook's ordering changes (e.g., migrations always run before the app restarts), which would remove the need to tolerate `behind`/`unmigrated`.

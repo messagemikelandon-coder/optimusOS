@@ -5571,6 +5571,8 @@ async function loadHealth(showNotification = false) {
     setStatus("health-agent", data.agent_delegation_enabled ? "Selective" : "Disabled", true);
     $("system-server-status").textContent = "Online";
     $("system-version").textContent = `Version ${data.version}`;
+    $("system-migration-head").textContent = data.migration_head || "Unknown";
+    $("system-git-commit").textContent = `Commit ${(data.git_commit || "unknown").slice(0, 12)}`;
     $("system-web-status").textContent = data.web_search_configured ? "Configured" : "API key missing";
     $("system-autonomy-status").textContent = data.owner_full_control ? "Owner full control" : "Guarded";
     $("system-agent-status").textContent = data.agent_delegation_enabled ? "Selective and silent" : "Disabled";
