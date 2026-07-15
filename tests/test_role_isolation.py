@@ -66,6 +66,18 @@ _OWNER_OR_TECHNICIAN_ROUTES = {
     ("GET", "/api/inspections"),
     ("GET", "/api/inspections/{inspection_id}"),
     ("PATCH", "/api/inspections/{inspection_id}"),
+    # Phase 6 Part F, Part Allocation slice: a technician can create/list/view
+    # part allocations and record allocate/use/return actions tied to their
+    # own assigned work orders (store-level scoping in
+    # part_allocation_store.py, same pattern as work_order_store's). The
+    # audit-event history stays owner-only, matching every other module's
+    # archive/audit-history-stays-owner-only precedent above.
+    ("POST", "/api/work-orders/{work_order_id}/part-allocations"),
+    ("GET", "/api/work-orders/{work_order_id}/part-allocations"),
+    ("GET", "/api/part-allocations/{allocation_id}"),
+    ("POST", "/api/part-allocations/{allocation_id}/allocate"),
+    ("POST", "/api/part-allocations/{allocation_id}/use"),
+    ("POST", "/api/part-allocations/{allocation_id}/return"),
 }
 
 

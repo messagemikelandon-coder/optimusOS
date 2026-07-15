@@ -1799,6 +1799,70 @@ class PurchaseOrderReceiptsResponse(BaseModel):
     receipts: list[PurchaseOrderReceiptRead]
 
 
+class PartAllocationCreate(BaseModel):
+    part_id: int
+    quantity_required: int = Field(gt=0, le=100_000)
+
+
+class PartAllocationRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    work_order_id: int
+    part_id: int
+    part_number: str
+    part_description: str
+    quantity_required: int
+    quantity_allocated: int
+    quantity_used: int
+    quantity_returned: int
+    unit_cost_snapshot: float | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class PartAllocationListResponse(BaseModel):
+    items: list[PartAllocationRead]
+
+
+class PartAllocationAllocateRequest(BaseModel):
+    quantity: int = Field(gt=0, le=100_000)
+    override: bool = False
+    override_reason: str | None = Field(default=None, max_length=500)
+
+    @field_validator("override_reason", mode="before")
+    @classmethod
+    def strip_override_reason(cls, value: object) -> object:
+        if isinstance(value, str):
+            stripped = value.strip()
+            return stripped or None
+        return value
+
+
+class PartAllocationUseRequest(BaseModel):
+    quantity: int = Field(gt=0, le=100_000)
+
+
+class PartAllocationReturnRequest(BaseModel):
+    quantity: int = Field(gt=0, le=100_000)
+
+
+class PartAllocationEventRead(BaseModel):
+    id: int
+    event_type: str
+    quantity_delta: int
+    actor_type: str
+    actor_name: str | None = None
+    inventory_override: bool
+    override_reason: str | None = None
+    created_at: datetime
+
+
+class PartAllocationEventsResponse(BaseModel):
+    allocation_id: int
+    events: list[PartAllocationEventRead]
+
+
 class IntakeSourceCode(StrEnum):
     PHONE = "phone"
     WALK_IN = "walk_in"

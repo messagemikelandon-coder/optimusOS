@@ -1788,6 +1788,58 @@
                   </div>
                 </div>
               </form>
+
+              <form class="panel estimate-form-panel" id="work-order-part-add-form">
+                <div class="panel-heading">
+                  <div><span class="section-kicker"><i></i> Parts</span><h3>Add part requirement</h3></div>
+                </div>
+                <fieldset>
+                  <legend><span>05</span> Requirement</legend>
+                  <div class="form-grid two">
+                    <label class="field">Part <select id="work-order-part-id"><option value="">Select a part</option></select></label>
+                    <label class="field">Quantity required <input id="work-order-part-quantity-required" type="number" min="1"></label>
+                  </div>
+                </fieldset>
+                <div class="estimate-submit-row">
+                  <div><strong>Parts needed for this job</strong><span>Recording a requirement doesn't pull inventory yet -- use Allocate below to pull it.</span></div>
+                  <div class="customers-form-actions">
+                    <button class="primary-button compact" type="submit" id="work-order-part-add-save">Add part</button>
+                  </div>
+                </div>
+              </form>
+
+              <form class="panel estimate-form-panel" id="work-order-part-action-form">
+                <div class="panel-heading">
+                  <div><span class="section-kicker"><i></i> Parts</span><h3>Record parts action</h3></div>
+                </div>
+                <fieldset>
+                  <legend><span>06</span> Allocate, use, or return</legend>
+                  <div class="form-grid three">
+                    <label class="field">Part requirement <select id="work-order-part-action-allocation"></select></label>
+                    <label class="field">Action
+                      <select id="work-order-part-action-type">
+                        <option value="allocate">Allocate (pulls from inventory)</option>
+                        <option value="use">Mark used (already allocated)</option>
+                        <option value="return">Return to inventory</option>
+                      </select>
+                    </label>
+                    <label class="field">Quantity <input id="work-order-part-action-quantity" type="number" min="1"></label>
+                  </div>
+                  <div class="form-grid two" id="work-order-part-override-row" hidden>
+                    <label class="toggle-field">
+                      <input id="work-order-part-action-override" type="checkbox">
+                      <span>Allocate anyway if inventory is short</span>
+                    </label>
+                    <label class="field">Override reason <input id="work-order-part-action-override-reason" maxlength="500"></label>
+                  </div>
+                </fieldset>
+                <div class="estimate-submit-row">
+                  <div><strong>Inventory-safe by default</strong><span>Allocating more than what's on hand is rejected unless the override above is checked and a reason is given.</span></div>
+                  <div class="customers-form-actions">
+                    <button class="primary-button compact" type="submit" id="work-order-part-action-save">Record</button>
+                  </div>
+                </div>
+              </form>
             </section>
           </div>
         </section>

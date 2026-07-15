@@ -186,6 +186,13 @@ from app.models import (
     LocationInput,
     NotificationListResponse,
     NotificationMarkReadResponse,
+    PartAllocationAllocateRequest,
+    PartAllocationCreate,
+    PartAllocationEventsResponse,
+    PartAllocationListResponse,
+    PartAllocationRead,
+    PartAllocationReturnRequest,
+    PartAllocationUseRequest,
     PartArchiveResponse,
     PartCreate,
     PartListResponse,
@@ -245,6 +252,17 @@ from app.notification_store import (
 )
 from app.observability import configure_structured_logging, install_request_context_middleware
 from app.orchestrator import OptimusResearchOrchestrator
+from app.part_allocation_store import (
+    PartAllocationNotFoundError,
+    PartAllocationStoreError,
+    allocate_part,
+    create_part_allocation,
+    get_part_allocation,
+    list_part_allocation_events,
+    list_part_allocations,
+    return_part_allocation,
+    use_part_allocation,
+)
 from app.part_store import (
     PartNotFoundError,
     PartStoreError,
@@ -1576,6 +1594,150 @@ async def list_purchase_order_receipt_records(
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Purchase order storage is unavailable.",
+        ) from exc
+
+
+@app.post("/api/work-orders/{work_order_id}/part-allocations", response_model=PartAllocationRead)
+async def create_part_allocation_record(
+    work_order_id: int,
+    payload: PartAllocationCreate,
+    db: DbSessionDep,
+    auth: OwnerOrTechnicianAuthContextDep,
+) -> PartAllocationRead:
+    try:
+        return create_part_allocation(
+            db=db, auth=auth, work_order_id=work_order_id, payload=payload
+        )
+    except PartAllocationStoreError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Part allocation creation failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Part allocation storage is unavailable.",
+        ) from exc
+
+
+@app.get(
+    "/api/work-orders/{work_order_id}/part-allocations", response_model=PartAllocationListResponse
+)
+async def list_part_allocation_records(
+    work_order_id: int,
+    db: DbSessionDep,
+    auth: OwnerOrTechnicianAuthContextDep,
+) -> PartAllocationListResponse:
+    try:
+        return list_part_allocations(db=db, auth=auth, work_order_id=work_order_id)
+    except PartAllocationStoreError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Part allocation listing failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Part allocation storage is unavailable.",
+        ) from exc
+
+
+@app.get("/api/part-allocations/{allocation_id}", response_model=PartAllocationRead)
+async def get_part_allocation_record(
+    allocation_id: int,
+    db: DbSessionDep,
+    auth: OwnerOrTechnicianAuthContextDep,
+) -> PartAllocationRead:
+    try:
+        return get_part_allocation(db=db, auth=auth, allocation_id=allocation_id)
+    except PartAllocationNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Part allocation retrieval failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Part allocation storage is unavailable.",
+        ) from exc
+
+
+@app.post("/api/part-allocations/{allocation_id}/allocate", response_model=PartAllocationRead)
+async def allocate_part_record(
+    allocation_id: int,
+    payload: PartAllocationAllocateRequest,
+    db: DbSessionDep,
+    auth: OwnerOrTechnicianAuthContextDep,
+) -> PartAllocationRead:
+    try:
+        return allocate_part(db=db, auth=auth, allocation_id=allocation_id, payload=payload)
+    except PartAllocationNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except PartAllocationStoreError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Part allocation failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Part allocation storage is unavailable.",
+        ) from exc
+
+
+@app.post("/api/part-allocations/{allocation_id}/use", response_model=PartAllocationRead)
+async def use_part_allocation_record(
+    allocation_id: int,
+    payload: PartAllocationUseRequest,
+    db: DbSessionDep,
+    auth: OwnerOrTechnicianAuthContextDep,
+) -> PartAllocationRead:
+    try:
+        return use_part_allocation(db=db, auth=auth, allocation_id=allocation_id, payload=payload)
+    except PartAllocationNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except PartAllocationStoreError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Marking a part allocation used failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Part allocation storage is unavailable.",
+        ) from exc
+
+
+@app.post("/api/part-allocations/{allocation_id}/return", response_model=PartAllocationRead)
+async def return_part_allocation_record(
+    allocation_id: int,
+    payload: PartAllocationReturnRequest,
+    db: DbSessionDep,
+    auth: OwnerOrTechnicianAuthContextDep,
+) -> PartAllocationRead:
+    try:
+        return return_part_allocation(
+            db=db, auth=auth, allocation_id=allocation_id, payload=payload
+        )
+    except PartAllocationNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except PartAllocationStoreError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Part allocation return failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Part allocation storage is unavailable.",
+        ) from exc
+
+
+@app.get(
+    "/api/part-allocations/{allocation_id}/events", response_model=PartAllocationEventsResponse
+)
+async def list_part_allocation_event_records(
+    allocation_id: int,
+    db: DbSessionDep,
+    auth: OwnerAuthContextDep,
+) -> PartAllocationEventsResponse:
+    try:
+        return list_part_allocation_events(db=db, auth=auth, allocation_id=allocation_id)
+    except PartAllocationNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Part allocation event listing failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Part allocation storage is unavailable.",
         ) from exc
 
 
