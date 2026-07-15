@@ -26,18 +26,21 @@ Phase 6 Part J — release process infrastructure, owner-directed (semver, machi
 - `docs/context/PLANS.md` Phase 6 gained a Part J entry; `docs/context/DECISIONS.md` gained ADR-012.
 - **No git tag was created and nothing was deployed** — per the owner's explicit constraint that this requires separate approval.
 
-## Verified this session
+## Verified baseline
 
 - `env UV_CACHE_DIR=/tmp/uv-cache uv run ruff format --check .` → clean.
 - `env UV_CACHE_DIR=/tmp/uv-cache uv run ruff check .` → all checks passed.
 - `env UV_CACHE_DIR=/tmp/uv-cache uv run pyright` → 0 errors, 0 warnings.
 - `env UV_CACHE_DIR=/tmp/uv-cache uv run pytest -q` → full suite green, including 8 new tests (`tests/test_migration_compat.py` ×6, `tests/test_release.py` ×2) and extended `/health`/`/ready` coverage in `tests/test_api.py`.
 - `node --check app/static/app.js` (and every other non-vendor static JS file) → OK.
-- **Live proof against real infrastructure** (not just unit tests): started throwaway Postgres + Redis containers, ran `alembic upgrade head`, ran the real app via `uvicorn` with `GIT_COMMIT` set to the real commit SHA. `/health` returned the real commit and `migration_head: "018_approval_token_revocation"`; `/ready` returned `schema_compatibility: "matched"`, `status: "ready"`. Confirmed the served `index.html` contains the new Build tile with DOM ids (`#system-migration-head`, `#system-git-commit`) exactly matching what `app.js` populates. Throwaway containers and server process cleaned up afterward.
 - CI on PR #32: all 5 checks passed (`lint-typecheck-test`, `migrations`, `docker-compose-integration`/build+boot+secret-scan, the authenticated E2E job, `handoff-contract`).
+
+## Evidence
+
+- **Live proof against real infrastructure** (not just unit tests): started throwaway Postgres + Redis containers, ran `alembic upgrade head`, ran the real app via `uvicorn` with `GIT_COMMIT` set to the real commit SHA. `/health` returned the real commit and `migration_head: "018_approval_token_revocation"`; `/ready` returned `schema_compatibility: "matched"`, `status: "ready"`. Confirmed the served `index.html` contains the new Build tile with DOM ids (`#system-migration-head`, `#system-git-commit`) exactly matching what `app.js` populates. Throwaway containers and server process cleaned up afterward.
 - Merged to `main` via PR #32 (`gh pr merge --merge --delete-branch=false abbba44`) — owner explicitly approved merging without human code review, same pattern as prior PRs this session.
 
-## Unverified / not done this session
+## Unverified
 
 - No live/billable OpenAI calls were made.
 - The live `/health`/`/ready` schema-compatibility proof is still a manual step, not wired into CI (tracked as a RELEASE_CHECKLIST.md follow-up).
