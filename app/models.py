@@ -1543,6 +1543,52 @@ class DashboardSummaryResponse(BaseModel):
     insights: list[DashboardInsight]
 
 
+class PaymentActivityEntryRead(BaseModel):
+    id: int
+    invoice_id: int
+    invoice_number: str
+    amount: float
+    applies_to: PaymentAppliesTo
+    method_label: str
+    recorded_at: datetime
+    is_reversal: bool
+
+
+class PaymentActivityBreakdownItem(BaseModel):
+    label: str
+    total: float
+    count: int
+
+
+class PaymentActivityReportResponse(BaseModel):
+    date_from: datetime
+    date_to: datetime
+    entries: list[PaymentActivityEntryRead]
+    total_collected: float
+    payment_count: int
+    by_method: list[PaymentActivityBreakdownItem]
+    by_applies_to: list[PaymentActivityBreakdownItem]
+
+
+class TechnicianTimeSummaryRead(BaseModel):
+    technician_id: int
+    technician_display_name: str
+    clocked_hours: float
+    labor_cost: float | None = None
+    open_entry_count: int
+
+
+class TechnicianTimeReportResponse(BaseModel):
+    date_from: datetime
+    date_to: datetime
+    technicians: list[TechnicianTimeSummaryRead]
+    total_clocked_hours: float
+    total_labor_cost: float
+    technicians_missing_hourly_cost: int
+    billed_hours: DashboardMetric
+    commission: DashboardMetric
+
+
 class VendorBase(BaseModel):
     name: NonBlank = Field(max_length=180)
     contact_name: str | None = Field(default=None, max_length=180)
