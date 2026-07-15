@@ -2072,11 +2072,28 @@
                   <tbody id="reports-balances-table"><tr><td colspan="2">Loading…</td></tr></tbody>
                 </table>
               </section>
+
+              <section class="report-card">
+                <h3>Payment activity</h3>
+                <p class="report-card-note" id="reports-payment-activity-note">Loading…</p>
+                <table class="report-table">
+                  <tbody id="reports-payment-activity-table"><tr><td colspan="2">Loading…</td></tr></tbody>
+                </table>
+              </section>
+
+              <section class="report-card">
+                <h3>Technician time &amp; labor cost</h3>
+                <p class="report-card-note" id="reports-technician-time-note">Loading…</p>
+                <table class="report-table">
+                  <thead><tr><th>Technician</th><th>Clocked hours</th><th>Labor cost</th></tr></thead>
+                  <tbody id="reports-technician-time-table"><tr><td colspan="3">Loading…</td></tr></tbody>
+                </table>
+              </section>
             </div>
 
             <div class="empty-card report-gap-note">
-              <strong>Not yet available: payment activity, technician time, and commission reports</strong>
-              <p>These require dedicated backend aggregation endpoints (a payments-by-date-range listing and a technician time/commission summary) that do not exist today. Rather than compute them from fabricated or partial data, they are intentionally left out of this report pending that backend work.</p>
+              <strong>Not yet available: technician commission, and billed-vs-clocked hours</strong>
+              <p>OptimusOS doesn't track a per-technician commission rate, only an hourly cost, so the Technician time &amp; labor cost report above shows labor cost instead of commission. Billed-vs-clocked comparison also isn't available yet because time entries aren't linked to a specific work order. Rather than compute these from fabricated or partial data, they are intentionally left out pending that backend work.</p>
             </div>
           </section>
         </section>

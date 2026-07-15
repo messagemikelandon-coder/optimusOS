@@ -198,6 +198,7 @@ from app.models import (
     PartListResponse,
     PartRead,
     PartUpdate,
+    PaymentActivityReportResponse,
     PurchaseOrderCreate,
     PurchaseOrderListResponse,
     PurchaseOrderRead,
@@ -220,6 +221,7 @@ from app.models import (
     TechnicianProvisionLoginRequest,
     TechnicianProvisionLoginResponse,
     TechnicianRead,
+    TechnicianTimeReportResponse,
     TechnicianUpdate,
     VehicleArchiveResponse,
     VehicleCreate,
@@ -285,6 +287,7 @@ from app.purchase_order_store import (
     submit_purchase_order,
 )
 from app.rate_limit import RateLimiter, RateLimitExceeded, RedisSlidingWindowRateLimiter
+from app.report_store import get_payment_activity_report, get_technician_time_report
 from app.scheduling_store import (
     SchedulingConflictError,
     SchedulingNotFoundError,
@@ -3110,6 +3113,52 @@ async def get_dashboard_summary_record(
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Dashboard storage is unavailable.",
+        ) from exc
+
+
+@app.get("/api/reports/payment-activity", response_model=PaymentActivityReportResponse)
+async def get_payment_activity_report_record(
+    db: DbSessionDep,
+    auth: OwnerAuthContextDep,
+    date_from: Annotated[datetime | None, Query()] = None,
+    date_to: Annotated[datetime | None, Query()] = None,
+) -> PaymentActivityReportResponse:
+    resolved_to = date_to or datetime.now(UTC)
+    resolved_from = date_from or (resolved_to - timedelta(days=30))
+    if resolved_from >= resolved_to:
+        raise HTTPException(status_code=422, detail="date_from must be before date_to.")
+    try:
+        return get_payment_activity_report(
+            db=db, auth=auth, date_from=resolved_from, date_to=resolved_to
+        )
+    except SQLAlchemyError as exc:
+        logger.warning("Payment activity report failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Report storage is unavailable.",
+        ) from exc
+
+
+@app.get("/api/reports/technician-time", response_model=TechnicianTimeReportResponse)
+async def get_technician_time_report_record(
+    db: DbSessionDep,
+    auth: OwnerAuthContextDep,
+    date_from: Annotated[datetime | None, Query()] = None,
+    date_to: Annotated[datetime | None, Query()] = None,
+) -> TechnicianTimeReportResponse:
+    resolved_to = date_to or datetime.now(UTC)
+    resolved_from = date_from or (resolved_to - timedelta(days=30))
+    if resolved_from >= resolved_to:
+        raise HTTPException(status_code=422, detail="date_from must be before date_to.")
+    try:
+        return get_technician_time_report(
+            db=db, auth=auth, date_from=resolved_from, date_to=resolved_to
+        )
+    except SQLAlchemyError as exc:
+        logger.warning("Technician time report failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Report storage is unavailable.",
         ) from exc
 
 

@@ -6180,9 +6180,13 @@ async function loadReports() {
   const workOrderTable = $("reports-work-order-table");
   const invoiceStatusTable = $("reports-invoice-status-table");
   const balancesTable = $("reports-balances-table");
+  const paymentActivityTable = $("reports-payment-activity-table");
+  const technicianTimeTable = $("reports-technician-time-table");
   [revenueTable, workOrderTable, invoiceStatusTable, balancesTable].forEach((el) => {
     el.innerHTML = "<tr><td colspan=\"2\">Loading…</td></tr>";
   });
+  paymentActivityTable.innerHTML = "<tr><td colspan=\"2\">Loading…</td></tr>";
+  technicianTimeTable.innerHTML = "<tr><td colspan=\"3\">Loading…</td></tr>";
   const range = dashboardDateRangeFromPreset(30);
   $("reports-period-note").textContent = `${range.from.toLocaleDateString()} – ${range.to.toLocaleDateString()} (last 30 days, same window as the Overview dashboard default)`;
   try {
@@ -6190,14 +6194,20 @@ async function loadReports() {
       date_from: range.from.toISOString(),
       date_to: range.to.toISOString(),
     });
-    const [summaryResponse, invoicesResponse] = await Promise.all([
+    const [summaryResponse, invoicesResponse, paymentActivityResponse, technicianTimeResponse] = await Promise.all([
       apiFetch(`/api/dashboard/summary?${searchParams.toString()}`),
       apiFetch("/api/invoices?page_size=100"),
+      apiFetch(`/api/reports/payment-activity?${searchParams.toString()}`),
+      apiFetch(`/api/reports/technician-time?${searchParams.toString()}`),
     ]);
     const summary = await readApiPayload(summaryResponse);
     const invoicesData = await readApiPayload(invoicesResponse);
+    const paymentActivity = await readApiPayload(paymentActivityResponse);
+    const technicianTime = await readApiPayload(technicianTimeResponse);
     if (!summaryResponse.ok || !summary) throw apiError(summaryResponse, summary, "Dashboard summary failed");
     if (!invoicesResponse.ok || !invoicesData) throw apiError(invoicesResponse, invoicesData, "Invoice listing failed");
+    if (!paymentActivityResponse.ok || !paymentActivity) throw apiError(paymentActivityResponse, paymentActivity, "Payment activity report failed");
+    if (!technicianTimeResponse.ok || !technicianTime) throw apiError(technicianTimeResponse, technicianTime, "Technician time report failed");
 
     const metricsByKey = new Map(summary.metrics.map((metric) => [metric.key, metric]));
     const revenueRows = [
@@ -6237,10 +6247,35 @@ async function loadReports() {
       ["Overdue invoice count", String(obligations.overdue_invoice_count)],
       ["Deposits received", money(obligations.deposits_received_total)],
     ].map(([label, value]) => `<tr><td>${escapeHtml(label)}</td><td>${value}</td></tr>`).join("");
+
+    $("reports-payment-activity-note").textContent = `${paymentActivity.payment_count} payment${paymentActivity.payment_count === 1 ? "" : "s"}, ${money(paymentActivity.total_collected)} collected (net of reversals).`;
+    const appliesToLabels = { deposit: "Deposit", installment: "Installment", balance: "Balance payment", full: "Full payment", other: "Other" };
+    const appliesToRows = paymentActivity.by_applies_to.map((item) => `<tr><td>${escapeHtml(appliesToLabels[item.label] || item.label)}</td><td>${money(item.total)} (${item.count})</td></tr>`);
+    const methodRows = paymentActivity.by_method.map((item) => `<tr><td>${escapeHtml(item.label)}</td><td>${money(item.total)} (${item.count})</td></tr>`);
+    paymentActivityTable.innerHTML = (appliesToRows.length || methodRows.length)
+      // These are two independent breakdowns of the SAME payments, not
+      // additive line items -- a subhead row per group keeps that clear
+      // rather than reading as one flat, summable list.
+      ? `<tr><td colspan="2" class="report-table-subhead">By type</td></tr>${appliesToRows.join("")}`
+        + `<tr><td colspan="2" class="report-table-subhead">By payment method</td></tr>${methodRows.join("")}`
+      : "<tr><td colspan=\"2\">No payments recorded in this period.</td></tr>";
+
+    const missingCostNote = technicianTime.technicians_missing_hourly_cost > 0
+      ? ` ${technicianTime.technicians_missing_hourly_cost} technician(s) missing an hourly cost — their hours aren't included in the total labor cost.`
+      : "";
+    $("reports-technician-time-note").textContent = `${technicianTime.total_clocked_hours} total clocked hours, ${money(technicianTime.total_labor_cost)} total labor cost.${missingCostNote}`;
+    technicianTimeTable.innerHTML = technicianTime.technicians.length
+      ? technicianTime.technicians.map((tech) => {
+          const openNote = tech.open_entry_count > 0 ? ` (${tech.open_entry_count} still clocked in)` : "";
+          return `<tr><td>${escapeHtml(tech.technician_display_name)}</td><td>${tech.clocked_hours}${openNote}</td><td>${tech.labor_cost !== null ? money(tech.labor_cost) : "Not available"}</td></tr>`;
+        }).join("")
+      : "<tr><td colspan=\"3\">No clocked time recorded in this period.</td></tr>";
   } catch (error) {
     [revenueTable, workOrderTable, invoiceStatusTable, balancesTable].forEach((el) => {
       el.innerHTML = `<tr><td colspan="2">Failed to load: ${escapeHtml(error.message)}</td></tr>`;
     });
+    paymentActivityTable.innerHTML = `<tr><td colspan="2">Failed to load: ${escapeHtml(error.message)}</td></tr>`;
+    technicianTimeTable.innerHTML = `<tr><td colspan="3">Failed to load: ${escapeHtml(error.message)}</td></tr>`;
     showToast(`Reports load failed: ${error.message}`, "error");
   }
 }

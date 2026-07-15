@@ -950,6 +950,8 @@ button.metric-card:hover { border-color: rgba(196,110,90,.35); }
 .report-table td:first-child { color: var(--muted); }
 .report-table td:last-child { text-align: right; font-weight: 700; white-space: nowrap; }
 .report-table td[colspan] { text-align: left; font-weight: 400; color: var(--muted-2); white-space: normal; }
+.report-table-subhead { text-transform: uppercase; letter-spacing: .04em; font-size: .68rem !important; font-weight: 700 !important; color: var(--muted) !important; padding-top: 12px !important; }
+.report-table tr:first-child .report-table-subhead { padding-top: 7px !important; }
 .report-gap-note { margin-top: 14px; }
 @media (max-width: 960px) { .reports-grid { grid-template-columns: 1fr; } }
 
