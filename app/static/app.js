@@ -4676,7 +4676,7 @@ async function loadPartOptionsInto(selectId) {
   if (!select) return;
   const currentValue = select.value;
   try {
-    const response = await apiFetch("/api/parts?page=1&page_size=200&archived=false");
+    const response = await apiFetch("/api/parts?page=1&page_size=100&archived=false");
     const data = await readApiPayload(response);
     if (!response.ok || !data) throw apiError(response, data, "Part options failed");
     select.innerHTML = ['<option value="">Select a part</option>', ...data.items.map((part) => (
