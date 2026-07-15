@@ -13,8 +13,11 @@ from app.models import (
     InspectionCreate,
     InspectionItem,
     InspectionUpdate,
+    TechnicianCreate,
+    TechnicianProvisionLoginRequest,
     VehicleCreate,
     VehicleRead,
+    WorkOrderAssignTechnicianRequest,
 )
 from tests.test_api import request_for
 from tests.test_context_api import auth_context, create_user, login_as, raw_cookie_from_response
@@ -33,6 +36,47 @@ async def _create_vehicle(settings, db_session: Session, auth) -> VehicleRead:
         db_session,
         auth,
     )
+
+
+async def _create_technician_with_assigned_work_order(
+    monkeypatch, settings, db_session, owner_auth
+):
+    """Real end-to-end setup (not a direct DB row insert) matching the exact
+    pattern already established in tests/test_technicians_api.py: an approved
+    estimate -> a real work order -> a real technician account with real
+    login -> the owner assigning that work order to that technician. Returns
+    (technician_auth, work_order, vehicle) so a test can create a finding
+    tied to work_order.id/vehicle.id as that technician."""
+    vehicle, estimate = await create_approved_estimate_for_auth(
+        monkeypatch,
+        settings,
+        db_session,
+        owner_auth,
+        payment_option=EstimatePaymentOptionCode.PAY_IN_FULL,
+    )
+    work_order = await main.create_work_order_record(estimate.id, db_session, owner_auth)
+    technician = await main.create_technician_record(
+        TechnicianCreate(first_name="Jordan", last_name="Reyes", employment_status="Full-time"),
+        db_session,
+        owner_auth,
+    )
+    await main.provision_technician_login_record(
+        technician.id,
+        TechnicianProvisionLoginRequest(username="jordan.reyes", password="tech-login-pass-123"),
+        db_session,
+        owner_auth,
+    )
+    _, login_response = await login_as(
+        settings, db_session, username="jordan.reyes", password="tech-login-pass-123"
+    )
+    technician_auth = auth_context(settings, db_session, raw_cookie_from_response(login_response))
+    await main.assign_work_order_technician_record(
+        work_order.id,
+        WorkOrderAssignTechnicianRequest(technician_id=technician.id),
+        db_session,
+        owner_auth,
+    )
+    return technician_auth, work_order, vehicle
 
 
 async def test_diagnostic_findings_require_authenticated_session(
@@ -468,3 +512,207 @@ async def test_inspection_rejects_cross_owner_work_order(
             other_auth,
         )
     assert excinfo.value.status_code == 422
+
+
+async def test_technician_can_create_view_and_update_finding_on_own_assigned_work_order(
+    monkeypatch, settings, db_session: Session
+) -> None:
+    _, owner_response = await login_as(settings, db_session)
+    owner_auth = auth_context(settings, db_session, raw_cookie_from_response(owner_response))
+    technician_auth, work_order, vehicle = await _create_technician_with_assigned_work_order(
+        monkeypatch, settings, db_session, owner_auth
+    )
+
+    created = await main.create_diagnostic_finding_record(
+        DiagnosticFindingCreate(
+            vehicle_id=vehicle.id, work_order_id=work_order.id, symptoms="Rough idle"
+        ),
+        db_session,
+        technician_auth,
+    )
+    assert created.work_order_id == work_order.id
+
+    # The technician can read and update their own finding.
+    fetched = await main.get_diagnostic_finding_record(created.id, db_session, technician_auth)
+    assert fetched.id == created.id
+    updated = await main.update_diagnostic_finding_record(
+        created.id,
+        DiagnosticFindingUpdate(conclusion="Vacuum leak found."),
+        db_session,
+        technician_auth,
+    )
+    assert updated.conclusion == "Vacuum leak found."
+
+    technician_list = await main.list_diagnostic_finding_records(
+        db_session,
+        settings,
+        technician_auth,
+        page=1,
+        page_size=20,
+        vehicle_id=None,
+        work_order_id=None,
+    )
+    assert created.id in [item.id for item in technician_list.items]
+
+    # The owner (whose shop this is) can see it too.
+    owner_fetched = await main.get_diagnostic_finding_record(created.id, db_session, owner_auth)
+    assert owner_fetched.id == created.id
+
+
+async def test_technician_diagnostic_finding_write_path_is_scoped_to_own_assigned_work_order(
+    monkeypatch, settings, db_session: Session
+) -> None:
+    _, owner_response = await login_as(settings, db_session)
+    owner_auth = auth_context(settings, db_session, raw_cookie_from_response(owner_response))
+    technician_auth, work_order, vehicle = await _create_technician_with_assigned_work_order(
+        monkeypatch, settings, db_session, owner_auth
+    )
+
+    # A finding with no work order at all is invisible to a technician, even
+    # though it belongs to the same shop -- "own assigned work orders" only.
+    unlinked = await main.create_diagnostic_finding_record(
+        DiagnosticFindingCreate(vehicle_id=vehicle.id, symptoms="No codes yet"),
+        db_session,
+        owner_auth,
+    )
+    with pytest.raises(HTTPException) as unlinked_exc:
+        await main.get_diagnostic_finding_record(unlinked.id, db_session, technician_auth)
+    assert unlinked_exc.value.status_code == 404
+
+    # A technician cannot create a finding without linking a work order.
+    with pytest.raises(HTTPException) as missing_wo_exc:
+        await main.create_diagnostic_finding_record(
+            DiagnosticFindingCreate(vehicle_id=vehicle.id, symptoms="Test"),
+            db_session,
+            technician_auth,
+        )
+    assert missing_wo_exc.value.status_code == 422
+
+    # A technician cannot link a finding to a work order that exists (same
+    # shop) but is not assigned to them.
+    _, other_estimate = await create_approved_estimate_for_auth(
+        monkeypatch,
+        settings,
+        db_session,
+        owner_auth,
+        payment_option=EstimatePaymentOptionCode.PAY_IN_FULL,
+        vin="1FTFW1ET1EFA00002",
+    )
+    unassigned_work_order = await main.create_work_order_record(
+        other_estimate.id, db_session, owner_auth
+    )
+    with pytest.raises(HTTPException) as unassigned_exc:
+        await main.create_diagnostic_finding_record(
+            DiagnosticFindingCreate(
+                vehicle_id=vehicle.id, work_order_id=unassigned_work_order.id, symptoms="Test"
+            ),
+            db_session,
+            technician_auth,
+        )
+    assert unassigned_exc.value.status_code == 422
+
+    # A technician cannot link a finding to their own assigned work order
+    # while citing an unrelated vehicle -- do not rely on the work-order FK
+    # alone.
+    other_vehicle = await _create_vehicle(settings, db_session, owner_auth)
+    with pytest.raises(HTTPException) as mismatch_exc:
+        await main.create_diagnostic_finding_record(
+            DiagnosticFindingCreate(
+                vehicle_id=other_vehicle.id, work_order_id=work_order.id, symptoms="Test"
+            ),
+            db_session,
+            technician_auth,
+        )
+    assert mismatch_exc.value.status_code == 422
+
+
+async def test_technician_can_create_view_and_update_inspection_on_own_assigned_work_order(
+    monkeypatch, settings, db_session: Session
+) -> None:
+    _, owner_response = await login_as(settings, db_session)
+    owner_auth = auth_context(settings, db_session, raw_cookie_from_response(owner_response))
+    technician_auth, work_order, vehicle = await _create_technician_with_assigned_work_order(
+        monkeypatch, settings, db_session, owner_auth
+    )
+
+    created = await main.create_inspection_record(
+        InspectionCreate(vehicle_id=vehicle.id, work_order_id=work_order.id),
+        db_session,
+        technician_auth,
+    )
+    assert created.work_order_id == work_order.id
+
+    fetched = await main.get_inspection_record(created.id, db_session, technician_auth)
+    assert fetched.id == created.id
+    updated = await main.update_inspection_record(
+        created.id,
+        InspectionUpdate(overall_notes="All clear."),
+        db_session,
+        technician_auth,
+    )
+    assert updated.overall_notes == "All clear."
+
+    technician_list = await main.list_inspection_records(
+        db_session,
+        settings,
+        technician_auth,
+        page=1,
+        page_size=20,
+        vehicle_id=None,
+        work_order_id=None,
+    )
+    assert created.id in [item.id for item in technician_list.items]
+
+    owner_fetched = await main.get_inspection_record(created.id, db_session, owner_auth)
+    assert owner_fetched.id == created.id
+
+
+async def test_technician_inspection_write_path_is_scoped_to_own_assigned_work_order(
+    monkeypatch, settings, db_session: Session
+) -> None:
+    _, owner_response = await login_as(settings, db_session)
+    owner_auth = auth_context(settings, db_session, raw_cookie_from_response(owner_response))
+    technician_auth, work_order, vehicle = await _create_technician_with_assigned_work_order(
+        monkeypatch, settings, db_session, owner_auth
+    )
+
+    unlinked = await main.create_inspection_record(
+        InspectionCreate(vehicle_id=vehicle.id), db_session, owner_auth
+    )
+    with pytest.raises(HTTPException) as unlinked_exc:
+        await main.get_inspection_record(unlinked.id, db_session, technician_auth)
+    assert unlinked_exc.value.status_code == 404
+
+    with pytest.raises(HTTPException) as missing_wo_exc:
+        await main.create_inspection_record(
+            InspectionCreate(vehicle_id=vehicle.id), db_session, technician_auth
+        )
+    assert missing_wo_exc.value.status_code == 422
+
+    _, other_estimate = await create_approved_estimate_for_auth(
+        monkeypatch,
+        settings,
+        db_session,
+        owner_auth,
+        payment_option=EstimatePaymentOptionCode.PAY_IN_FULL,
+        vin="1FTFW1ET1EFA00003",
+    )
+    unassigned_work_order = await main.create_work_order_record(
+        other_estimate.id, db_session, owner_auth
+    )
+    with pytest.raises(HTTPException) as unassigned_exc:
+        await main.create_inspection_record(
+            InspectionCreate(vehicle_id=vehicle.id, work_order_id=unassigned_work_order.id),
+            db_session,
+            technician_auth,
+        )
+    assert unassigned_exc.value.status_code == 422
+
+    other_vehicle = await _create_vehicle(settings, db_session, owner_auth)
+    with pytest.raises(HTTPException) as mismatch_exc:
+        await main.create_inspection_record(
+            InspectionCreate(vehicle_id=other_vehicle.id, work_order_id=work_order.id),
+            db_session,
+            technician_auth,
+        )
+    assert mismatch_exc.value.status_code == 422

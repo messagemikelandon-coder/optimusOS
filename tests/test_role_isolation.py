@@ -53,6 +53,19 @@ _OWNER_OR_TECHNICIAN_ROUTES = {
     ("GET", "/api/technicians/me"),
     ("POST", "/api/technicians/me/clock-in"),
     ("POST", "/api/technicians/me/clock-out"),
+    # Phase 6 Part E: a technician can create/list/view/update diagnostic
+    # findings and inspections tied to their own assigned work orders
+    # (store-level scoping in diagnostics_store.py/inspection_store.py, same
+    # pattern as work_order_store._work_order_query). Archiving and the
+    # audit-event history stay owner-only, matching assign-technician above.
+    ("POST", "/api/diagnostic-findings"),
+    ("GET", "/api/diagnostic-findings"),
+    ("GET", "/api/diagnostic-findings/{finding_id}"),
+    ("PATCH", "/api/diagnostic-findings/{finding_id}"),
+    ("POST", "/api/inspections"),
+    ("GET", "/api/inspections"),
+    ("GET", "/api/inspections/{inspection_id}"),
+    ("PATCH", "/api/inspections/{inspection_id}"),
 }
 
 

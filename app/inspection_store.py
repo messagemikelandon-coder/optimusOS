@@ -19,6 +19,7 @@ from app.models import (
     InspectionUpdate,
 )
 from app.technician_store import display_name as technician_display_name
+from app.technician_store import get_technician_for_user
 from app.vehicle_store import vehicle_display_name
 
 
@@ -30,12 +31,26 @@ class InspectionNotFoundError(InspectionStoreError):
     pass
 
 
-def _owner_query(auth: AuthContext) -> Select[tuple[Inspection]]:
-    return select(Inspection).where(Inspection.owner_user_id == effective_owner_id(auth))
+def _owner_query(db: Session, auth: AuthContext) -> Select[tuple[Inspection]]:
+    query = select(Inspection).where(Inspection.owner_user_id == effective_owner_id(auth))
+    if auth.user.role == "technician":
+        # Same pattern as work_order_store._work_order_query: a technician
+        # only sees inspections tied to one of their own assigned work
+        # orders, not every inspection for the shop -- do not rely on the
+        # inspection's own (client-settable) technician_id field for this
+        # boundary.
+        technician = get_technician_for_user(db, auth.user.id)
+        if technician is None:
+            return query.where(Inspection.id.is_(None))
+        assigned_work_order_ids = select(WorkOrder.id).where(
+            WorkOrder.assigned_technician_id == technician.id
+        )
+        query = query.where(Inspection.work_order_id.in_(assigned_work_order_ids))
+    return query
 
 
 def _get_inspection(db: Session, auth: AuthContext, inspection_id: int) -> Inspection:
-    inspection = db.scalar(_owner_query(auth).where(Inspection.id == inspection_id))
+    inspection = db.scalar(_owner_query(db, auth).where(Inspection.id == inspection_id))
     if inspection is None:
         raise InspectionNotFoundError("Inspection not found.")
     return inspection
@@ -64,7 +79,17 @@ def _validate_technician(db: Session, auth: AuthContext, technician_id: int | No
         raise InspectionStoreError("Selected technician was not found.")
 
 
-def _validate_work_order(db: Session, auth: AuthContext, work_order_id: int | None) -> None:
+def _validate_work_order(
+    db: Session,
+    auth: AuthContext,
+    work_order_id: int | None,
+    *,
+    vehicle_id: int | None = None,
+) -> None:
+    if auth.user.role == "technician" and work_order_id is None:
+        raise InspectionStoreError(
+            "Technicians must link an inspection to their own assigned work order."
+        )
     if work_order_id is None:
         return
     work_order = db.scalar(
@@ -75,6 +100,14 @@ def _validate_work_order(db: Session, auth: AuthContext, work_order_id: int | No
     )
     if work_order is None:
         raise InspectionStoreError("Selected work order was not found.")
+    if auth.user.role == "technician":
+        technician = get_technician_for_user(db, auth.user.id)
+        if technician is None or work_order.assigned_technician_id != technician.id:
+            raise InspectionStoreError("Selected work order is not assigned to you.")
+        if vehicle_id is not None and work_order.vehicle_id != vehicle_id:
+            raise InspectionStoreError(
+                "Selected vehicle does not match the linked work order's vehicle."
+            )
 
 
 def _items_to_dicts(items: list[InspectionItem]) -> list[dict[str, object]]:
@@ -122,7 +155,7 @@ def create_inspection(
 ) -> InspectionRead:
     _validate_vehicle(db, auth, payload.vehicle_id)
     _validate_technician(db, auth, payload.technician_id)
-    _validate_work_order(db, auth, payload.work_order_id)
+    _validate_work_order(db, auth, payload.work_order_id, vehicle_id=payload.vehicle_id)
     inspection = Inspection(
         owner_user_id=effective_owner_id(auth),
         vehicle_id=payload.vehicle_id,
@@ -159,7 +192,7 @@ def update_inspection(
         _validate_technician(db, auth, payload.technician_id)
         inspection.technician_id = payload.technician_id
     if "work_order_id" in fields_set:
-        _validate_work_order(db, auth, payload.work_order_id)
+        _validate_work_order(db, auth, payload.work_order_id, vehicle_id=inspection.vehicle_id)
         inspection.work_order_id = payload.work_order_id
     if "inspection_type" in fields_set:
         inspection.inspection_type = payload.inspection_type
@@ -233,7 +266,7 @@ def list_inspections(
     if page < 1:
         raise InspectionStoreError("Page must be 1 or greater.")
 
-    query = _owner_query(auth).where(Inspection.is_archived == archived)
+    query = _owner_query(db, auth).where(Inspection.is_archived == archived)
     if vehicle_id is not None:
         query = query.where(Inspection.vehicle_id == vehicle_id)
     if work_order_id is not None:

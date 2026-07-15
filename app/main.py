@@ -1537,7 +1537,7 @@ async def convert_intake_request_record(
 async def create_diagnostic_finding_record(
     payload: DiagnosticFindingCreate,
     db: DbSessionDep,
-    auth: OwnerAuthContextDep,
+    auth: OwnerOrTechnicianAuthContextDep,
 ) -> DiagnosticFindingRead:
     try:
         return create_diagnostic_finding(db=db, auth=auth, payload=payload)
@@ -1555,7 +1555,7 @@ async def create_diagnostic_finding_record(
 async def list_diagnostic_finding_records(
     db: DbSessionDep,
     settings: SettingsDep,
-    auth: OwnerAuthContextDep,
+    auth: OwnerOrTechnicianAuthContextDep,
     page: int = Query(default=1),
     page_size: int = Query(default=20),
     vehicle_id: int | None = Query(default=None, ge=1),
@@ -1587,7 +1587,7 @@ async def list_diagnostic_finding_records(
 async def get_diagnostic_finding_record(
     finding_id: int,
     db: DbSessionDep,
-    auth: OwnerAuthContextDep,
+    auth: OwnerOrTechnicianAuthContextDep,
 ) -> DiagnosticFindingRead:
     try:
         return get_diagnostic_finding(db=db, auth=auth, finding_id=finding_id)
@@ -1608,7 +1608,7 @@ async def update_diagnostic_finding_record(
     finding_id: int,
     payload: DiagnosticFindingUpdate,
     db: DbSessionDep,
-    auth: OwnerAuthContextDep,
+    auth: OwnerOrTechnicianAuthContextDep,
 ) -> DiagnosticFindingRead:
     try:
         return update_diagnostic_finding(db=db, auth=auth, finding_id=finding_id, payload=payload)
@@ -1668,7 +1668,7 @@ async def list_diagnostic_finding_event_records(
 async def create_inspection_record(
     payload: InspectionCreate,
     db: DbSessionDep,
-    auth: OwnerAuthContextDep,
+    auth: OwnerOrTechnicianAuthContextDep,
 ) -> InspectionRead:
     try:
         return create_inspection(db=db, auth=auth, payload=payload)
@@ -1686,7 +1686,7 @@ async def create_inspection_record(
 async def list_inspection_records(
     db: DbSessionDep,
     settings: SettingsDep,
-    auth: OwnerAuthContextDep,
+    auth: OwnerOrTechnicianAuthContextDep,
     page: int = Query(default=1),
     page_size: int = Query(default=20),
     vehicle_id: int | None = Query(default=None, ge=1),
@@ -1718,7 +1718,7 @@ async def list_inspection_records(
 async def get_inspection_record(
     inspection_id: int,
     db: DbSessionDep,
-    auth: OwnerAuthContextDep,
+    auth: OwnerOrTechnicianAuthContextDep,
 ) -> InspectionRead:
     try:
         return get_inspection(db=db, auth=auth, inspection_id=inspection_id)
@@ -1739,7 +1739,7 @@ async def update_inspection_record(
     inspection_id: int,
     payload: InspectionUpdate,
     db: DbSessionDep,
-    auth: OwnerAuthContextDep,
+    auth: OwnerOrTechnicianAuthContextDep,
 ) -> InspectionRead:
     try:
         return update_inspection(db=db, auth=auth, inspection_id=inspection_id, payload=payload)

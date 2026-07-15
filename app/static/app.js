@@ -3938,7 +3938,7 @@ async function loadDiagnostics() {
 
 function renderDiagnosticsDetail(finding = null) {
   const detail = $("diagnostics-detail");
-  $("diagnostics-archive").hidden = !finding;
+  $("diagnostics-archive").hidden = !finding || isTechnicianSession();
   if (!finding) {
     detail.innerHTML = "<p>Select a finding from the list or create a new one.</p>";
     return;
@@ -4138,7 +4138,7 @@ async function loadInspections() {
 
 function renderInspectionsDetail(inspection = null) {
   const detail = $("inspections-detail");
-  $("inspections-archive").hidden = !inspection;
+  $("inspections-archive").hidden = !inspection || isTechnicianSession();
   if (!inspection) {
     detail.innerHTML = "<p>Select an inspection from the list or create a new one.</p>";
     return;
