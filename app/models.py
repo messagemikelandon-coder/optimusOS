@@ -1705,6 +1705,100 @@ class PartArchiveResponse(BaseModel):
     part: PartRead
 
 
+class PurchaseOrderStatus(StrEnum):
+    DRAFT = "draft"
+    SUBMITTED = "submitted"
+    PARTIALLY_RECEIVED = "partially_received"
+    RECEIVED = "received"
+    CANCELLED = "cancelled"
+
+
+class PurchaseOrderLineItemCreate(BaseModel):
+    part_id: int
+    quantity_ordered: int = Field(gt=0, le=100_000)
+    unit_cost: float = Field(ge=0)
+
+
+class PurchaseOrderLineItemRead(BaseModel):
+    id: int
+    part_id: int
+    part_number: str
+    part_description: str
+    quantity_ordered: int
+    quantity_received: int
+    unit_cost: float
+    line_total: float
+
+
+class PurchaseOrderCreate(BaseModel):
+    vendor_id: int
+    notes: str | None = Field(default=None, max_length=4000)
+    line_items: list[PurchaseOrderLineItemCreate] = Field(min_length=1, max_length=200)
+
+    @field_validator("notes", mode="before")
+    @classmethod
+    def strip_purchase_order_notes(cls, value: object) -> object:
+        if isinstance(value, str):
+            stripped = value.strip()
+            return stripped or None
+        return value
+
+
+class PurchaseOrderRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    po_number: str
+    vendor_id: int
+    vendor_name: str
+    status: PurchaseOrderStatus
+    notes: str | None = None
+    line_items: list[PurchaseOrderLineItemRead]
+    subtotal: float
+    total: float
+    submitted_at: datetime | None = None
+    received_at: datetime | None = None
+    cancelled_at: datetime | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class PurchaseOrderListResponse(BaseModel):
+    items: list[PurchaseOrderRead]
+    page: int
+    page_size: int
+    total: int
+    has_more: bool
+
+
+class PurchaseOrderReceiveRequest(BaseModel):
+    line_item_id: int
+    quantity: int = Field(gt=0, le=100_000)
+    note: str | None = Field(default=None, max_length=2000)
+
+    @field_validator("note", mode="before")
+    @classmethod
+    def strip_purchase_order_receive_note(cls, value: object) -> object:
+        if isinstance(value, str):
+            stripped = value.strip()
+            return stripped or None
+        return value
+
+
+class PurchaseOrderReceiptRead(BaseModel):
+    id: int
+    line_item_id: int
+    quantity_received: int
+    received_by_display_name: str | None = None
+    note: str | None = None
+    created_at: datetime
+
+
+class PurchaseOrderReceiptsResponse(BaseModel):
+    purchase_order_id: int
+    receipts: list[PurchaseOrderReceiptRead]
+
+
 class IntakeSourceCode(StrEnum):
     PHONE = "phone"
     WALK_IN = "walk_in"

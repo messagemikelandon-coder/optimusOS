@@ -111,6 +111,17 @@ const state = {
     search: "",
     archivedOnly: false,
   },
+  purchaseOrders: {
+    items: [],
+    selectedPurchaseOrderId: null,
+    selectedPurchaseOrder: null,
+    page: 1,
+    pageSize: 20,
+    total: 0,
+    hasMore: false,
+    statusFilter: "",
+    draftItems: [],
+  },
   estimates: {
     selectedEstimateId: null,
     selectedEstimate: null,
@@ -206,6 +217,7 @@ const viewMeta = {
   inspections: { eyebrow: "Digital inspections", title: "Inspections" },
   parts: { eyebrow: "Inventory", title: "Parts" },
   vendors: { eyebrow: "Vendor directory", title: "Vendors" },
+  "purchase-orders": { eyebrow: "Ordering", title: "Purchase orders" },
   chat: { eyebrow: "Owner channel", title: "Talk to Optimus" },
   estimate: { eyebrow: "Pricing workflow", title: "Job estimator" },
   approval: { eyebrow: "Customer authorization", title: "Estimate approval" },
@@ -443,6 +455,7 @@ function navigate(view) {
   if (view === "inspections" && state.auth.authenticated) void loadInspections();
   if (view === "parts" && state.auth.authenticated) void loadParts();
   if (view === "vendors" && state.auth.authenticated) void loadVendors();
+  if (view === "purchase-orders" && state.auth.authenticated) void loadPurchaseOrders();
   if (view === "technicians" && state.auth.authenticated) void loadTechnicians();
   if (view === "scheduling" && state.auth.authenticated) void loadScheduling();
   if (view === "my-day" && state.auth.authenticated) void loadMyDay();
@@ -4543,6 +4556,364 @@ async function loadVendorOptionsInto(selectId) {
   }
 }
 
+async function loadPartOptionsInto(selectId) {
+  const select = $(selectId);
+  if (!select) return;
+  const currentValue = select.value;
+  try {
+    const response = await apiFetch("/api/parts?page=1&page_size=200&archived=false");
+    const data = await readApiPayload(response);
+    if (!response.ok || !data) throw apiError(response, data, "Part options failed");
+    select.innerHTML = ['<option value="">Select a part</option>', ...data.items.map((part) => (
+      `<option value="${part.id}">${escapeHtml(part.part_number)} — ${escapeHtml(part.description)}</option>`
+    ))].join("");
+    if (currentValue) select.value = currentValue;
+  } catch {
+    // Dropdown population is a convenience; a failure here shouldn't block the view.
+  }
+}
+
+// ---- Purchase orders ----
+
+const PURCHASE_ORDER_STATUS_LABELS = {
+  draft: "Draft",
+  submitted: "Submitted",
+  partially_received: "Partially received",
+  received: "Received",
+  cancelled: "Cancelled",
+};
+
+function purchaseOrderStatusLabel(status) {
+  return PURCHASE_ORDER_STATUS_LABELS[status] || status;
+}
+
+function renderPurchaseOrdersList() {
+  const container = $("purchase-orders-list");
+  if (!state.purchaseOrders.items.length) {
+    container.innerHTML = '<div class="empty-card"><strong>No purchase orders</strong><p>Create the first order for a vendor.</p></div>';
+  } else {
+    container.innerHTML = state.purchaseOrders.items.map((item) => `
+      <button type="button" class="customer-list-item${state.purchaseOrders.selectedPurchaseOrderId === item.id ? " is-active" : ""}" data-purchase-order-id="${item.id}">
+        <strong>${escapeHtml(item.po_number)}</strong>
+        <span>${escapeHtml(item.vendor_name)} · ${purchaseOrderStatusLabel(item.status)} · $${item.total.toFixed(2)}</span>
+      </button>`).join("");
+    $$("[data-purchase-order-id]", container).forEach((button) => {
+      button.addEventListener("click", () => {
+        void selectPurchaseOrder(Number(button.dataset.purchaseOrderId));
+      });
+    });
+  }
+  $("purchase-orders-page-status").textContent = `Page ${state.purchaseOrders.page} · ${state.purchaseOrders.total} total`;
+  $("purchase-orders-prev").disabled = state.purchaseOrders.page <= 1;
+  $("purchase-orders-next").disabled = !state.purchaseOrders.hasMore;
+}
+
+async function loadPurchaseOrders() {
+  if (!await requireAuthenticated("login")) return;
+  void loadVendorOptionsInto("purchase-orders-vendor-id");
+  void loadPartOptionsInto("purchase-orders-item-part-id");
+  const list = $("purchase-orders-list");
+  list.innerHTML = '<div class="loading-panel"><span class="loading-spinner"></span><div><strong>Loading purchase orders</strong></div></div>';
+  const searchParams = new URLSearchParams({
+    page: String(state.purchaseOrders.page),
+    page_size: String(state.purchaseOrders.pageSize),
+  });
+  if (state.purchaseOrders.statusFilter) searchParams.set("status_filter", state.purchaseOrders.statusFilter);
+  try {
+    const response = await apiFetch(`/api/purchase-orders?${searchParams.toString()}`);
+    const data = await readApiPayload(response);
+    if (!response.ok || !data) throw apiError(response, data, "Purchase order listing failed");
+    state.purchaseOrders.items = data.items;
+    state.purchaseOrders.total = data.total;
+    state.purchaseOrders.hasMore = data.has_more;
+    renderPurchaseOrdersList();
+  } catch (error) {
+    list.innerHTML = `<div class="error-card"><strong>Purchase order listing failed</strong><p>${escapeHtml(error.message)}</p></div>`;
+    showToast(`Purchase order listing failed: ${error.message}`, "error");
+  }
+}
+
+function renderPurchaseOrderReceipts(receipts) {
+  const container = $("purchase-orders-receipts");
+  if (!receipts || !receipts.length) {
+    container.innerHTML = "<p>No receiving history yet.</p>";
+    return;
+  }
+  container.innerHTML = `<strong>Receiving history</strong>` + receipts.map((receipt) => `
+    <div class="customer-detail-grid">
+      <div><span>${new Date(receipt.created_at).toLocaleString()}</span><strong>+${receipt.quantity_received} · ${escapeHtml(receipt.received_by_display_name || "Unknown")}</strong></div>
+      ${receipt.note ? `<div><span>Note</span><strong>${escapeHtml(receipt.note)}</strong></div>` : ""}
+    </div>`).join("");
+}
+
+async function loadPurchaseOrderReceipts(purchaseOrderId) {
+  try {
+    const response = await apiFetch(`/api/purchase-orders/${purchaseOrderId}/receipts`);
+    const data = await readApiPayload(response);
+    if (!response.ok || !data) throw apiError(response, data, "Receipt history load failed");
+    renderPurchaseOrderReceipts(data.receipts);
+  } catch (error) {
+    showToast(`Receipt history load failed: ${error.message}`, "error");
+  }
+}
+
+function renderPurchaseOrdersDetail(purchaseOrder = null) {
+  const detail = $("purchase-orders-detail");
+  const receivePanel = $("purchase-orders-receive-panel");
+  const canSubmit = purchaseOrder && purchaseOrder.status === "draft";
+  const canCancel = purchaseOrder && ["draft", "submitted", "partially_received"].includes(purchaseOrder.status);
+  const canReceive = purchaseOrder && ["submitted", "partially_received"].includes(purchaseOrder.status);
+  $("purchase-orders-submit").hidden = !canSubmit;
+  $("purchase-orders-cancel-order").hidden = !canCancel;
+  receivePanel.hidden = !canReceive;
+  if (!purchaseOrder) {
+    detail.innerHTML = "<p>Select an order from the list or create a new one.</p>";
+    $("purchase-orders-receipts").innerHTML = "";
+    return;
+  }
+  const lineRows = purchaseOrder.line_items.map((item) => `
+    <li><strong>${escapeHtml(item.part_number)}</strong> · ${item.quantity_received}/${item.quantity_ordered} received · $${item.unit_cost.toFixed(2)} ea · $${item.line_total.toFixed(2)}</li>
+  `).join("");
+  detail.innerHTML = `
+    <div class="customer-detail-header">
+      <strong>${escapeHtml(purchaseOrder.po_number)}</strong>
+      <span>${purchaseOrderStatusLabel(purchaseOrder.status)}</span>
+    </div>
+    <div class="customer-detail-grid">
+      <div><span>Vendor</span><strong>${escapeHtml(purchaseOrder.vendor_name)}</strong></div>
+      <div><span>Total</span><strong>$${purchaseOrder.total.toFixed(2)}</strong></div>
+    </div>
+    <div class="customer-detail-notes"><span>Line items</span><ul>${lineRows}</ul></div>
+    ${purchaseOrder.notes ? `<div class="customer-detail-notes"><span>Notes</span><p>${escapeHtml(purchaseOrder.notes)}</p></div>` : ""}`;
+
+  if (canReceive) {
+    const lineSelect = $("purchase-orders-receive-line-item");
+    lineSelect.innerHTML = purchaseOrder.line_items
+      .filter((item) => item.quantity_received < item.quantity_ordered)
+      .map((item) => `<option value="${item.id}">${escapeHtml(item.part_number)} (${item.quantity_ordered - item.quantity_received} remaining)</option>`)
+      .join("");
+  }
+}
+
+async function selectPurchaseOrder(purchaseOrderId) {
+  try {
+    const response = await apiFetch(`/api/purchase-orders/${purchaseOrderId}`);
+    const data = await readApiPayload(response);
+    if (!response.ok || !data) throw apiError(response, data, "Purchase order load failed");
+    state.purchaseOrders.selectedPurchaseOrderId = data.id;
+    state.purchaseOrders.selectedPurchaseOrder = data;
+    renderPurchaseOrdersDetail(data);
+    renderPurchaseOrdersList();
+    await loadPurchaseOrderReceipts(data.id);
+  } catch (error) {
+    showToast(`Purchase order load failed: ${error.message}`, "error");
+  }
+}
+
+function renderPurchaseOrdersDraftItems() {
+  const container = $("purchase-orders-items-list");
+  if (!state.purchaseOrders.draftItems.length) {
+    container.innerHTML = "<p>No line items added yet.</p>";
+    return;
+  }
+  container.innerHTML = state.purchaseOrders.draftItems.map((item, index) => `
+    <div class="customer-detail-grid">
+      <div><span>${escapeHtml(item.label)}</span><strong>${item.quantity_ordered} × $${item.unit_cost.toFixed(2)}</strong></div>
+      <button type="button" class="text-button" data-remove-po-item-index="${index}">Remove</button>
+    </div>`).join("");
+  $$("[data-remove-po-item-index]", container).forEach((button) => {
+    button.addEventListener("click", () => {
+      state.purchaseOrders.draftItems.splice(Number(button.dataset.removePoItemIndex), 1);
+      renderPurchaseOrdersDraftItems();
+    });
+  });
+}
+
+function addPurchaseOrderDraftItem() {
+  const partSelect = $("purchase-orders-item-part-id");
+  const partId = partSelect.value;
+  if (!partId) {
+    showToast("Select a part first.", "error");
+    return;
+  }
+  const quantity = Number($("purchase-orders-item-quantity").value);
+  if (!quantity || quantity < 1) {
+    showToast("Enter a quantity of 1 or more.", "error");
+    return;
+  }
+  const unitCost = Number($("purchase-orders-item-unit-cost").value);
+  if (Number.isNaN(unitCost) || unitCost < 0) {
+    showToast("Enter a unit cost of 0 or more.", "error");
+    return;
+  }
+  state.purchaseOrders.draftItems.push({
+    part_id: Number(partId),
+    label: partSelect.options[partSelect.selectedIndex].textContent,
+    quantity_ordered: quantity,
+    unit_cost: unitCost,
+  });
+  $("purchase-orders-item-quantity").value = "";
+  $("purchase-orders-item-unit-cost").value = "";
+  renderPurchaseOrdersDraftItems();
+}
+
+function clearPurchaseOrdersForm() {
+  $("purchase-orders-vendor-id").value = "";
+  $("purchase-orders-notes").value = "";
+  state.purchaseOrders.draftItems = [];
+  renderPurchaseOrdersDraftItems();
+}
+
+async function submitPurchaseOrdersForm(event) {
+  event.preventDefault();
+  if (!await requireAuthenticated("login")) return;
+  const vendorId = $("purchase-orders-vendor-id").value;
+  if (!vendorId) {
+    showToast("Select a vendor first.", "error");
+    return;
+  }
+  if (!state.purchaseOrders.draftItems.length) {
+    showToast("Add at least one line item first.", "error");
+    return;
+  }
+  const submit = $("purchase-orders-save");
+  submit.disabled = true;
+  submit.textContent = "Creating…";
+  const payload = {
+    vendor_id: Number(vendorId),
+    notes: $("purchase-orders-notes").value.trim() || null,
+    line_items: state.purchaseOrders.draftItems.map((item) => ({
+      part_id: item.part_id,
+      quantity_ordered: item.quantity_ordered,
+      unit_cost: item.unit_cost,
+    })),
+  };
+  try {
+    const response = await apiFetch("/api/purchase-orders", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const data = await readApiPayload(response);
+    if (!response.ok || !data) throw apiError(response, data, "Purchase order creation failed");
+    clearPurchaseOrdersForm();
+    state.purchaseOrders.page = 1;
+    await loadPurchaseOrders();
+    await selectPurchaseOrder(data.id);
+    showToast("Purchase order created.", "success");
+  } catch (error) {
+    showToast(`Purchase order creation failed: ${error.message}`, "error");
+  } finally {
+    submit.disabled = false;
+    submit.textContent = "Create order";
+  }
+}
+
+async function submitSelectedPurchaseOrder() {
+  const purchaseOrder = state.purchaseOrders.selectedPurchaseOrder;
+  if (!purchaseOrder) return;
+  try {
+    const response = await apiFetch(`/api/purchase-orders/${purchaseOrder.id}/submit`, { method: "POST" });
+    const data = await readApiPayload(response);
+    if (!response.ok || !data) throw apiError(response, data, "Purchase order submission failed");
+    state.purchaseOrders.selectedPurchaseOrder = data;
+    renderPurchaseOrdersDetail(data);
+    await loadPurchaseOrders();
+    showToast("Purchase order submitted to vendor.", "success");
+  } catch (error) {
+    showToast(`Purchase order submission failed: ${error.message}`, "error");
+  }
+}
+
+async function cancelSelectedPurchaseOrder() {
+  const purchaseOrder = state.purchaseOrders.selectedPurchaseOrder;
+  if (!purchaseOrder) return;
+  if (!window.confirm(`Cancel ${purchaseOrder.po_number}?`)) return;
+  try {
+    const response = await apiFetch(`/api/purchase-orders/${purchaseOrder.id}/cancel`, { method: "POST" });
+    const data = await readApiPayload(response);
+    if (!response.ok || !data) throw apiError(response, data, "Purchase order cancellation failed");
+    state.purchaseOrders.selectedPurchaseOrder = data;
+    renderPurchaseOrdersDetail(data);
+    await loadPurchaseOrders();
+    showToast("Purchase order cancelled.", "success");
+  } catch (error) {
+    showToast(`Purchase order cancellation failed: ${error.message}`, "error");
+  }
+}
+
+async function receiveSelectedPurchaseOrderLineItem() {
+  const purchaseOrder = state.purchaseOrders.selectedPurchaseOrder;
+  if (!purchaseOrder) return;
+  const lineItemId = $("purchase-orders-receive-line-item").value;
+  if (!lineItemId) {
+    showToast("No line item available to receive.", "error");
+    return;
+  }
+  const quantity = Number($("purchase-orders-receive-quantity").value);
+  if (!quantity || quantity < 1) {
+    showToast("Enter a quantity of 1 or more.", "error");
+    return;
+  }
+  const payload = {
+    line_item_id: Number(lineItemId),
+    quantity,
+    note: $("purchase-orders-receive-note").value.trim() || null,
+  };
+  try {
+    const response = await apiFetch(`/api/purchase-orders/${purchaseOrder.id}/receive`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const data = await readApiPayload(response);
+    if (!response.ok || !data) throw apiError(response, data, "Receiving failed");
+    state.purchaseOrders.selectedPurchaseOrder = data;
+    renderPurchaseOrdersDetail(data);
+    $("purchase-orders-receive-quantity").value = "";
+    $("purchase-orders-receive-note").value = "";
+    await loadPurchaseOrderReceipts(purchaseOrder.id);
+    await loadPurchaseOrders();
+    showToast("Parts received into inventory.", "success");
+  } catch (error) {
+    showToast(`Receiving failed: ${error.message}`, "error");
+  }
+}
+
+function initializePurchaseOrders() {
+  $("purchase-orders-new").addEventListener("click", () => {
+    state.purchaseOrders.selectedPurchaseOrderId = null;
+    state.purchaseOrders.selectedPurchaseOrder = null;
+    clearPurchaseOrdersForm();
+    renderPurchaseOrdersDetail(null);
+    renderPurchaseOrdersList();
+  });
+  $("purchase-orders-form-clear").addEventListener("click", () => clearPurchaseOrdersForm());
+  $("purchase-orders-form").addEventListener("submit", submitPurchaseOrdersForm);
+  $("purchase-orders-item-add").addEventListener("click", addPurchaseOrderDraftItem);
+  $("purchase-orders-submit").addEventListener("click", () => void submitSelectedPurchaseOrder());
+  $("purchase-orders-cancel-order").addEventListener("click", () => void cancelSelectedPurchaseOrder());
+  $("purchase-orders-receive-submit").addEventListener("click", () => void receiveSelectedPurchaseOrderLineItem());
+  $("purchase-orders-refresh").addEventListener("click", () => void loadPurchaseOrders());
+  $("purchase-orders-status-filter").addEventListener("change", () => {
+    state.purchaseOrders.statusFilter = $("purchase-orders-status-filter").value;
+    state.purchaseOrders.page = 1;
+    void loadPurchaseOrders();
+  });
+  $("purchase-orders-prev").addEventListener("click", () => {
+    if (state.purchaseOrders.page > 1) {
+      state.purchaseOrders.page -= 1;
+      void loadPurchaseOrders();
+    }
+  });
+  $("purchase-orders-next").addEventListener("click", () => {
+    if (state.purchaseOrders.hasMore) {
+      state.purchaseOrders.page += 1;
+      void loadPurchaseOrders();
+    }
+  });
+}
+
 function renderPartsList() {
   const container = $("parts-list");
   if (!state.parts.items.length) {
@@ -6179,6 +6550,7 @@ function initializeApp() {
   initializeInspections();
   initializeVendors();
   initializeParts();
+  initializePurchaseOrders();
   initializeScheduling();
   initializeEstimate();
   initializeSystem();

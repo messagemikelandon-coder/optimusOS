@@ -1188,6 +1188,120 @@ class Part(Base):
     vendor: Mapped[Vendor | None] = relationship(back_populates="parts")
 
 
+class PurchaseOrder(Base):
+    __tablename__ = "purchase_orders"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('draft', 'submitted', 'partially_received', 'received', 'cancelled')",
+            name="ck_purchase_orders_status",
+        ),
+        UniqueConstraint("po_number", name="uq_purchase_orders_po_number"),
+        Index(
+            "ix_purchase_orders_owner_status_updated",
+            "owner_user_id",
+            "status",
+            "updated_at",
+        ),
+        Index("ix_purchase_orders_owner_vendor", "owner_user_id", "vendor_id"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    owner_user_id: Mapped[int] = mapped_column(
+        ForeignKey("user_accounts.id", ondelete="CASCADE"), nullable=False
+    )
+    vendor_id: Mapped[int] = mapped_column(
+        ForeignKey("vendors.id", ondelete="RESTRICT"), nullable=False
+    )
+    po_number: Mapped[str] = mapped_column(String(40), nullable=False)
+    status: Mapped[str] = mapped_column(String(40), nullable=False)
+    notes: Mapped[str | None] = mapped_column(Text)
+    subtotal: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False, default=0)
+    total: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False, default=0)
+    created_by_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("user_accounts.id", ondelete="SET NULL"), nullable=True
+    )
+    submitted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    received_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    cancelled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+
+    vendor: Mapped[Vendor] = relationship()
+    line_items: Mapped[list[PurchaseOrderLineItem]] = relationship(
+        back_populates="purchase_order",
+        cascade="all, delete-orphan",
+        order_by="PurchaseOrderLineItem.id",
+    )
+
+
+class PurchaseOrderLineItem(Base):
+    __tablename__ = "purchase_order_line_items"
+    __table_args__ = (
+        CheckConstraint("quantity_ordered > 0", name="ck_po_line_items_quantity_ordered"),
+        CheckConstraint(
+            "quantity_received >= 0", name="ck_po_line_items_quantity_received_non_negative"
+        ),
+        CheckConstraint(
+            "quantity_received <= quantity_ordered",
+            name="ck_po_line_items_quantity_received_le_ordered",
+        ),
+        Index("ix_po_line_items_purchase_order", "purchase_order_id"),
+        Index("ix_po_line_items_part", "part_id"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    purchase_order_id: Mapped[int] = mapped_column(
+        ForeignKey("purchase_orders.id", ondelete="CASCADE"), nullable=False
+    )
+    part_id: Mapped[int] = mapped_column(
+        ForeignKey("parts.id", ondelete="RESTRICT"), nullable=False
+    )
+    quantity_ordered: Mapped[int] = mapped_column(nullable=False)
+    quantity_received: Mapped[int] = mapped_column(nullable=False, default=0, server_default="0")
+    unit_cost: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+
+    purchase_order: Mapped[PurchaseOrder] = relationship(back_populates="line_items")
+    part: Mapped[Part] = relationship()
+
+
+class PurchaseOrderReceipt(Base):
+    __tablename__ = "purchase_order_receipts"
+    __table_args__ = (
+        CheckConstraint("quantity_received > 0", name="ck_po_receipts_quantity_positive"),
+        Index("ix_po_receipts_purchase_order_created", "purchase_order_id", "created_at"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    purchase_order_id: Mapped[int] = mapped_column(
+        ForeignKey("purchase_orders.id", ondelete="CASCADE"), nullable=False
+    )
+    line_item_id: Mapped[int] = mapped_column(
+        ForeignKey("purchase_order_line_items.id", ondelete="CASCADE"), nullable=False
+    )
+    owner_user_id: Mapped[int] = mapped_column(
+        ForeignKey("user_accounts.id", ondelete="CASCADE"), nullable=False
+    )
+    quantity_received: Mapped[int] = mapped_column(nullable=False)
+    received_by_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("user_accounts.id", ondelete="SET NULL"), nullable=True
+    )
+    received_by_name: Mapped[str | None] = mapped_column(String(160))
+    note: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
 class IntakeRequest(Base):
     __tablename__ = "intake_requests"
     __table_args__ = (
