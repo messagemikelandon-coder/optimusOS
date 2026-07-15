@@ -263,12 +263,11 @@ def require_owner_context(
 ) -> AuthContext:
     """Route dependency for endpoints that stay owner-only.
 
-    Most business routes are still owner-only — Diagnostics/Inspections and
-    the rest of the Phase 5.6 module set don't exist yet. Technicians (as of
-    sub-phase 2) can log in, provision nowhere themselves, clock in/out, and
-    view/update only their own assigned work orders via
+    Most business routes are still owner-only. Technicians (as of sub-phase 2)
+    can log in, clock in/out, and view/update only their own assigned work
+    orders, diagnostic findings, and inspections via
     `require_owner_or_technician_context` below plus store-level scoping in
-    `work_order_store.py`.
+    `work_order_store.py`, `diagnostics_store.py`, and `inspection_store.py`.
     """
     require_role(auth, "owner")
     return auth

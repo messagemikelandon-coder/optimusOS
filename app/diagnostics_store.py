@@ -18,6 +18,7 @@ from app.models import (
     DiagnosticFindingUpdate,
 )
 from app.technician_store import display_name as technician_display_name
+from app.technician_store import get_technician_for_user
 from app.vehicle_store import vehicle_display_name
 
 
@@ -29,14 +30,27 @@ class DiagnosticFindingNotFoundError(DiagnosticsStoreError):
     pass
 
 
-def _owner_query(auth: AuthContext) -> Select[tuple[DiagnosticFinding]]:
-    return select(DiagnosticFinding).where(
+def _owner_query(db: Session, auth: AuthContext) -> Select[tuple[DiagnosticFinding]]:
+    query = select(DiagnosticFinding).where(
         DiagnosticFinding.owner_user_id == effective_owner_id(auth)
     )
+    if auth.user.role == "technician":
+        # Same pattern as work_order_store._work_order_query: a technician
+        # only sees findings tied to one of their own assigned work orders,
+        # not every finding for the shop -- do not rely on the finding's own
+        # (client-settable) technician_id field for this boundary.
+        technician = get_technician_for_user(db, auth.user.id)
+        if technician is None:
+            return query.where(DiagnosticFinding.id.is_(None))
+        assigned_work_order_ids = select(WorkOrder.id).where(
+            WorkOrder.assigned_technician_id == technician.id
+        )
+        query = query.where(DiagnosticFinding.work_order_id.in_(assigned_work_order_ids))
+    return query
 
 
 def _get_finding(db: Session, auth: AuthContext, finding_id: int) -> DiagnosticFinding:
-    finding = db.scalar(_owner_query(auth).where(DiagnosticFinding.id == finding_id))
+    finding = db.scalar(_owner_query(db, auth).where(DiagnosticFinding.id == finding_id))
     if finding is None:
         raise DiagnosticFindingNotFoundError("Diagnostic finding not found.")
     return finding
@@ -65,7 +79,17 @@ def _validate_technician(db: Session, auth: AuthContext, technician_id: int | No
         raise DiagnosticsStoreError("Selected technician was not found.")
 
 
-def _validate_work_order(db: Session, auth: AuthContext, work_order_id: int | None) -> None:
+def _validate_work_order(
+    db: Session,
+    auth: AuthContext,
+    work_order_id: int | None,
+    *,
+    vehicle_id: int | None = None,
+) -> None:
+    if auth.user.role == "technician" and work_order_id is None:
+        raise DiagnosticsStoreError(
+            "Technicians must link a finding to their own assigned work order."
+        )
     if work_order_id is None:
         return
     work_order = db.scalar(
@@ -76,6 +100,14 @@ def _validate_work_order(db: Session, auth: AuthContext, work_order_id: int | No
     )
     if work_order is None:
         raise DiagnosticsStoreError("Selected work order was not found.")
+    if auth.user.role == "technician":
+        technician = get_technician_for_user(db, auth.user.id)
+        if technician is None or work_order.assigned_technician_id != technician.id:
+            raise DiagnosticsStoreError("Selected work order is not assigned to you.")
+        if vehicle_id is not None and work_order.vehicle_id != vehicle_id:
+            raise DiagnosticsStoreError(
+                "Selected vehicle does not match the linked work order's vehicle."
+            )
 
 
 def _to_read(db: Session, finding: DiagnosticFinding) -> DiagnosticFindingRead:
@@ -119,7 +151,7 @@ def create_diagnostic_finding(
 ) -> DiagnosticFindingRead:
     _validate_vehicle(db, auth, payload.vehicle_id)
     _validate_technician(db, auth, payload.technician_id)
-    _validate_work_order(db, auth, payload.work_order_id)
+    _validate_work_order(db, auth, payload.work_order_id, vehicle_id=payload.vehicle_id)
     finding = DiagnosticFinding(
         owner_user_id=effective_owner_id(auth),
         vehicle_id=payload.vehicle_id,
@@ -159,7 +191,7 @@ def update_diagnostic_finding(
         _validate_technician(db, auth, payload.technician_id)
         finding.technician_id = payload.technician_id
     if "work_order_id" in fields_set:
-        _validate_work_order(db, auth, payload.work_order_id)
+        _validate_work_order(db, auth, payload.work_order_id, vehicle_id=finding.vehicle_id)
         finding.work_order_id = payload.work_order_id
     if "codes" in fields_set:
         finding.codes = payload.codes
@@ -235,7 +267,7 @@ def list_diagnostic_findings(
     if page < 1:
         raise DiagnosticsStoreError("Page must be 1 or greater.")
 
-    query = _owner_query(auth).where(DiagnosticFinding.is_archived == archived)
+    query = _owner_query(db, auth).where(DiagnosticFinding.is_archived == archived)
     if vehicle_id is not None:
         query = query.where(DiagnosticFinding.vehicle_id == vehicle_id)
     if work_order_id is not None:

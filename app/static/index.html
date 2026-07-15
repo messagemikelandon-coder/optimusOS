@@ -271,11 +271,11 @@
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a7 7 0 0 0-7 7v4a3 3 0 0 0 3 3h1v-7H6v-1a6 6 0 0 1 12 0v1h-3v7h1a3 3 0 0 0 3-3v-1h1v-3h-1v-.6A7 7 0 0 0 12 3Zm-1 18h2v1h-2v-1Z"/></svg>
             <span>Service Desk</span>
           </button>
-          <button class="nav-item" type="button" data-view="diagnostics" data-owner-only="true">
+          <button class="nav-item" type="button" data-view="diagnostics">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12h4l2-7 4 14 2-9 2 4h4"/></svg>
             <span>Diagnostics</span>
           </button>
-          <button class="nav-item" type="button" data-view="inspections" data-owner-only="true">
+          <button class="nav-item" type="button" data-view="inspections">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 2h10a2 2 0 0 1 2 2v16a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2Zm1 5h8V5H8v2Zm-.2 4.8 1.4-1.4L10 12.2l3.8-3.8 1.4 1.4L10 15Z"/></svg>
             <span>Inspections</span>
           </button>
@@ -1042,7 +1042,7 @@
               <section class="panel" id="diagnostics-detail-panel">
                 <div class="panel-heading">
                   <div><span class="section-kicker"><i></i> Detail view</span><h3>Selected finding</h3></div>
-                  <button class="text-button" type="button" id="diagnostics-archive">Archive</button>
+                  <button class="text-button" type="button" id="diagnostics-archive" data-owner-only="true">Archive</button>
                 </div>
                 <div id="diagnostics-detail" class="customer-detail-card">
                   <p>Select a finding from the list or create a new one.</p>
@@ -1111,7 +1111,7 @@
               <section class="panel" id="inspections-detail-panel">
                 <div class="panel-heading">
                   <div><span class="section-kicker"><i></i> Detail view</span><h3>Selected inspection</h3></div>
-                  <button class="text-button" type="button" id="inspections-archive">Archive</button>
+                  <button class="text-button" type="button" id="inspections-archive" data-owner-only="true">Archive</button>
                 </div>
                 <div id="inspections-detail" class="customer-detail-card">
                   <p>Select an inspection from the list or create a new one.</p>
