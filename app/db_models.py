@@ -1240,6 +1240,12 @@ class DiagnosticFinding(Base):
             "updated_at",
         ),
         Index("ix_diagnostic_findings_work_order", "work_order_id"),
+        Index(
+            "ix_diagnostic_findings_owner_archived_updated",
+            "owner_user_id",
+            "is_archived",
+            "updated_at",
+        ),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
@@ -1259,6 +1265,19 @@ class DiagnosticFinding(Base):
     symptoms: Mapped[str] = mapped_column(Text, nullable=False)
     tests_performed: Mapped[str | None] = mapped_column(Text)
     conclusion: Mapped[str | None] = mapped_column(Text)
+    is_archived: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_by_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("user_accounts.id", ondelete="SET NULL"), nullable=True
+    )
+    updated_by_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("user_accounts.id", ondelete="SET NULL"), nullable=True
+    )
+    archived_by_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("user_accounts.id", ondelete="SET NULL"), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
@@ -1267,11 +1286,49 @@ class DiagnosticFinding(Base):
     )
 
 
+class DiagnosticFindingEvent(Base):
+    __tablename__ = "diagnostic_finding_events"
+    __table_args__ = (
+        CheckConstraint(
+            "event_type IN ('created', 'updated', 'archived')",
+            name="ck_diagnostic_finding_events_type",
+        ),
+        CheckConstraint(
+            "actor_type IN ('owner', 'technician')",
+            name="ck_diagnostic_finding_events_actor_type",
+        ),
+        Index("ix_diagnostic_finding_events_finding_created", "finding_id", "created_at"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    finding_id: Mapped[int] = mapped_column(
+        ForeignKey("diagnostic_findings.id", ondelete="CASCADE"), nullable=False
+    )
+    owner_user_id: Mapped[int] = mapped_column(
+        ForeignKey("user_accounts.id", ondelete="CASCADE"), nullable=False
+    )
+    event_type: Mapped[str] = mapped_column(String(20), nullable=False)
+    actor_type: Mapped[str] = mapped_column(String(20), nullable=False)
+    actor_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("user_accounts.id", ondelete="SET NULL"), nullable=True
+    )
+    actor_name: Mapped[str | None] = mapped_column(String(160))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
 class Inspection(Base):
     __tablename__ = "inspections"
     __table_args__ = (
         Index("ix_inspections_owner_vehicle_updated", "owner_user_id", "vehicle_id", "updated_at"),
         Index("ix_inspections_work_order", "work_order_id"),
+        Index(
+            "ix_inspections_owner_archived_updated",
+            "owner_user_id",
+            "is_archived",
+            "updated_at",
+        ),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
@@ -1290,11 +1347,56 @@ class Inspection(Base):
     inspection_type: Mapped[str | None] = mapped_column(String(120))
     items: Mapped[list[dict[str, object]]] = mapped_column(JSON, nullable=False, default=list)
     overall_notes: Mapped[str | None] = mapped_column(Text)
+    is_archived: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_by_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("user_accounts.id", ondelete="SET NULL"), nullable=True
+    )
+    updated_by_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("user_accounts.id", ondelete="SET NULL"), nullable=True
+    )
+    archived_by_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("user_accounts.id", ondelete="SET NULL"), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+
+
+class InspectionEvent(Base):
+    __tablename__ = "inspection_events"
+    __table_args__ = (
+        CheckConstraint(
+            "event_type IN ('created', 'updated', 'archived')",
+            name="ck_inspection_events_type",
+        ),
+        CheckConstraint(
+            "actor_type IN ('owner', 'technician')",
+            name="ck_inspection_events_actor_type",
+        ),
+        Index("ix_inspection_events_inspection_created", "inspection_id", "created_at"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    inspection_id: Mapped[int] = mapped_column(
+        ForeignKey("inspections.id", ondelete="CASCADE"), nullable=False
+    )
+    owner_user_id: Mapped[int] = mapped_column(
+        ForeignKey("user_accounts.id", ondelete="CASCADE"), nullable=False
+    )
+    event_type: Mapped[str] = mapped_column(String(20), nullable=False)
+    actor_type: Mapped[str] = mapped_column(String(20), nullable=False)
+    actor_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("user_accounts.id", ondelete="SET NULL"), nullable=True
+    )
+    actor_name: Mapped[str | None] = mapped_column(String(160))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
     )
 
 

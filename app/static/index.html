@@ -1024,6 +1024,10 @@
                   Vehicle
                   <select id="diagnostics-vehicle-filter"><option value="">All vehicles</option></select>
                 </label>
+                <label class="toggle-field">
+                  <input id="diagnostics-archived-only" type="checkbox">
+                  <span>Show archived</span>
+                </label>
                 <button class="secondary-button compact" type="button" id="diagnostics-refresh">Refresh</button>
               </div>
               <div id="diagnostics-list" class="customers-list" aria-live="polite"></div>
@@ -1038,7 +1042,7 @@
               <section class="panel" id="diagnostics-detail-panel">
                 <div class="panel-heading">
                   <div><span class="section-kicker"><i></i> Detail view</span><h3>Selected finding</h3></div>
-                  <button class="text-button" type="button" id="diagnostics-delete">Delete</button>
+                  <button class="text-button" type="button" id="diagnostics-archive">Archive</button>
                 </div>
                 <div id="diagnostics-detail" class="customer-detail-card">
                   <p>Select a finding from the list or create a new one.</p>
@@ -1089,6 +1093,10 @@
                   Vehicle
                   <select id="inspections-vehicle-filter"><option value="">All vehicles</option></select>
                 </label>
+                <label class="toggle-field">
+                  <input id="inspections-archived-only" type="checkbox">
+                  <span>Show archived</span>
+                </label>
                 <button class="secondary-button compact" type="button" id="inspections-refresh">Refresh</button>
               </div>
               <div id="inspections-list" class="customers-list" aria-live="polite"></div>
@@ -1103,7 +1111,7 @@
               <section class="panel" id="inspections-detail-panel">
                 <div class="panel-heading">
                   <div><span class="section-kicker"><i></i> Detail view</span><h3>Selected inspection</h3></div>
-                  <button class="text-button" type="button" id="inspections-delete">Delete</button>
+                  <button class="text-button" type="button" id="inspections-archive">Archive</button>
                 </div>
                 <div id="inspections-detail" class="customer-detail-card">
                   <p>Select an inspection from the list or create a new one.</p>

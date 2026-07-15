@@ -1842,6 +1842,8 @@ class DiagnosticFindingRead(DiagnosticFindingBase):
     id: int
     vehicle_display_name: str | None = None
     technician_display_name: str | None = None
+    is_archived: bool
+    archived_at: datetime | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -1852,6 +1854,24 @@ class DiagnosticFindingListResponse(BaseModel):
     page_size: int
     total: int
     has_more: bool
+
+
+class DiagnosticFindingArchiveResponse(BaseModel):
+    ok: bool = True
+    finding: DiagnosticFindingRead
+
+
+class DiagnosticFindingEventRead(BaseModel):
+    id: int
+    event_type: str
+    actor_type: str
+    actor_name: str | None = None
+    created_at: datetime
+
+
+class DiagnosticFindingEventsResponse(BaseModel):
+    finding_id: int
+    events: list[DiagnosticFindingEventRead]
 
 
 class InspectionItem(BaseModel):
@@ -1913,6 +1933,8 @@ class InspectionRead(InspectionBase):
     technician_display_name: str | None = None
     has_attention_items: bool
     has_failed_items: bool
+    is_archived: bool
+    archived_at: datetime | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -1923,6 +1945,24 @@ class InspectionListResponse(BaseModel):
     page_size: int
     total: int
     has_more: bool
+
+
+class InspectionArchiveResponse(BaseModel):
+    ok: bool = True
+    inspection: InspectionRead
+
+
+class InspectionEventRead(BaseModel):
+    id: int
+    event_type: str
+    actor_type: str
+    actor_name: str | None = None
+    created_at: datetime
+
+
+class InspectionEventsResponse(BaseModel):
+    inspection_id: int
+    events: list[InspectionEventRead]
 
 
 class AppointmentStatus(StrEnum):

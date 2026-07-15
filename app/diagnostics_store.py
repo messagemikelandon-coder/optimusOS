@@ -1,13 +1,18 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
 from sqlalchemy import Select, func, select
 from sqlalchemy.orm import Session
 
 from app.auth import AuthContext, effective_owner_id, ensure_utc
 from app.config import Settings
-from app.db_models import DiagnosticFinding, Technician, Vehicle, WorkOrder
+from app.db_models import DiagnosticFinding, DiagnosticFindingEvent, Technician, Vehicle, WorkOrder
 from app.models import (
+    DiagnosticFindingArchiveResponse,
     DiagnosticFindingCreate,
+    DiagnosticFindingEventRead,
+    DiagnosticFindingEventsResponse,
     DiagnosticFindingListResponse,
     DiagnosticFindingRead,
     DiagnosticFindingUpdate,
@@ -87,8 +92,25 @@ def _to_read(db: Session, finding: DiagnosticFinding) -> DiagnosticFindingRead:
         conclusion=finding.conclusion,
         vehicle_display_name=vehicle_display_name(vehicle) if vehicle else None,
         technician_display_name=technician_display_name(technician) if technician else None,
+        is_archived=finding.is_archived,
+        archived_at=ensure_utc(finding.archived_at) if finding.archived_at else None,
         created_at=ensure_utc(finding.created_at),
         updated_at=ensure_utc(finding.updated_at),
+    )
+
+
+def _record_event(
+    db: Session, finding: DiagnosticFinding, auth: AuthContext, event_type: str
+) -> None:
+    db.add(
+        DiagnosticFindingEvent(
+            finding_id=finding.id,
+            owner_user_id=finding.owner_user_id,
+            event_type=event_type,
+            actor_type=auth.user.role,
+            actor_user_id=auth.user.id,
+            actor_name=auth.user.display_name,
+        )
     )
 
 
@@ -107,8 +129,12 @@ def create_diagnostic_finding(
         symptoms=payload.symptoms,
         tests_performed=payload.tests_performed,
         conclusion=payload.conclusion,
+        created_by_user_id=auth.user.id,
+        updated_by_user_id=auth.user.id,
     )
     db.add(finding)
+    db.flush()
+    _record_event(db, finding, auth, "created")
     db.commit()
     db.refresh(finding)
     return _to_read(db, finding)
@@ -143,16 +169,52 @@ def update_diagnostic_finding(
         finding.tests_performed = payload.tests_performed
     if "conclusion" in fields_set:
         finding.conclusion = payload.conclusion
-    db.add(finding)
-    db.commit()
-    db.refresh(finding)
+    if fields_set:
+        finding.updated_by_user_id = auth.user.id
+        db.add(finding)
+        _record_event(db, finding, auth, "updated")
+        db.commit()
+        db.refresh(finding)
     return _to_read(db, finding)
 
 
-def delete_diagnostic_finding(*, db: Session, auth: AuthContext, finding_id: int) -> None:
+def archive_diagnostic_finding(
+    *, db: Session, auth: AuthContext, finding_id: int
+) -> DiagnosticFindingArchiveResponse:
     finding = _get_finding(db, auth, finding_id)
-    db.delete(finding)
-    db.commit()
+    if not finding.is_archived:
+        finding.is_archived = True
+        finding.archived_at = datetime.now(UTC)
+        finding.archived_by_user_id = auth.user.id
+        db.add(finding)
+        _record_event(db, finding, auth, "archived")
+        db.commit()
+        db.refresh(finding)
+    return DiagnosticFindingArchiveResponse(finding=_to_read(db, finding))
+
+
+def list_diagnostic_finding_events(
+    *, db: Session, auth: AuthContext, finding_id: int
+) -> DiagnosticFindingEventsResponse:
+    finding = _get_finding(db, auth, finding_id)
+    events = db.scalars(
+        select(DiagnosticFindingEvent)
+        .where(DiagnosticFindingEvent.finding_id == finding.id)
+        .order_by(DiagnosticFindingEvent.created_at.asc(), DiagnosticFindingEvent.id.asc())
+    ).all()
+    return DiagnosticFindingEventsResponse(
+        finding_id=finding.id,
+        events=[
+            DiagnosticFindingEventRead(
+                id=event.id,
+                event_type=event.event_type,
+                actor_type=event.actor_type,
+                actor_name=event.actor_name,
+                created_at=ensure_utc(event.created_at),
+            )
+            for event in events
+        ],
+    )
 
 
 def list_diagnostic_findings(
@@ -164,6 +226,7 @@ def list_diagnostic_findings(
     page_size: int,
     vehicle_id: int | None = None,
     work_order_id: int | None = None,
+    archived: bool = False,
 ) -> DiagnosticFindingListResponse:
     if page_size > settings.customers_max_page_size:
         raise DiagnosticsStoreError(
@@ -172,7 +235,7 @@ def list_diagnostic_findings(
     if page < 1:
         raise DiagnosticsStoreError("Page must be 1 or greater.")
 
-    query = _owner_query(auth)
+    query = _owner_query(auth).where(DiagnosticFinding.is_archived == archived)
     if vehicle_id is not None:
         query = query.where(DiagnosticFinding.vehicle_id == vehicle_id)
     if work_order_id is not None:

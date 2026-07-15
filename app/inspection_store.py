@@ -1,13 +1,18 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
 from sqlalchemy import Select, func, select
 from sqlalchemy.orm import Session
 
 from app.auth import AuthContext, effective_owner_id, ensure_utc
 from app.config import Settings
-from app.db_models import Inspection, Technician, Vehicle, WorkOrder
+from app.db_models import Inspection, InspectionEvent, Technician, Vehicle, WorkOrder
 from app.models import (
+    InspectionArchiveResponse,
     InspectionCreate,
+    InspectionEventRead,
+    InspectionEventsResponse,
     InspectionItem,
     InspectionListResponse,
     InspectionRead,
@@ -92,8 +97,23 @@ def _to_read(db: Session, inspection: Inspection) -> InspectionRead:
         technician_display_name=technician_display_name(technician) if technician else None,
         has_attention_items=any(item.status == "attention" for item in items),
         has_failed_items=any(item.status == "fail" for item in items),
+        is_archived=inspection.is_archived,
+        archived_at=ensure_utc(inspection.archived_at) if inspection.archived_at else None,
         created_at=ensure_utc(inspection.created_at),
         updated_at=ensure_utc(inspection.updated_at),
+    )
+
+
+def _record_event(db: Session, inspection: Inspection, auth: AuthContext, event_type: str) -> None:
+    db.add(
+        InspectionEvent(
+            inspection_id=inspection.id,
+            owner_user_id=inspection.owner_user_id,
+            event_type=event_type,
+            actor_type=auth.user.role,
+            actor_user_id=auth.user.id,
+            actor_name=auth.user.display_name,
+        )
     )
 
 
@@ -111,8 +131,12 @@ def create_inspection(
         inspection_type=payload.inspection_type,
         items=_items_to_dicts(payload.items),
         overall_notes=payload.overall_notes,
+        created_by_user_id=auth.user.id,
+        updated_by_user_id=auth.user.id,
     )
     db.add(inspection)
+    db.flush()
+    _record_event(db, inspection, auth, "created")
     db.commit()
     db.refresh(inspection)
     return _to_read(db, inspection)
@@ -143,16 +167,52 @@ def update_inspection(
         inspection.items = _items_to_dicts(payload.items)
     if "overall_notes" in fields_set:
         inspection.overall_notes = payload.overall_notes
-    db.add(inspection)
-    db.commit()
-    db.refresh(inspection)
+    if fields_set:
+        inspection.updated_by_user_id = auth.user.id
+        db.add(inspection)
+        _record_event(db, inspection, auth, "updated")
+        db.commit()
+        db.refresh(inspection)
     return _to_read(db, inspection)
 
 
-def delete_inspection(*, db: Session, auth: AuthContext, inspection_id: int) -> None:
+def archive_inspection(
+    *, db: Session, auth: AuthContext, inspection_id: int
+) -> InspectionArchiveResponse:
     inspection = _get_inspection(db, auth, inspection_id)
-    db.delete(inspection)
-    db.commit()
+    if not inspection.is_archived:
+        inspection.is_archived = True
+        inspection.archived_at = datetime.now(UTC)
+        inspection.archived_by_user_id = auth.user.id
+        db.add(inspection)
+        _record_event(db, inspection, auth, "archived")
+        db.commit()
+        db.refresh(inspection)
+    return InspectionArchiveResponse(inspection=_to_read(db, inspection))
+
+
+def list_inspection_events(
+    *, db: Session, auth: AuthContext, inspection_id: int
+) -> InspectionEventsResponse:
+    inspection = _get_inspection(db, auth, inspection_id)
+    events = db.scalars(
+        select(InspectionEvent)
+        .where(InspectionEvent.inspection_id == inspection.id)
+        .order_by(InspectionEvent.created_at.asc(), InspectionEvent.id.asc())
+    ).all()
+    return InspectionEventsResponse(
+        inspection_id=inspection.id,
+        events=[
+            InspectionEventRead(
+                id=event.id,
+                event_type=event.event_type,
+                actor_type=event.actor_type,
+                actor_name=event.actor_name,
+                created_at=ensure_utc(event.created_at),
+            )
+            for event in events
+        ],
+    )
 
 
 def list_inspections(
@@ -164,6 +224,7 @@ def list_inspections(
     page_size: int,
     vehicle_id: int | None = None,
     work_order_id: int | None = None,
+    archived: bool = False,
 ) -> InspectionListResponse:
     if page_size > settings.customers_max_page_size:
         raise InspectionStoreError(
@@ -172,7 +233,7 @@ def list_inspections(
     if page < 1:
         raise InspectionStoreError("Page must be 1 or greater.")
 
-    query = _owner_query(auth)
+    query = _owner_query(auth).where(Inspection.is_archived == archived)
     if vehicle_id is not None:
         query = query.where(Inspection.vehicle_id == vehicle_id)
     if work_order_id is not None:

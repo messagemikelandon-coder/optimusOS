@@ -54,9 +54,10 @@ from app.db_models import UserAccount
 from app.diagnostics_store import (
     DiagnosticFindingNotFoundError,
     DiagnosticsStoreError,
+    archive_diagnostic_finding,
     create_diagnostic_finding,
-    delete_diagnostic_finding,
     get_diagnostic_finding,
+    list_diagnostic_finding_events,
     list_diagnostic_findings,
     update_diagnostic_finding,
 )
@@ -80,9 +81,10 @@ from app.estimate_store import (
 from app.inspection_store import (
     InspectionNotFoundError,
     InspectionStoreError,
+    archive_inspection,
     create_inspection,
-    delete_inspection,
     get_inspection,
+    list_inspection_events,
     list_inspections,
     update_inspection,
 )
@@ -142,7 +144,9 @@ from app.models import (
     CustomerRead,
     CustomerUpdate,
     DashboardSummaryResponse,
+    DiagnosticFindingArchiveResponse,
     DiagnosticFindingCreate,
+    DiagnosticFindingEventsResponse,
     DiagnosticFindingListResponse,
     DiagnosticFindingRead,
     DiagnosticFindingUpdate,
@@ -161,7 +165,9 @@ from app.models import (
     EstimateSendForApprovalRequest,
     EstimateStatus,
     EstimateUpdate,
+    InspectionArchiveResponse,
     InspectionCreate,
+    InspectionEventsResponse,
     InspectionListResponse,
     InspectionRead,
     InspectionUpdate,
@@ -1554,6 +1560,7 @@ async def list_diagnostic_finding_records(
     page_size: int = Query(default=20),
     vehicle_id: int | None = Query(default=None, ge=1),
     work_order_id: int | None = Query(default=None, ge=1),
+    archived: bool = False,
 ) -> DiagnosticFindingListResponse:
     try:
         return list_diagnostic_findings(
@@ -1564,6 +1571,7 @@ async def list_diagnostic_finding_records(
             page_size=page_size,
             vehicle_id=vehicle_id,
             work_order_id=work_order_id,
+            archived=archived,
         )
     except DiagnosticsStoreError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -1616,18 +1624,40 @@ async def update_diagnostic_finding_record(
         ) from exc
 
 
-@app.delete("/api/diagnostic-findings/{finding_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_diagnostic_finding_record(
+@app.delete(
+    "/api/diagnostic-findings/{finding_id}", response_model=DiagnosticFindingArchiveResponse
+)
+async def archive_diagnostic_finding_record(
     finding_id: int,
     db: DbSessionDep,
     auth: OwnerAuthContextDep,
-) -> None:
+) -> DiagnosticFindingArchiveResponse:
     try:
-        delete_diagnostic_finding(db=db, auth=auth, finding_id=finding_id)
+        return archive_diagnostic_finding(db=db, auth=auth, finding_id=finding_id)
     except DiagnosticFindingNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except SQLAlchemyError as exc:
-        logger.warning("Diagnostic finding deletion failed due to storage error.")
+        logger.warning("Diagnostic finding archive failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Diagnostic finding storage is unavailable.",
+        ) from exc
+
+
+@app.get(
+    "/api/diagnostic-findings/{finding_id}/events", response_model=DiagnosticFindingEventsResponse
+)
+async def list_diagnostic_finding_event_records(
+    finding_id: int,
+    db: DbSessionDep,
+    auth: OwnerAuthContextDep,
+) -> DiagnosticFindingEventsResponse:
+    try:
+        return list_diagnostic_finding_events(db=db, auth=auth, finding_id=finding_id)
+    except DiagnosticFindingNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Diagnostic finding event listing failed due to storage error.")
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Diagnostic finding storage is unavailable.",
@@ -1661,6 +1691,7 @@ async def list_inspection_records(
     page_size: int = Query(default=20),
     vehicle_id: int | None = Query(default=None, ge=1),
     work_order_id: int | None = Query(default=None, ge=1),
+    archived: bool = False,
 ) -> InspectionListResponse:
     try:
         return list_inspections(
@@ -1671,6 +1702,7 @@ async def list_inspection_records(
             page_size=page_size,
             vehicle_id=vehicle_id,
             work_order_id=work_order_id,
+            archived=archived,
         )
     except InspectionStoreError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -1723,18 +1755,36 @@ async def update_inspection_record(
         ) from exc
 
 
-@app.delete("/api/inspections/{inspection_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_inspection_record(
+@app.delete("/api/inspections/{inspection_id}", response_model=InspectionArchiveResponse)
+async def archive_inspection_record(
     inspection_id: int,
     db: DbSessionDep,
     auth: OwnerAuthContextDep,
-) -> None:
+) -> InspectionArchiveResponse:
     try:
-        delete_inspection(db=db, auth=auth, inspection_id=inspection_id)
+        return archive_inspection(db=db, auth=auth, inspection_id=inspection_id)
     except InspectionNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except SQLAlchemyError as exc:
-        logger.warning("Inspection deletion failed due to storage error.")
+        logger.warning("Inspection archive failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Inspection storage is unavailable.",
+        ) from exc
+
+
+@app.get("/api/inspections/{inspection_id}/events", response_model=InspectionEventsResponse)
+async def list_inspection_event_records(
+    inspection_id: int,
+    db: DbSessionDep,
+    auth: OwnerAuthContextDep,
+) -> InspectionEventsResponse:
+    try:
+        return list_inspection_events(db=db, auth=auth, inspection_id=inspection_id)
+    except InspectionNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Inspection event listing failed due to storage error.")
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Inspection storage is unavailable.",
