@@ -312,6 +312,10 @@
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7h11v9H3V7Zm11 3h4l3 3v3h-7v-6ZM6 18a2 2 0 1 0 0 4 2 2 0 0 0 0-4Zm12 0a2 2 0 1 0 0 4 2 2 0 0 0 0-4Z"/></svg>
             <span>Vendors</span>
           </button>
+          <button class="nav-item" type="button" data-view="purchase-orders" data-owner-only="true">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 2h12v4H6V2Zm-2 6h16v14H4V8Zm3 3v2h10v-2H7Zm0 4v2h10v-2H7Z"/></svg>
+            <span>Purchase orders</span>
+          </button>
         </div>
 
         <div class="nav-group">
@@ -1312,6 +1316,97 @@
                   <div class="customers-form-actions">
                     <button class="text-button" type="button" id="vendors-cancel">Clear</button>
                     <button class="primary-button compact" type="submit" id="vendors-save">Save vendor</button>
+                  </div>
+                </div>
+              </form>
+            </section>
+          </div>
+        </section>
+
+        <section class="app-view" id="view-purchase-orders" data-view-panel="purchase-orders" hidden>
+          <div class="customers-layout">
+            <section class="panel customers-list-panel">
+              <div class="panel-heading">
+                <div><span class="section-kicker"><i></i> Ordering</span><h2>Purchase orders</h2><p>Order parts from vendors and receive them into inventory.</p></div>
+                <button class="secondary-button compact" type="button" id="purchase-orders-new">New order</button>
+              </div>
+              <div class="vehicles-toolbar">
+                <label class="field full">
+                  Status
+                  <select id="purchase-orders-status-filter">
+                    <option value="">All statuses</option>
+                    <option value="draft">Draft</option>
+                    <option value="submitted">Submitted</option>
+                    <option value="partially_received">Partially received</option>
+                    <option value="received">Received</option>
+                    <option value="cancelled">Cancelled</option>
+                  </select>
+                </label>
+                <button class="secondary-button compact" type="button" id="purchase-orders-refresh">Refresh</button>
+              </div>
+              <div id="purchase-orders-list" class="customers-list" aria-live="polite"></div>
+              <div class="customers-pagination">
+                <button class="secondary-button compact" type="button" id="purchase-orders-prev">Previous</button>
+                <span id="purchase-orders-page-status">Page 1</span>
+                <button class="secondary-button compact" type="button" id="purchase-orders-next">Next</button>
+              </div>
+            </section>
+
+            <section class="customers-detail-stack">
+              <section class="panel" id="purchase-orders-detail-panel">
+                <div class="panel-heading">
+                  <div><span class="section-kicker"><i></i> Detail view</span><h3>Selected order</h3></div>
+                  <div class="customers-form-actions">
+                    <button class="text-button" type="button" id="purchase-orders-submit">Submit</button>
+                    <button class="text-button" type="button" id="purchase-orders-cancel-order">Cancel order</button>
+                  </div>
+                </div>
+                <div id="purchase-orders-detail" class="customer-detail-card">
+                  <p>Select an order from the list or create a new one.</p>
+                </div>
+                <div id="purchase-orders-receive-panel" hidden>
+                  <div class="form-grid three">
+                    <label class="field">Line item <select id="purchase-orders-receive-line-item"></select></label>
+                    <label class="field">Quantity received <input id="purchase-orders-receive-quantity" type="number" min="1"></label>
+                    <label class="field">Note (optional) <input id="purchase-orders-receive-note" maxlength="2000"></label>
+                  </div>
+                  <div class="estimate-submit-row">
+                    <div><strong>Receive parts</strong><span>Increases on-hand inventory for the received quantity.</span></div>
+                    <button class="secondary-button compact" type="button" id="purchase-orders-receive-submit">Receive</button>
+                  </div>
+                </div>
+                <div id="purchase-orders-receipts" class="customer-history-section"></div>
+              </section>
+
+              <form class="panel estimate-form-panel" id="purchase-orders-form">
+                <div class="panel-heading">
+                  <div><span class="section-kicker"><i></i> Record editor</span><h3>Create purchase order</h3></div>
+                </div>
+                <fieldset>
+                  <legend><span>01</span> Vendor</legend>
+                  <div class="form-grid two">
+                    <label class="field">Vendor <select id="purchase-orders-vendor-id"><option value="">Select a vendor</option></select></label>
+                  </div>
+                  <label class="field full">Notes <textarea id="purchase-orders-notes" maxlength="4000"></textarea></label>
+                </fieldset>
+                <fieldset>
+                  <legend><span>02</span> Line items</legend>
+                  <div class="form-grid three">
+                    <label class="field">Part <select id="purchase-orders-item-part-id"><option value="">Select a part</option></select></label>
+                    <label class="field">Quantity <input id="purchase-orders-item-quantity" type="number" min="1"></label>
+                    <label class="field">Unit cost <input id="purchase-orders-item-unit-cost" type="number" min="0" step="0.01"></label>
+                  </div>
+                  <div class="estimate-submit-row">
+                    <div><strong>Add line item</strong><span>Items are added to the order below.</span></div>
+                    <button class="secondary-button compact" type="button" id="purchase-orders-item-add">Add item</button>
+                  </div>
+                  <div id="purchase-orders-items-list" class="customer-history-section"></div>
+                </fieldset>
+                <div class="estimate-submit-row">
+                  <div><strong id="purchase-orders-form-status-title">Purchase order</strong><span id="purchase-orders-form-status-detail">Create a draft order with at least one line item.</span></div>
+                  <div class="customers-form-actions">
+                    <button class="text-button" type="button" id="purchase-orders-form-clear">Clear</button>
+                    <button class="primary-button compact" type="submit" id="purchase-orders-save">Create order</button>
                   </div>
                 </div>
               </form>

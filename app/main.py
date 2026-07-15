@@ -191,6 +191,12 @@ from app.models import (
     PartListResponse,
     PartRead,
     PartUpdate,
+    PurchaseOrderCreate,
+    PurchaseOrderListResponse,
+    PurchaseOrderRead,
+    PurchaseOrderReceiptsResponse,
+    PurchaseOrderReceiveRequest,
+    PurchaseOrderStatus,
     ResolvedLocation,
     ScheduleBlockCreate,
     ScheduleBlockListResponse,
@@ -249,6 +255,17 @@ from app.part_store import (
     update_part,
 )
 from app.payment_store import PaymentNotFoundError, record_payment, void_payment
+from app.purchase_order_store import (
+    PurchaseOrderNotFoundError,
+    PurchaseOrderStoreError,
+    cancel_purchase_order,
+    create_purchase_order,
+    get_purchase_order,
+    list_purchase_order_receipts,
+    list_purchase_orders,
+    receive_purchase_order_line_item,
+    submit_purchase_order,
+)
 from app.rate_limit import RateLimiter, RateLimitExceeded, RedisSlidingWindowRateLimiter
 from app.scheduling_store import (
     SchedulingConflictError,
@@ -1409,6 +1426,156 @@ async def archive_part_record(
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Part storage is unavailable.",
+        ) from exc
+
+
+@app.post("/api/purchase-orders", response_model=PurchaseOrderRead)
+async def create_purchase_order_record(
+    payload: PurchaseOrderCreate,
+    db: DbSessionDep,
+    auth: OwnerAuthContextDep,
+) -> PurchaseOrderRead:
+    try:
+        return create_purchase_order(db=db, auth=auth, payload=payload)
+    except PurchaseOrderStoreError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Purchase order creation failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Purchase order storage is unavailable.",
+        ) from exc
+
+
+@app.get("/api/purchase-orders", response_model=PurchaseOrderListResponse)
+async def list_purchase_order_records(
+    db: DbSessionDep,
+    settings: SettingsDep,
+    auth: OwnerAuthContextDep,
+    page: int = Query(default=1),
+    page_size: int = Query(default=20),
+    status_filter: PurchaseOrderStatus | None = None,
+    vendor_id: int | None = Query(default=None, ge=1),
+) -> PurchaseOrderListResponse:
+    try:
+        return list_purchase_orders(
+            db=db,
+            auth=auth,
+            settings=settings,
+            page=page,
+            page_size=page_size,
+            status=status_filter,
+            vendor_id=vendor_id,
+        )
+    except PurchaseOrderStoreError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Purchase order listing failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Purchase order storage is unavailable.",
+        ) from exc
+
+
+@app.get("/api/purchase-orders/{purchase_order_id}", response_model=PurchaseOrderRead)
+async def get_purchase_order_record(
+    purchase_order_id: int,
+    db: DbSessionDep,
+    auth: OwnerAuthContextDep,
+) -> PurchaseOrderRead:
+    try:
+        return get_purchase_order(db=db, auth=auth, purchase_order_id=purchase_order_id)
+    except PurchaseOrderNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Purchase order retrieval failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Purchase order storage is unavailable.",
+        ) from exc
+
+
+@app.post("/api/purchase-orders/{purchase_order_id}/submit", response_model=PurchaseOrderRead)
+async def submit_purchase_order_record(
+    purchase_order_id: int,
+    db: DbSessionDep,
+    auth: OwnerAuthContextDep,
+) -> PurchaseOrderRead:
+    try:
+        return submit_purchase_order(db=db, auth=auth, purchase_order_id=purchase_order_id)
+    except PurchaseOrderNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except PurchaseOrderStoreError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Purchase order submission failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Purchase order storage is unavailable.",
+        ) from exc
+
+
+@app.post("/api/purchase-orders/{purchase_order_id}/cancel", response_model=PurchaseOrderRead)
+async def cancel_purchase_order_record(
+    purchase_order_id: int,
+    db: DbSessionDep,
+    auth: OwnerAuthContextDep,
+) -> PurchaseOrderRead:
+    try:
+        return cancel_purchase_order(db=db, auth=auth, purchase_order_id=purchase_order_id)
+    except PurchaseOrderNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except PurchaseOrderStoreError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Purchase order cancellation failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Purchase order storage is unavailable.",
+        ) from exc
+
+
+@app.post("/api/purchase-orders/{purchase_order_id}/receive", response_model=PurchaseOrderRead)
+async def receive_purchase_order_record(
+    purchase_order_id: int,
+    payload: PurchaseOrderReceiveRequest,
+    db: DbSessionDep,
+    auth: OwnerAuthContextDep,
+) -> PurchaseOrderRead:
+    try:
+        return receive_purchase_order_line_item(
+            db=db, auth=auth, purchase_order_id=purchase_order_id, payload=payload
+        )
+    except PurchaseOrderNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except PurchaseOrderStoreError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Purchase order receiving failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Purchase order storage is unavailable.",
+        ) from exc
+
+
+@app.get(
+    "/api/purchase-orders/{purchase_order_id}/receipts",
+    response_model=PurchaseOrderReceiptsResponse,
+)
+async def list_purchase_order_receipt_records(
+    purchase_order_id: int,
+    db: DbSessionDep,
+    auth: OwnerAuthContextDep,
+) -> PurchaseOrderReceiptsResponse:
+    try:
+        return list_purchase_order_receipts(db=db, auth=auth, purchase_order_id=purchase_order_id)
+    except PurchaseOrderNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Purchase order receipt listing failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Purchase order storage is unavailable.",
         ) from exc
 
 
