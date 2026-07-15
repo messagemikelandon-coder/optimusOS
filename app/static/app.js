@@ -122,6 +122,9 @@ const state = {
     statusFilter: "",
     draftItems: [],
   },
+  partAllocations: {
+    items: [],
+  },
   estimates: {
     selectedEstimateId: null,
     selectedEstimate: null,
@@ -2706,6 +2709,7 @@ function renderWorkOrderDetail(workOrder = null) {
         <section class="result-section"><h3>Approved revision</h3><p>${escapeHtml(workOrder.source_revision.request.job)}</p><p>${money(workOrder.source_revision.estimate.totals.estimated_total)} · revision ${workOrder.source_revision.revision_number}</p></section>
         <section class="result-section"><h3>Status history</h3><ul>${history}</ul></section>
         <section class="result-section"><h3>Notes</h3><ul>${notes}</ul></section>
+        <section class="result-section"><h3>Parts</h3><ul id="work-order-parts-list"><li>Loading…</li></ul></section>
         <section class="result-section"><h3>Blocked transitions</h3><ul>${blocked.map(([status, reason]) => `<li><strong>${escapeHtml(workOrderStatusLabel(status))}</strong> · ${escapeHtml(reason)}</li>`).join("") || "<li>None.</li>"}</ul></section>
       </div>
       <div class="detail-rail">
@@ -2765,6 +2769,7 @@ async function selectWorkOrder(workOrderId) {
     state.workOrders.selectedWorkOrderId = data.id;
     state.workOrders.selectedWorkOrder = data;
     renderWorkOrderDetail(data);
+    void loadPartAllocationsForWorkOrder(workOrderId);
   } catch (error) {
     showToast(`Work-order load failed: ${error.message}`, "error");
   }
@@ -2977,6 +2982,107 @@ async function submitWorkOrderNote(event) {
   }
 }
 
+function renderPartAllocationsList() {
+  const list = $("work-order-parts-list");
+  const actionSelect = $("work-order-part-action-allocation");
+  if (!state.partAllocations.items.length) {
+    list.innerHTML = "<li>No part requirements recorded yet.</li>";
+    actionSelect.innerHTML = "";
+    return;
+  }
+  list.innerHTML = state.partAllocations.items.map((item) => `
+    <li><strong>${escapeHtml(item.part_number)}</strong> — ${escapeHtml(item.part_description)}<br>
+    <small>Required ${item.quantity_required} · Allocated ${item.quantity_allocated} · Used ${item.quantity_used} · Returned ${item.quantity_returned}</small></li>
+  `).join("");
+  actionSelect.innerHTML = state.partAllocations.items.map((item) => (
+    `<option value="${item.id}">${escapeHtml(item.part_number)} (req ${item.quantity_required}, alloc ${item.quantity_allocated})</option>`
+  )).join("");
+}
+
+async function loadPartAllocationsForWorkOrder(workOrderId) {
+  void loadPartOptionsInto("work-order-part-id");
+  try {
+    const response = await apiFetch(`/api/work-orders/${workOrderId}/part-allocations`);
+    const data = await readApiPayload(response);
+    if (!response.ok || !data) throw apiError(response, data, "Part allocation listing failed");
+    state.partAllocations.items = data.items;
+    renderPartAllocationsList();
+  } catch (error) {
+    showToast(`Part allocation listing failed: ${error.message}`, "error");
+  }
+}
+
+async function submitAddPartRequirement(event) {
+  event.preventDefault();
+  const workOrderId = $("work-order-id").value.trim();
+  const partId = $("work-order-part-id").value;
+  const quantityRequired = Number($("work-order-part-quantity-required").value);
+  if (!workOrderId) {
+    showToast("Select a work order first.", "error");
+    return;
+  }
+  if (!partId) {
+    showToast("Select a part first.", "error");
+    return;
+  }
+  if (!quantityRequired || quantityRequired < 1) {
+    showToast("Enter a quantity required of 1 or more.", "error");
+    return;
+  }
+  try {
+    const response = await apiFetch(`/api/work-orders/${workOrderId}/part-allocations`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ part_id: Number(partId), quantity_required: quantityRequired }),
+    });
+    const data = await readApiPayload(response);
+    if (!response.ok || !data) throw apiError(response, data, "Add part failed");
+    $("work-order-part-quantity-required").value = "";
+    await loadPartAllocationsForWorkOrder(Number(workOrderId));
+    showToast("Part requirement added.", "success");
+  } catch (error) {
+    showToast(`Add part failed: ${error.message}`, "error");
+  }
+}
+
+async function submitPartAction(event) {
+  event.preventDefault();
+  const workOrderId = $("work-order-id").value.trim();
+  const allocationId = $("work-order-part-action-allocation").value;
+  const actionType = $("work-order-part-action-type").value;
+  const quantity = Number($("work-order-part-action-quantity").value);
+  if (!allocationId) {
+    showToast("No part requirement selected.", "error");
+    return;
+  }
+  if (!quantity || quantity < 1) {
+    showToast("Enter a quantity of 1 or more.", "error");
+    return;
+  }
+  const endpointByAction = { allocate: "allocate", use: "use", return: "return" };
+  const payload = { quantity };
+  if (actionType === "allocate") {
+    payload.override = $("work-order-part-action-override").checked;
+    payload.override_reason = $("work-order-part-action-override-reason").value.trim() || null;
+  }
+  try {
+    const response = await apiFetch(`/api/part-allocations/${allocationId}/${endpointByAction[actionType]}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const data = await readApiPayload(response);
+    if (!response.ok || !data) throw apiError(response, data, "Part action failed");
+    $("work-order-part-action-quantity").value = "";
+    $("work-order-part-action-override").checked = false;
+    $("work-order-part-action-override-reason").value = "";
+    await loadPartAllocationsForWorkOrder(Number(workOrderId));
+    showToast(`Part ${actionType === "allocate" ? "allocated" : actionType === "use" ? "marked used" : "returned"}.`, "success");
+  } catch (error) {
+    showToast(`Part action failed: ${error.message}`, "error");
+  }
+}
+
 async function openEstimateForSelectedWorkOrder() {
   const estimateId = state.workOrders.selectedWorkOrder?.estimate_id;
   if (!estimateId) return;
@@ -3046,6 +3152,15 @@ function initializeWorkOrders() {
   });
   $("work-order-note-form").addEventListener("submit", (event) => {
     void submitWorkOrderNote(event);
+  });
+  $("work-order-part-add-form").addEventListener("submit", (event) => {
+    void submitAddPartRequirement(event);
+  });
+  $("work-order-part-action-form").addEventListener("submit", (event) => {
+    void submitPartAction(event);
+  });
+  $("work-order-part-action-type").addEventListener("change", () => {
+    $("work-order-part-override-row").hidden = $("work-order-part-action-type").value !== "allocate";
   });
   $("work-order-open-estimate").addEventListener("click", () => {
     void openEstimateForSelectedWorkOrder();
@@ -4561,7 +4676,7 @@ async function loadPartOptionsInto(selectId) {
   if (!select) return;
   const currentValue = select.value;
   try {
-    const response = await apiFetch("/api/parts?page=1&page_size=200&archived=false");
+    const response = await apiFetch("/api/parts?page=1&page_size=100&archived=false");
     const data = await readApiPayload(response);
     if (!response.ok || !data) throw apiError(response, data, "Part options failed");
     select.innerHTML = ['<option value="">Select a part</option>', ...data.items.map((part) => (

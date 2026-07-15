@@ -1302,6 +1302,90 @@ class PurchaseOrderReceipt(Base):
     )
 
 
+class PartAllocation(Base):
+    __tablename__ = "part_allocations"
+    __table_args__ = (
+        CheckConstraint("quantity_required > 0", name="ck_part_allocations_required_positive"),
+        CheckConstraint(
+            "quantity_allocated >= 0", name="ck_part_allocations_allocated_non_negative"
+        ),
+        CheckConstraint("quantity_used >= 0", name="ck_part_allocations_used_non_negative"),
+        CheckConstraint("quantity_returned >= 0", name="ck_part_allocations_returned_non_negative"),
+        CheckConstraint(
+            "quantity_used <= quantity_allocated", name="ck_part_allocations_used_le_allocated"
+        ),
+        CheckConstraint(
+            "quantity_returned <= quantity_used", name="ck_part_allocations_returned_le_used"
+        ),
+        Index("ix_part_allocations_owner_work_order", "owner_user_id", "work_order_id"),
+        Index("ix_part_allocations_part", "part_id"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    owner_user_id: Mapped[int] = mapped_column(
+        ForeignKey("user_accounts.id", ondelete="CASCADE"), nullable=False
+    )
+    work_order_id: Mapped[int] = mapped_column(
+        ForeignKey("work_orders.id", ondelete="CASCADE"), nullable=False
+    )
+    part_id: Mapped[int] = mapped_column(
+        ForeignKey("parts.id", ondelete="RESTRICT"), nullable=False
+    )
+    quantity_required: Mapped[int] = mapped_column(nullable=False)
+    quantity_allocated: Mapped[int] = mapped_column(nullable=False, default=0, server_default="0")
+    quantity_used: Mapped[int] = mapped_column(nullable=False, default=0, server_default="0")
+    quantity_returned: Mapped[int] = mapped_column(nullable=False, default=0, server_default="0")
+    unit_cost_snapshot: Mapped[Decimal | None] = mapped_column(Numeric(10, 2))
+    created_by_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("user_accounts.id", ondelete="SET NULL"), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+
+    part: Mapped[Part] = relationship()
+
+
+class PartAllocationEvent(Base):
+    __tablename__ = "part_allocation_events"
+    __table_args__ = (
+        CheckConstraint(
+            "event_type IN ('allocated', 'used', 'returned')",
+            name="ck_part_allocation_events_type",
+        ),
+        CheckConstraint(
+            "actor_type IN ('owner', 'technician')",
+            name="ck_part_allocation_events_actor_type",
+        ),
+        Index("ix_part_allocation_events_allocation_created", "allocation_id", "created_at"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    allocation_id: Mapped[int] = mapped_column(
+        ForeignKey("part_allocations.id", ondelete="CASCADE"), nullable=False
+    )
+    owner_user_id: Mapped[int] = mapped_column(
+        ForeignKey("user_accounts.id", ondelete="CASCADE"), nullable=False
+    )
+    event_type: Mapped[str] = mapped_column(String(20), nullable=False)
+    quantity_delta: Mapped[int] = mapped_column(nullable=False)
+    actor_type: Mapped[str] = mapped_column(String(20), nullable=False)
+    actor_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("user_accounts.id", ondelete="SET NULL"), nullable=True
+    )
+    actor_name: Mapped[str | None] = mapped_column(String(160))
+    inventory_override: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
+    override_reason: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
 class IntakeRequest(Base):
     __tablename__ = "intake_requests"
     __table_args__ = (
