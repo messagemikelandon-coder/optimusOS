@@ -528,10 +528,14 @@
 
           <div class="health-grid" id="dashboard-health">
             <div class="gauge-card" data-gauge="gross_profit_margin">
-              <div class="gauge-ring gauge-ring-unavailable" aria-hidden="true">
-                <svg viewBox="0 0 64 64"><circle cx="32" cy="32" r="27"></circle></svg>
+              <div class="gauge-ring" aria-hidden="true">
+                <svg viewBox="0 0 64 64">
+                  <circle class="gauge-track" cx="32" cy="32" r="27"></circle>
+                  <circle class="gauge-value" data-role="ring" cx="32" cy="32" r="27" pathLength="100" stroke-dasharray="100 100" stroke-dashoffset="100"></circle>
+                </svg>
+                <strong data-role="ring-label">—</strong>
               </div>
-              <div><span class="metric-label">Gross Profit Margin</span><p class="metric-unavailable" data-role="unavailable"></p></div>
+              <div><span class="metric-label">Gross Profit Margin</span><p class="metric-unavailable" data-role="unavailable" hidden></p></div>
             </div>
             <div class="gauge-card" data-gauge="approval_conversion_rate">
               <div class="gauge-ring" aria-hidden="true">
@@ -2087,6 +2091,19 @@
                 <table class="report-table">
                   <thead><tr><th>Technician</th><th>Clocked hours</th><th>Labor cost</th></tr></thead>
                   <tbody id="reports-technician-time-table"><tr><td colspan="3">Loading…</td></tr></tbody>
+                </table>
+              </section>
+
+              <section class="report-card">
+                <h3>Inventory valuation</h3>
+                <p class="report-card-note" id="reports-inventory-valuation-note">Loading… (current stock on hand, not date-ranged)</p>
+                <table class="report-table">
+                  <tbody id="reports-inventory-valuation-table"><tr><td colspan="2">Loading…</td></tr></tbody>
+                </table>
+                <p class="report-card-note report-table-subhead">Low stock (at or below reorder threshold)</p>
+                <table class="report-table">
+                  <thead><tr><th>Part</th><th>On hand / threshold</th><th>Vendor</th></tr></thead>
+                  <tbody id="reports-low-stock-table"><tr><td colspan="3">Loading…</td></tr></tbody>
                 </table>
               </section>
             </div>

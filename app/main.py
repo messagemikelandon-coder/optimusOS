@@ -177,6 +177,7 @@ from app.models import (
     IntakeRequestListResponse,
     IntakeRequestRead,
     IntakeRequestUpdate,
+    InventoryValuationReportResponse,
     InvoiceIssueRequest,
     InvoiceListResponse,
     InvoicePaymentCreate,
@@ -287,7 +288,11 @@ from app.purchase_order_store import (
     submit_purchase_order,
 )
 from app.rate_limit import RateLimiter, RateLimitExceeded, RedisSlidingWindowRateLimiter
-from app.report_store import get_payment_activity_report, get_technician_time_report
+from app.report_store import (
+    get_inventory_valuation_report,
+    get_payment_activity_report,
+    get_technician_time_report,
+)
 from app.scheduling_store import (
     SchedulingConflictError,
     SchedulingNotFoundError,
@@ -3156,6 +3161,21 @@ async def get_technician_time_report_record(
         )
     except SQLAlchemyError as exc:
         logger.warning("Technician time report failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Report storage is unavailable.",
+        ) from exc
+
+
+@app.get("/api/reports/inventory-valuation", response_model=InventoryValuationReportResponse)
+async def get_inventory_valuation_report_record(
+    db: DbSessionDep,
+    auth: OwnerAuthContextDep,
+) -> InventoryValuationReportResponse:
+    try:
+        return get_inventory_valuation_report(db=db, auth=auth)
+    except SQLAlchemyError as exc:
+        logger.warning("Inventory valuation report failed due to storage error.")
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Report storage is unavailable.",

@@ -4,49 +4,53 @@ Purpose: replaceable handoff template for the next substantial Codex/Claude sess
 Information owner: the active session author.
 Read when: starting or resuming work.
 Update when: a substantial task completes or context needs to be handed forward.
-Last verified date: 2026-07-15.
+Last verified date: 2026-07-16.
 Relevant sources: `docs/context/CURRENT_STATE.md`, `docs/context/PLANS.md`, `git log`/`git status`, a full local gate run plus a live proof against a throwaway Postgres container, an independent `optimus-reviewer` pass.
 
 ## Identity
 
-- Updated UTC: 2026-07-15.
+- Updated UTC: 2026-07-16.
 - Agent: Claude.
-- `main` HEAD: `bc56209` (merge of PR #37, Phase 6 Part F Part Allocation slice — closes Part F entirely). Verified via `git fetch origin main`.
-- Worktree used this session: `.claude/worktrees/release-process`, branch `agent/claude/reports-completion`, branched fresh from `origin/main` after Part F fully merged. Not yet pushed or opened as a PR.
+- `main` HEAD: `7c40b19` (merge of PR #38, Phase 6 Part G Slice 1 — Payment Activity + Technician Time reports). Verified via `git log` at session start.
+- Worktree used this session: `.claude/worktrees/release-process`, branch `agent/claude/cost-inventory-reports`, branched fresh from `origin/main` after Slice 1 merged. Not yet committed, pushed, or opened as a PR.
 
 ## Active task
 
-Phase 6 Part G, Slice 1 (Payment Activity + Technician Time/Labor Cost reports) — the first of what will likely be multiple Part G slices, deliberately scoped to only the two reports buildable from existing schema without new instrumentation. **Implemented, independently reviewed (no Critical/High/blocking findings; two Medium/Low findings fixed, one accepted-and-documented — see Evidence below), and live-verified; not yet committed, pushed, or merged.**
+Phase 6 Part G, Slice 2a (Gross Profit/Margin + Inventory Valuation reports) — the second of what will likely be multiple further Part G slices. **Implemented, independently reviewed (no blocking findings; three should-fix findings all fixed before merge, several nice-to-haves noted and accepted, everything else confirmed correct), and live-verified; not yet committed, pushed, or merged.**
 
-- New `app/report_store.py`: `get_payment_activity_report` (cross-invoice payment query with correct reversal netting and `by_method`/`by_applies_to` breakdowns) and `get_technician_time_report` (per-technician clocked hours/labor cost, honest `DashboardMetric(available=False, ...)` disclosures for billed-hours and commission, which genuinely can't be computed from current schema).
-- Two new owner-only routes: `GET /api/reports/payment-activity`, `GET /api/reports/technician-time`, following the existing `get_dashboard_summary_record` template exactly.
-- Frontend: `loadReports()` in `app/static/app.js` extended to fetch and render both; two new report cards in `app/static/index.html`; the "not yet available" disclosure text narrowed to reflect only commission and billed-vs-clocked hours remain unbuilt.
-- Full detail in `docs/context/PLANS.md`'s Phase 6 Part G entry.
+- `app/dashboard_store.py`: new `_period_cogs()` helper computes COGS for a date window by summing `PartAllocation.unit_cost_snapshot × quantity` over `PartAllocationEvent` rows with `event_type='used'`, owner-scoped. `gross_profit` metric (previously permanently hardcoded `available=False`) is now genuinely computed as `revenue − COGS`; `gross_profit_margin` is `available` only when `current.revenue > 0`. Part-usage quantities with no recorded `unit_cost_snapshot` are excluded from the COGS dollar sum (not assigned a fabricated cost) and surfaced via a new LOW-priority `DashboardInsight` (`key="parts-missing-cost-data"`, `link_view="parts"`).
+- New `app/report_store.py::get_inventory_valuation_report`: a point-in-time (not date-ranged) snapshot over non-archived `Part` rows — `total_valuation` sums `quantity_on_hand × unit_cost` only for costed parts, `parts_missing_cost_count` discloses the gap for uncosted parts with stock, `low_stock_parts` lists parts at/below their reorder threshold with vendor name.
+- New owner-only route `GET /api/reports/inventory-valuation`; two new Pydantic models (`LowStockPartRead`, `InventoryValuationReportResponse`) in `app/models.py`.
+- Frontend: the `gross_profit_margin` gauge card's markup upgraded from a permanently-unavailable placeholder to the full renderable gauge structure; `openDashboardInsightTarget` gained a `parts` link-view branch; new "Inventory valuation" report card with a low-stock sub-table in `loadReports()`.
+- `renderGauge` (`app/static/app.js`) fixed during review: the displayed label now reads the raw, unclamped metric value instead of the `[0, 100]`-clamped ring percent, since `gross_profit_margin` (unlike the other two gauges) can legitimately go negative.
+- Full detail in `docs/context/PLANS.md`'s Part G Slice 2a entry; the COGS "usage-period vs invoice-period" approximation is documented as a known, accepted limitation in `docs/context/KNOWN_ISSUES.md`; `docs/context/CURRENT_STATE.md`'s Overview Dashboard honesty-guarantee section corrected to reflect that Gross Profit/Margin are now real.
 
 ## Verified baseline
 
-- `env UV_CACHE_DIR=/tmp/uv-cache uv run ruff format .` → clean (1 file reformatted during the session, then clean).
+- `env UV_CACHE_DIR=/tmp/uv-cache uv run ruff format .` → clean.
 - `env UV_CACHE_DIR=/tmp/uv-cache uv run ruff check .` → all checks passed.
 - `env UV_CACHE_DIR=/tmp/uv-cache uv run pyright` → 0 errors, 0 warnings.
-- `env UV_CACHE_DIR=/tmp/uv-cache uv run pytest -q -rA` → 343 passed, 2 skipped (pre-existing, unrelated — `tests/test_rate_limit.py` needs a real local Redis), 0 failed. Includes 11 new tests in `tests/test_reports_api.py`.
+- `env UV_CACHE_DIR=/tmp/uv-cache uv run pytest -q -rA` → 352 passed, 2 skipped (pre-existing, unrelated — `tests/test_rate_limit.py` needs a real local Redis), 0 failed. Includes 4 new tests in `tests/test_dashboard_api.py` and 5 new tests in `tests/test_reports_api.py`.
 - `node --check app/static/app.js` → OK.
-- No change needed to `tests/test_role_isolation.py::test_every_business_route_is_role_gated_as_expected` — it audits the live FastAPI dependency graph and both new routes correctly defaulted to owner-only with zero manual list maintenance; confirmed passing in the full suite run above.
+- `tests/test_role_isolation.py::test_every_business_route_is_role_gated_as_expected` → passes; the new inventory-valuation route correctly defaulted to owner-only with zero manual list maintenance.
 
 ## Evidence
 
-- **Live-proven against a real, freshly-migrated throwaway Postgres 16 container** (not SQLite, not mocked): spun up a fresh container, ran `alembic upgrade head` (single linear head, `021_part_allocations`), then via a standalone script exercised the real business flow — real login, real approved estimate → work order → invoice, two real payments (one later voided), a real technician with `hourly_cost` set and real `TechnicianTimeEntry` rows (including one still-open entry), and a second real owner account for isolation. Confirmed: payment reversal correctly nets to zero for the voided method while the untouched payment's total and count are unaffected; `by_method`/`by_applies_to` breakdowns match expected values exactly; technician clocked-hours (2.5) and labor cost ($50.00 at $20/hr) computed correctly with the open entry excluded from hours but counted in `open_entry_count`; `billed_hours`/`commission` correctly reported as unavailable; a second owner sees zero payments and zero technicians. Container torn down after.
-- **Independent review (`optimus-reviewer`) findings, fixed before merge**:
-  1. The payment-activity table rendered `by_applies_to` and `by_method` breakdowns as one flat, unseparated list — since both categorize the *same* payments, this risked an owner misreading the two groups as additive and roughly doubling their mental total of collected revenue. Fixed with a sub-header row separating the two groups (`app/static/app.js`, `app/static/styles.css`'s new `.report-table-subhead`).
-  2. `total_labor_cost` was accumulated via an unnecessary `Decimal → float → Decimal` round-trip per technician (numerically safe in practice for realistic shop dollar amounts, but a fragile pattern). Fixed to keep the running total in `Decimal` from the un-rounded product.
-- **Independent review finding, accepted and documented rather than fixed**: `get_technician_time_report` filters on `clock_in_at` falling inside the requested window, not on clock-in/clock-out overlap with the window — a shift that started before `date_from` and ended inside the window has none of its in-window hours counted. Low real-world impact (boundary-spanning shifts are rare in this shop's usage); documented in a code comment, `docs/context/KNOWN_ISSUES.md`, and pinned by a new regression test so the behavior can't silently change unnoticed.
-- **Independent review, confirmed correct with no changes needed**: cross-owner isolation on both reports (including the `Invoice` join in the payment report, verified safe via the FK/ownership chain even though it isn't itself owner-filtered); reversal-netting's reliance on the DB-level `ck_invoice_payments_amount_sign` CHECK constraint plus `payment_store.py::void_payment` always negating (doubly enforced, no path for a non-negative reversal); Decimal/float boundary handling elsewhere in the payment report; the frontend `PaymentAppliesTo` label mapping against the real enum values; all four new DOM ids existing exactly once in `index.html`; no SQLAlchemy identity-map staleness risk (both report queries are standalone reads, not composed with an earlier write in the same request/session).
+- **Live-proven against a real, freshly-migrated throwaway Postgres 16 container** (not SQLite, not mocked): spun up a fresh container, ran `alembic upgrade head` (single linear head, `021_part_allocations`), then via a standalone script exercised the real business flow — real login, real approved estimate → work order → invoice → issued invoice, two real part-usage events (one costed, one uncosted), a second owner account, and a set of parts covering costed/uncosted/low-stock/archived scenarios for the inventory valuation report. Confirmed exact expected arithmetic: gross profit computed to $367.70 ($417.70 revenue − $50.00 costed usage, with a separate $30.00 of usage correctly excluded from COGS due to missing cost data and disclosed via the insight text "3 part unit(s)..."); inventory valuation totaled $140.00 across two costed parts spanning different scenarios, with 2 parts correctly flagged missing-cost, 1 part correctly flagged low-stock with the correct vendor display name, and the archived part correctly excluded from both the total and the low-stock list; a second owner correctly saw zero/empty for both features. Container torn down after.
+- **Independent review (`optimus-reviewer`) findings, all fixed before merge**:
+  1. `docs/context/CURRENT_STATE.md` still claimed Gross Profit/Gross Profit Margin were permanently unavailable — stale given this slice's changes. Corrected.
+  2. The `_period_cogs()` docstring pointed at a `KNOWN_ISSUES.md` disclosure that didn't exist at review time. Added the entry (was added in-session, closing the gap the reviewer flagged).
+  3. `renderGauge` clamped its displayed label to `[0, 100]`, which silently showed "0%" for a real negative gross-profit-margin period instead of the true negative figure (the other two gauges using this widget are mathematically bounded to `[0,100]`; gross-profit-margin is not, given the usage-period COGS approximation). Fixed: the ring visual stays clamped (it can't render past its own bounds), but the label now reads the raw, unclamped value. Pinned by a new backend regression test, `test_dashboard_gross_profit_margin_can_go_negative`, confirming the API itself never clamps.
+- **Independent review, nice-to-have items, accepted without a code change**: no comment on the low-stock sort-order rationale (self-explanatory); `_period_cogs` adds one extra efficient aggregate query per dashboard request (not a perf concern at this shop's scale); no dedicated composite index on `PartAllocationEvent` for the owner/event-type/date filter (fine at single-shop scale); a zero-stock, uncosted part is deliberately excluded from `parts_missing_cost_count` (explicitly tested, consistent design) — flagged as worth confirming with the owner is the intended scope, not treated as a defect.
+- **Independent review, confirmed correct with no changes needed**: `_period_cogs`'s join/aggregation correctness against `PartAllocationEvent`'s append-only `'used'` events (no double-counting across allocate→use→return→use-again); cross-owner isolation on both new queries; Decimal/float boundary handling in both new store functions (matches existing patterns in the same files); the `_use_part` test helper's sequencing against `Part.model_fields_set` semantics; the new route's error-handling pattern; frontend gauge/table wiring for every available/unavailable/empty state.
 
 ## Unverified
 
 - No live/billable OpenAI calls were made (the live-proof script stubbed the research orchestrator the same way the pytest suite does).
 - Not committed, pushed, opened as a PR, or merged — awaiting the next step in this same task.
-- No dedicated `optimus-security-reviewer` pass was run on this change (read-only, owner-scoped, GET-only reporting endpoints — lower risk profile than prior write-path slices, but not independently security-reviewed).
+- No dedicated `optimus-security-reviewer` pass was run on this change (read-only, owner-scoped reporting plus a dashboard computation change — lower risk profile than prior write-path slices, but not independently security-reviewed).
 - CI has not yet run against this branch (no PR opened yet).
+- No live Playwright/browser check of the new gauge label fix or the new report card — verified via `node --check` (syntax only) and code reading, not a rendered DOM.
 
 ## Unrelated preexisting changes
 
@@ -58,11 +62,11 @@ Phase 6 Part G, Slice 1 (Payment Activity + Technician Time/Labor Cost reports) 
 
 ## Exact next task
 
-Commit the Reports Slice 1 changes, push `agent/claude/reports-completion`, open a PR, verify all CI checks pass (`gh pr checks`), and merge with explicit current-turn owner approval (same no-human-review pattern used for prior PRs this session).
+Get explicit current-turn owner approval, then commit the Slice 2a changes, push `agent/claude/cost-inventory-reports`, open a PR, verify all CI checks pass (`gh pr checks`), and merge with explicit current-turn owner approval (same no-human-review pattern used for prior PRs this session).
 
 After that, per the owner's approved roadmap (`docs/context/PLANS.md` Phase 6), the remaining open items are:
 
-- **Part G remainder** — gross-profit/margin (now buildable using Part F's real cost data), cycle-time, comeback rate, parts usage, low-stock, vendor purchasing, diagnostic/inspection findings, inventory valuation, CSV export. Not started; deliberately deferred out of this slice to keep it reviewable.
+- **Part G remainder** — cycle-time, comeback rate (blocked pending an owner decision on what counts as a "comeback"), parts usage, vendor purchasing, diagnostic/inspection findings, CSV export. Not started; deliberately deferred out of this slice to keep it reviewable.
 - **Part H remainder** — threat model, full security-event taxonomy, OpenAI usage/cost logging, customer-data retention/export/deletion policy, monitoring/alerting.
 - **Part I** — staging verification + deployment checklist, including catching the staging droplet up to current `main` (still behind).
 
