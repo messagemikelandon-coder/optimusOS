@@ -1612,6 +1612,52 @@ class InventoryValuationReportResponse(BaseModel):
     low_stock_parts: list[LowStockPartRead]
 
 
+class PartUsageEntryRead(BaseModel):
+    """`cost_total` only sums usage events with a recorded
+    `unit_cost_snapshot`; usage missing one is excluded from the dollar total
+    (not assigned a fabricated cost) and counted in `quantity_missing_cost`
+    instead -- same disclosure pattern as Gross Profit and Inventory
+    Valuation above."""
+
+    part_id: int
+    part_number: str
+    description: str
+    quantity_used: int
+    cost_total: float
+    quantity_missing_cost: int
+
+
+class PartsUsageReportResponse(BaseModel):
+    date_from: datetime
+    date_to: datetime
+    parts: list[PartUsageEntryRead]
+    total_quantity_used: int
+    total_cost: float
+    total_quantity_missing_cost: int
+
+
+class VendorPurchasingBreakdownItem(BaseModel):
+    vendor_id: int
+    vendor_name: str
+    order_count: int
+    total_spend: float
+
+
+class VendorPurchasingReportResponse(BaseModel):
+    """Only purchase orders that were actually submitted (`submitted_at` in
+    the window) count toward spend -- drafts never became a real commitment.
+    Submitted-then-cancelled orders are excluded from spend and counted
+    separately in `cancelled_order_count` rather than counted as real spend
+    that never happened."""
+
+    date_from: datetime
+    date_to: datetime
+    by_vendor: list[VendorPurchasingBreakdownItem]
+    total_spend: float
+    total_orders: int
+    cancelled_order_count: int
+
+
 class VendorBase(BaseModel):
     name: NonBlank = Field(max_length=180)
     contact_name: str | None = Field(default=None, max_length=180)

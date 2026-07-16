@@ -4,28 +4,45 @@ from collections import defaultdict
 from datetime import datetime
 from decimal import Decimal
 
-from sqlalchemy import select
+from sqlalchemy import case, func, select
 from sqlalchemy.orm import Session
 
 from app.auth import AuthContext, effective_owner_id, ensure_utc
-from app.db_models import Invoice, InvoicePayment, Part, Technician, TechnicianTimeEntry, Vendor
+from app.db_models import (
+    Invoice,
+    InvoicePayment,
+    Part,
+    PartAllocation,
+    PartAllocationEvent,
+    PurchaseOrder,
+    Technician,
+    TechnicianTimeEntry,
+    Vendor,
+)
 from app.models import (
     DashboardMetric,
     InventoryValuationReportResponse,
     LowStockPartRead,
+    PartsUsageReportResponse,
+    PartUsageEntryRead,
     PaymentActivityBreakdownItem,
     PaymentActivityEntryRead,
     PaymentActivityReportResponse,
     PaymentAppliesTo,
+    PurchaseOrderStatus,
     TechnicianTimeReportResponse,
     TechnicianTimeSummaryRead,
+    VendorPurchasingBreakdownItem,
+    VendorPurchasingReportResponse,
 )
 from app.technician_store import display_name as technician_display_name
 
 __all__ = [
     "get_inventory_valuation_report",
+    "get_parts_usage_report",
     "get_payment_activity_report",
     "get_technician_time_report",
+    "get_vendor_purchasing_report",
 ]
 
 
@@ -225,4 +242,163 @@ def get_inventory_valuation_report(
         parts_counted=len(parts),
         parts_missing_cost_count=parts_missing_cost_count,
         low_stock_parts=low_stock_parts,
+    )
+
+
+def get_parts_usage_report(
+    *, db: Session, auth: AuthContext, date_from: datetime, date_to: datetime
+) -> PartsUsageReportResponse:
+    """Per-part breakdown of the same "used" `PartAllocationEvent` data source
+    that feeds the dashboard's Gross Profit COGS figure -- see
+    `dashboard_store.py::_period_cogs` for the shared usage-period-approximation
+    caveat (documented in `KNOWN_ISSUES.md`). The totals won't always tie out
+    to the penny with `_period_cogs`, though: this function uses this file's
+    `date_to` convention (exclusive, `<`, matching every other report here)
+    rather than `_period_cogs`'s inclusive `<=`, so an event landing exactly
+    on `date_to` can appear in one and not the other. Usage with no recorded
+    `unit_cost_snapshot` is excluded from `cost_total` rather than assigned a
+    fabricated cost, and counted separately in `quantity_missing_cost`."""
+    cost_expr = func.coalesce(
+        func.sum(
+            case(
+                (
+                    PartAllocation.unit_cost_snapshot.is_not(None),
+                    PartAllocationEvent.quantity_delta * PartAllocation.unit_cost_snapshot,
+                ),
+                else_=0,
+            )
+        ),
+        0.0,
+    )
+    missing_cost_expr = func.coalesce(
+        func.sum(
+            case(
+                (PartAllocation.unit_cost_snapshot.is_(None), PartAllocationEvent.quantity_delta),
+                else_=0,
+            )
+        ),
+        0,
+    )
+    quantity_expr = func.coalesce(func.sum(PartAllocationEvent.quantity_delta), 0)
+
+    rows = db.execute(
+        select(
+            Part.id,
+            Part.part_number,
+            Part.description,
+            quantity_expr,
+            cost_expr,
+            missing_cost_expr,
+        )
+        .select_from(PartAllocationEvent)
+        .join(PartAllocation, PartAllocation.id == PartAllocationEvent.allocation_id)
+        .join(Part, Part.id == PartAllocation.part_id)
+        .where(
+            PartAllocation.owner_user_id == effective_owner_id(auth),
+            PartAllocationEvent.event_type == "used",
+            PartAllocationEvent.created_at >= date_from,
+            PartAllocationEvent.created_at < date_to,
+        )
+        .group_by(Part.id, Part.part_number, Part.description)
+    ).all()
+
+    parts: list[PartUsageEntryRead] = []
+    total_quantity_used = 0
+    total_cost = Decimal("0")
+    total_quantity_missing_cost = 0
+    for part_id, part_number, description, quantity, cost, missing_cost in rows:
+        cost_decimal = Decimal(str(cost))
+        parts.append(
+            PartUsageEntryRead(
+                part_id=part_id,
+                part_number=part_number,
+                description=description,
+                quantity_used=int(quantity),
+                cost_total=float(cost_decimal),
+                quantity_missing_cost=int(missing_cost),
+            )
+        )
+        total_quantity_used += int(quantity)
+        total_cost += cost_decimal
+        total_quantity_missing_cost += int(missing_cost)
+
+    # Most-used parts first -- the actionable ordering for a shop owner
+    # scanning this report to see which parts to keep well-stocked.
+    parts.sort(key=lambda p: p.quantity_used, reverse=True)
+
+    return PartsUsageReportResponse(
+        date_from=ensure_utc(date_from),
+        date_to=ensure_utc(date_to),
+        parts=parts,
+        total_quantity_used=total_quantity_used,
+        total_cost=float(total_cost),
+        total_quantity_missing_cost=total_quantity_missing_cost,
+    )
+
+
+def get_vendor_purchasing_report(
+    *, db: Session, auth: AuthContext, date_from: datetime, date_to: datetime
+) -> VendorPurchasingReportResponse:
+    """Only purchase orders that were actually submitted (`submitted_at` in
+    the window) count as spend -- a `draft` PO is never a real commitment.
+    Submitted-then-cancelled orders are excluded from spend and counted
+    separately in `cancelled_order_count` rather than counted as spend that
+    never actually happened.
+
+    Known imprecision: a PO can be cancelled from `partially_received` (see
+    `purchase_order_store.py`'s status transitions), meaning some of its
+    parts were genuinely received -- and paid for -- before the rest was
+    cancelled. This report still excludes the *entire* order's total from
+    spend in that case, since `PurchaseOrder.total` is fixed at creation time
+    and isn't reduced by partial receiving, so there's no reliable
+    already-spent subtotal to report instead. A fully `received` order can
+    never be cancelled afterward (RECEIVED is terminal), so this gap is
+    narrower than it sounds -- only reachable via partial receiving followed
+    by cancellation -- and the disclosed `cancelled_order_count` at least
+    surfaces that something was excluded, rather than hiding it silently."""
+    rows = db.execute(
+        select(
+            PurchaseOrder.vendor_id,
+            Vendor.name,
+            PurchaseOrder.status,
+            PurchaseOrder.total,
+        )
+        .join(Vendor, Vendor.id == PurchaseOrder.vendor_id)
+        .where(
+            PurchaseOrder.owner_user_id == effective_owner_id(auth),
+            PurchaseOrder.submitted_at.is_not(None),
+            PurchaseOrder.submitted_at >= date_from,
+            PurchaseOrder.submitted_at < date_to,
+        )
+    ).all()
+
+    by_vendor: dict[int, tuple[str, Decimal, int]] = {}
+    total_spend = Decimal("0")
+    total_orders = 0
+    cancelled_order_count = 0
+
+    for vendor_id, vendor_name, status, total in rows:
+        if status == PurchaseOrderStatus.CANCELLED.value:
+            cancelled_order_count += 1
+            continue
+        total_orders += 1
+        total_spend += total
+        name, spend, count = by_vendor.get(vendor_id, (vendor_name, Decimal("0"), 0))
+        by_vendor[vendor_id] = (name, spend + total, count + 1)
+
+    breakdown = [
+        VendorPurchasingBreakdownItem(
+            vendor_id=vendor_id, vendor_name=name, order_count=count, total_spend=float(spend)
+        )
+        for vendor_id, (name, spend, count) in by_vendor.items()
+    ]
+    breakdown.sort(key=lambda item: item.total_spend, reverse=True)
+
+    return VendorPurchasingReportResponse(
+        date_from=ensure_utc(date_from),
+        date_to=ensure_utc(date_to),
+        by_vendor=breakdown,
+        total_spend=float(total_spend),
+        total_orders=total_orders,
+        cancelled_order_count=cancelled_order_count,
     )

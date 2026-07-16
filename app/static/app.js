@@ -6184,6 +6184,8 @@ async function loadReports() {
   const technicianTimeTable = $("reports-technician-time-table");
   const inventoryValuationTable = $("reports-inventory-valuation-table");
   const lowStockTable = $("reports-low-stock-table");
+  const partsUsageTable = $("reports-parts-usage-table");
+  const vendorPurchasingTable = $("reports-vendor-purchasing-table");
   [revenueTable, workOrderTable, invoiceStatusTable, balancesTable].forEach((el) => {
     el.innerHTML = "<tr><td colspan=\"2\">Loading…</td></tr>";
   });
@@ -6191,6 +6193,8 @@ async function loadReports() {
   technicianTimeTable.innerHTML = "<tr><td colspan=\"3\">Loading…</td></tr>";
   inventoryValuationTable.innerHTML = "<tr><td colspan=\"2\">Loading…</td></tr>";
   lowStockTable.innerHTML = "<tr><td colspan=\"3\">Loading…</td></tr>";
+  partsUsageTable.innerHTML = "<tr><td colspan=\"3\">Loading…</td></tr>";
+  vendorPurchasingTable.innerHTML = "<tr><td colspan=\"3\">Loading…</td></tr>";
   const range = dashboardDateRangeFromPreset(30);
   $("reports-period-note").textContent = `${range.from.toLocaleDateString()} – ${range.to.toLocaleDateString()} (last 30 days, same window as the Overview dashboard default)`;
   try {
@@ -6198,23 +6202,29 @@ async function loadReports() {
       date_from: range.from.toISOString(),
       date_to: range.to.toISOString(),
     });
-    const [summaryResponse, invoicesResponse, paymentActivityResponse, technicianTimeResponse, inventoryValuationResponse] = await Promise.all([
+    const [summaryResponse, invoicesResponse, paymentActivityResponse, technicianTimeResponse, inventoryValuationResponse, partsUsageResponse, vendorPurchasingResponse] = await Promise.all([
       apiFetch(`/api/dashboard/summary?${searchParams.toString()}`),
       apiFetch("/api/invoices?page_size=100"),
       apiFetch(`/api/reports/payment-activity?${searchParams.toString()}`),
       apiFetch(`/api/reports/technician-time?${searchParams.toString()}`),
       apiFetch("/api/reports/inventory-valuation"),
+      apiFetch(`/api/reports/parts-usage?${searchParams.toString()}`),
+      apiFetch(`/api/reports/vendor-purchasing?${searchParams.toString()}`),
     ]);
     const summary = await readApiPayload(summaryResponse);
     const invoicesData = await readApiPayload(invoicesResponse);
     const paymentActivity = await readApiPayload(paymentActivityResponse);
     const technicianTime = await readApiPayload(technicianTimeResponse);
     const inventoryValuation = await readApiPayload(inventoryValuationResponse);
+    const partsUsage = await readApiPayload(partsUsageResponse);
+    const vendorPurchasing = await readApiPayload(vendorPurchasingResponse);
     if (!summaryResponse.ok || !summary) throw apiError(summaryResponse, summary, "Dashboard summary failed");
     if (!invoicesResponse.ok || !invoicesData) throw apiError(invoicesResponse, invoicesData, "Invoice listing failed");
     if (!paymentActivityResponse.ok || !paymentActivity) throw apiError(paymentActivityResponse, paymentActivity, "Payment activity report failed");
     if (!technicianTimeResponse.ok || !technicianTime) throw apiError(technicianTimeResponse, technicianTime, "Technician time report failed");
     if (!inventoryValuationResponse.ok || !inventoryValuation) throw apiError(inventoryValuationResponse, inventoryValuation, "Inventory valuation report failed");
+    if (!partsUsageResponse.ok || !partsUsage) throw apiError(partsUsageResponse, partsUsage, "Parts usage report failed");
+    if (!vendorPurchasingResponse.ok || !vendorPurchasing) throw apiError(vendorPurchasingResponse, vendorPurchasing, "Vendor purchasing report failed");
 
     const metricsByKey = new Map(summary.metrics.map((metric) => [metric.key, metric]));
     const revenueRows = [
@@ -6290,6 +6300,22 @@ async function loadReports() {
     lowStockTable.innerHTML = inventoryValuation.low_stock_parts.length
       ? inventoryValuation.low_stock_parts.map((part) => `<tr><td>${escapeHtml(part.part_number)} &mdash; ${escapeHtml(part.description)}</td><td>${part.quantity_on_hand} / ${part.reorder_threshold}</td><td>${escapeHtml(part.vendor_display_name || "—")}</td></tr>`).join("")
       : "<tr><td colspan=\"3\">No parts at or below their reorder threshold.</td></tr>";
+
+    const missingCostUsageNote = partsUsage.total_quantity_missing_cost > 0
+      ? ` ${partsUsage.total_quantity_missing_cost} unit(s) used have no recorded cost and are excluded from the cost total.`
+      : "";
+    $("reports-parts-usage-note").textContent = `${partsUsage.total_quantity_used} unit(s) used, ${money(partsUsage.total_cost)} total cost.${missingCostUsageNote}`;
+    partsUsageTable.innerHTML = partsUsage.parts.length
+      ? partsUsage.parts.map((part) => `<tr><td>${escapeHtml(part.part_number)} &mdash; ${escapeHtml(part.description)}</td><td>${part.quantity_used}</td><td>${money(part.cost_total)}</td></tr>`).join("")
+      : "<tr><td colspan=\"3\">No parts used in this period.</td></tr>";
+
+    const cancelledOrdersNote = vendorPurchasing.cancelled_order_count > 0
+      ? ` ${vendorPurchasing.cancelled_order_count} cancelled order(s) excluded from spend.`
+      : "";
+    $("reports-vendor-purchasing-note").textContent = `${vendorPurchasing.total_orders} order(s), ${money(vendorPurchasing.total_spend)} total spend.${cancelledOrdersNote}`;
+    vendorPurchasingTable.innerHTML = vendorPurchasing.by_vendor.length
+      ? vendorPurchasing.by_vendor.map((item) => `<tr><td>${escapeHtml(item.vendor_name)}</td><td>${item.order_count}</td><td>${money(item.total_spend)}</td></tr>`).join("")
+      : "<tr><td colspan=\"3\">No purchase orders submitted in this period.</td></tr>";
   } catch (error) {
     [revenueTable, workOrderTable, invoiceStatusTable, balancesTable].forEach((el) => {
       el.innerHTML = `<tr><td colspan="2">Failed to load: ${escapeHtml(error.message)}</td></tr>`;
@@ -6298,6 +6324,8 @@ async function loadReports() {
     technicianTimeTable.innerHTML = `<tr><td colspan="3">Failed to load: ${escapeHtml(error.message)}</td></tr>`;
     inventoryValuationTable.innerHTML = `<tr><td colspan="2">Failed to load: ${escapeHtml(error.message)}</td></tr>`;
     lowStockTable.innerHTML = `<tr><td colspan="3">Failed to load: ${escapeHtml(error.message)}</td></tr>`;
+    partsUsageTable.innerHTML = `<tr><td colspan="3">Failed to load: ${escapeHtml(error.message)}</td></tr>`;
+    vendorPurchasingTable.innerHTML = `<tr><td colspan="3">Failed to load: ${escapeHtml(error.message)}</td></tr>`;
     showToast(`Reports load failed: ${error.message}`, "error");
   }
 }
