@@ -18,6 +18,8 @@ from app.db_models import (
     Technician,
     TechnicianTimeEntry,
     Vendor,
+    WorkOrder,
+    WorkOrderStatusEvent,
 )
 from app.models import (
     DashboardMetric,
@@ -34,6 +36,8 @@ from app.models import (
     TechnicianTimeSummaryRead,
     VendorPurchasingBreakdownItem,
     VendorPurchasingReportResponse,
+    WorkOrderCycleTimeReportResponse,
+    WorkOrderStatus,
 )
 from app.technician_store import display_name as technician_display_name
 
@@ -43,6 +47,7 @@ __all__ = [
     "get_payment_activity_report",
     "get_technician_time_report",
     "get_vendor_purchasing_report",
+    "get_work_order_cycle_time_report",
 ]
 
 
@@ -401,4 +406,55 @@ def get_vendor_purchasing_report(
         total_spend=float(total_spend),
         total_orders=total_orders,
         cancelled_order_count=cancelled_order_count,
+    )
+
+
+def get_work_order_cycle_time_report(
+    *, db: Session, auth: AuthContext, date_from: datetime, date_to: datetime
+) -> WorkOrderCycleTimeReportResponse:
+    """`completed` is a terminal `WorkOrder` status (no transition leads out
+    of it), so each work order has at most one `to_status='completed'`
+    status event -- the join below can't fan out or double-count a work
+    order's cycle time."""
+    rows = db.execute(
+        select(WorkOrder.created_at, WorkOrder.is_comeback, WorkOrderStatusEvent.created_at)
+        .join(WorkOrderStatusEvent, WorkOrderStatusEvent.work_order_id == WorkOrder.id)
+        .where(
+            WorkOrderStatusEvent.owner_user_id == effective_owner_id(auth),
+            WorkOrderStatusEvent.to_status == WorkOrderStatus.COMPLETED.value,
+            WorkOrderStatusEvent.created_at >= date_from,
+            WorkOrderStatusEvent.created_at < date_to,
+        )
+    ).all()
+
+    durations_hours = sorted(
+        (completed_at - created_at).total_seconds() / 3600
+        for created_at, _is_comeback, completed_at in rows
+    )
+    comeback_count = sum(1 for _created_at, is_comeback, _completed_at in rows if is_comeback)
+    count = len(rows)
+
+    if count == 0:
+        average = median = fastest = slowest = 0.0
+    else:
+        average = sum(durations_hours) / count
+        fastest = durations_hours[0]
+        slowest = durations_hours[-1]
+        midpoint = count // 2
+        median = (
+            durations_hours[midpoint]
+            if count % 2 == 1
+            else (durations_hours[midpoint - 1] + durations_hours[midpoint]) / 2
+        )
+
+    return WorkOrderCycleTimeReportResponse(
+        date_from=ensure_utc(date_from),
+        date_to=ensure_utc(date_to),
+        completed_work_order_count=count,
+        average_cycle_time_hours=round(average, 2),
+        median_cycle_time_hours=round(median, 2),
+        fastest_cycle_time_hours=round(fastest, 2),
+        slowest_cycle_time_hours=round(slowest, 2),
+        comeback_count=comeback_count,
+        comeback_rate_percent=round((comeback_count / count * 100) if count else 0.0, 1),
     )

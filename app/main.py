@@ -241,6 +241,7 @@ from app.models import (
     WorkingHoursRead,
     WorkingHoursUpdate,
     WorkOrderAssignTechnicianRequest,
+    WorkOrderCycleTimeReportResponse,
     WorkOrderListResponse,
     WorkOrderNoteCreate,
     WorkOrderRead,
@@ -296,6 +297,7 @@ from app.report_store import (
     get_payment_activity_report,
     get_technician_time_report,
     get_vendor_purchasing_report,
+    get_work_order_cycle_time_report,
 )
 from app.scheduling_store import (
     SchedulingConflictError,
@@ -3226,6 +3228,29 @@ async def get_vendor_purchasing_report_record(
         )
     except SQLAlchemyError as exc:
         logger.warning("Vendor purchasing report failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Report storage is unavailable.",
+        ) from exc
+
+
+@app.get("/api/reports/work-order-cycle-time", response_model=WorkOrderCycleTimeReportResponse)
+async def get_work_order_cycle_time_report_record(
+    db: DbSessionDep,
+    auth: OwnerAuthContextDep,
+    date_from: Annotated[datetime | None, Query()] = None,
+    date_to: Annotated[datetime | None, Query()] = None,
+) -> WorkOrderCycleTimeReportResponse:
+    resolved_to = date_to or datetime.now(UTC)
+    resolved_from = date_from or (resolved_to - timedelta(days=30))
+    if resolved_from >= resolved_to:
+        raise HTTPException(status_code=422, detail="date_from must be before date_to.")
+    try:
+        return get_work_order_cycle_time_report(
+            db=db, auth=auth, date_from=resolved_from, date_to=resolved_to
+        )
+    except SQLAlchemyError as exc:
+        logger.warning("Work order cycle time report failed due to storage error.")
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Report storage is unavailable.",
