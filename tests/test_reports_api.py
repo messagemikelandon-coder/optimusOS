@@ -9,8 +9,16 @@ from sqlalchemy.orm import Session
 import app.main as main
 from app.auth import effective_owner_id
 from app.db_models import TechnicianTimeEntry
-from app.models import InvoicePaymentCreate, InvoicePaymentVoidRequest, PaymentAppliesTo
+from app.models import (
+    InvoicePaymentCreate,
+    InvoicePaymentVoidRequest,
+    PaymentAppliesTo,
+    PurchaseOrderCreate,
+    PurchaseOrderLineItemCreate,
+    PurchaseOrderReceiveRequest,
+)
 from tests.test_context_api import auth_context, create_user, login_as, raw_cookie_from_response
+from tests.test_dashboard_api import _use_part
 from tests.test_payments_api import create_completed_work_order_with_invoice, issue
 from tests.test_technicians_api import technician_payload
 from tests.test_vendors_and_parts_api import part_payload, vendor_payload
@@ -491,3 +499,300 @@ async def test_inventory_valuation_report_cross_user_isolation(
     assert other_report.total_valuation == 0.0
     assert other_report.parts_counted == 0
     assert other_report.low_stock_parts == []
+
+
+# ---- Parts usage report ----
+
+
+async def test_parts_usage_report_sums_costed_usage(
+    monkeypatch, settings, db_session: Session
+) -> None:
+    _, response = await login_as(settings, db_session)
+    auth = auth_context(settings, db_session, raw_cookie_from_response(response))
+    await _use_part(
+        monkeypatch, settings, db_session, auth, unit_cost=10.0, quantity=3, vin="1FTFW1ET1EFA00195"
+    )
+
+    report = await main.get_parts_usage_report_record(db_session, auth, None, None)
+
+    assert len(report.parts) == 1
+    entry = report.parts[0]
+    assert entry.quantity_used == 3
+    assert entry.cost_total == pytest.approx(30.0)
+    assert entry.quantity_missing_cost == 0
+    assert report.total_quantity_used == 3
+    assert report.total_cost == pytest.approx(30.0)
+    assert report.total_quantity_missing_cost == 0
+
+
+async def test_parts_usage_report_flags_missing_cost_and_sorts_by_quantity(
+    monkeypatch, settings, db_session: Session
+) -> None:
+    _, response = await login_as(settings, db_session)
+    auth = auth_context(settings, db_session, raw_cookie_from_response(response))
+    await _use_part(
+        monkeypatch, settings, db_session, auth, unit_cost=None, quantity=2, vin="1FTFW1ET1EFA00194"
+    )
+    await _use_part(
+        monkeypatch, settings, db_session, auth, unit_cost=5.0, quantity=6, vin="1FTFW1ET1EFA00193"
+    )
+
+    report = await main.get_parts_usage_report_record(db_session, auth, None, None)
+
+    assert len(report.parts) == 2
+    # Most-used part first, regardless of cost availability.
+    assert report.parts[0].quantity_used == 6
+    assert report.parts[1].quantity_used == 2
+    assert report.parts[1].quantity_missing_cost == 2
+    assert report.parts[1].cost_total == 0.0
+    assert report.total_cost == pytest.approx(30.0)
+    assert report.total_quantity_missing_cost == 2
+
+
+async def test_parts_usage_report_date_range_excludes_out_of_window_usage(
+    monkeypatch, settings, db_session: Session
+) -> None:
+    _, response = await login_as(settings, db_session)
+    auth = auth_context(settings, db_session, raw_cookie_from_response(response))
+    await _use_part(
+        monkeypatch, settings, db_session, auth, unit_cost=10.0, quantity=1, vin="1FTFW1ET1EFA00192"
+    )
+
+    now = datetime.now(UTC)
+    report = await main.get_parts_usage_report_record(
+        db_session, auth, now - timedelta(days=10), now - timedelta(days=5)
+    )
+
+    assert report.parts == []
+    assert report.total_quantity_used == 0
+
+
+async def test_parts_usage_report_invalid_date_range_rejected(
+    settings, db_session: Session
+) -> None:
+    _, response = await login_as(settings, db_session)
+    auth = auth_context(settings, db_session, raw_cookie_from_response(response))
+
+    now = datetime.now(UTC)
+    with pytest.raises(HTTPException) as excinfo:
+        await main.get_parts_usage_report_record(db_session, auth, now, now - timedelta(days=1))
+    assert excinfo.value.status_code == 422
+
+
+async def test_parts_usage_report_cross_user_isolation(
+    monkeypatch, settings, db_session: Session
+) -> None:
+    _, owner_response = await login_as(settings, db_session)
+    owner_auth = auth_context(settings, db_session, raw_cookie_from_response(owner_response))
+    create_user(db_session, username="parts-usage-isolation-other", password="other-password-123")
+    _, other_response = await login_as(
+        settings, db_session, username="parts-usage-isolation-other", password="other-password-123"
+    )
+    other_auth = auth_context(settings, db_session, raw_cookie_from_response(other_response))
+
+    await _use_part(
+        monkeypatch,
+        settings,
+        db_session,
+        owner_auth,
+        unit_cost=10.0,
+        quantity=1,
+        vin="1FTFW1ET1EFA00191",
+    )
+
+    other_report = await main.get_parts_usage_report_record(db_session, other_auth, None, None)
+    assert other_report.parts == []
+    assert other_report.total_quantity_used == 0
+
+
+# ---- Vendor purchasing report ----
+
+
+async def _create_vendor_and_part(
+    db_session: Session, auth, *, vendor_name: str = "AutoZone Commercial"
+):
+    vendor = await main.create_vendor_record(vendor_payload(name=vendor_name), db_session, auth)
+    part = await main.create_part_record(
+        part_payload(part_number=f"VP-{vendor_name[:4]}", vendor_id=vendor.id), db_session, auth
+    )
+    return vendor, part
+
+
+async def _create_and_submit_po(
+    db_session: Session, auth, vendor, part, *, unit_cost: float, quantity: int
+):
+    created = await main.create_purchase_order_record(
+        PurchaseOrderCreate(
+            vendor_id=vendor.id,
+            line_items=[
+                PurchaseOrderLineItemCreate(
+                    part_id=part.id, quantity_ordered=quantity, unit_cost=unit_cost
+                )
+            ],
+        ),
+        db_session,
+        auth,
+    )
+    return await main.submit_purchase_order_record(created.id, db_session, auth)
+
+
+async def test_vendor_purchasing_report_sums_submitted_orders_by_vendor(
+    settings, db_session: Session
+) -> None:
+    _, response = await login_as(settings, db_session)
+    auth = auth_context(settings, db_session, raw_cookie_from_response(response))
+    vendor, part = await _create_vendor_and_part(db_session, auth)
+    await _create_and_submit_po(db_session, auth, vendor, part, unit_cost=10.0, quantity=5)
+    await _create_and_submit_po(db_session, auth, vendor, part, unit_cost=20.0, quantity=2)
+
+    report = await main.get_vendor_purchasing_report_record(db_session, auth, None, None)
+
+    assert report.total_orders == 2
+    assert report.total_spend == pytest.approx(90.0)
+    assert len(report.by_vendor) == 1
+    assert report.by_vendor[0].vendor_id == vendor.id
+    assert report.by_vendor[0].order_count == 2
+    assert report.by_vendor[0].total_spend == pytest.approx(90.0)
+    assert report.cancelled_order_count == 0
+
+
+async def test_vendor_purchasing_report_excludes_drafts_and_discloses_cancelled_orders(
+    settings, db_session: Session
+) -> None:
+    _, response = await login_as(settings, db_session)
+    auth = auth_context(settings, db_session, raw_cookie_from_response(response))
+    vendor, part = await _create_vendor_and_part(db_session, auth)
+
+    # Draft: never submitted, never a real commitment -- excluded entirely.
+    await main.create_purchase_order_record(
+        PurchaseOrderCreate(
+            vendor_id=vendor.id,
+            line_items=[
+                PurchaseOrderLineItemCreate(part_id=part.id, quantity_ordered=1, unit_cost=1.0)
+            ],
+        ),
+        db_session,
+        auth,
+    )
+
+    # Submitted then cancelled -- excluded from spend, counted separately.
+    submitted = await _create_and_submit_po(
+        db_session, auth, vendor, part, unit_cost=50.0, quantity=1
+    )
+    await main.cancel_purchase_order_record(submitted.id, db_session, auth)
+
+    report = await main.get_vendor_purchasing_report_record(db_session, auth, None, None)
+
+    assert report.total_orders == 0
+    assert report.total_spend == 0.0
+    assert report.by_vendor == []
+    assert report.cancelled_order_count == 1
+
+
+async def test_vendor_purchasing_report_counts_received_orders_as_spend(
+    settings, db_session: Session
+) -> None:
+    _, response = await login_as(settings, db_session)
+    auth = auth_context(settings, db_session, raw_cookie_from_response(response))
+    vendor, part = await _create_vendor_and_part(db_session, auth)
+    submitted = await _create_and_submit_po(
+        db_session, auth, vendor, part, unit_cost=10.0, quantity=3
+    )
+    await main.receive_purchase_order_record(
+        submitted.id,
+        PurchaseOrderReceiveRequest(line_item_id=submitted.line_items[0].id, quantity=3),
+        db_session,
+        auth,
+    )
+
+    report = await main.get_vendor_purchasing_report_record(db_session, auth, None, None)
+
+    assert report.total_orders == 1
+    assert report.total_spend == pytest.approx(30.0)
+    assert report.cancelled_order_count == 0
+
+
+async def test_vendor_purchasing_report_partially_received_then_cancelled_excludes_full_total(
+    settings, db_session: Session
+) -> None:
+    """Pins a known, disclosed imprecision (see the docstring on
+    `report_store.get_vendor_purchasing_report`): a PO cancelled from
+    `partially_received` has some real, already-received spend, but this
+    report excludes the order's *entire* total from spend anyway, since
+    `PurchaseOrder.total` isn't reduced by partial receiving. The exclusion
+    is at least surfaced via `cancelled_order_count`, not hidden entirely."""
+    _, response = await login_as(settings, db_session)
+    auth = auth_context(settings, db_session, raw_cookie_from_response(response))
+    vendor, part = await _create_vendor_and_part(db_session, auth)
+    submitted = await _create_and_submit_po(
+        db_session, auth, vendor, part, unit_cost=10.0, quantity=4
+    )
+    partially_received = await main.receive_purchase_order_record(
+        submitted.id,
+        PurchaseOrderReceiveRequest(line_item_id=submitted.line_items[0].id, quantity=2),
+        db_session,
+        auth,
+    )
+    assert partially_received.status == "partially_received"
+    await main.cancel_purchase_order_record(partially_received.id, db_session, auth)
+
+    report = await main.get_vendor_purchasing_report_record(db_session, auth, None, None)
+
+    assert report.total_orders == 0
+    assert report.total_spend == 0.0
+    assert report.cancelled_order_count == 1
+
+
+async def test_vendor_purchasing_report_date_range_excludes_out_of_window_orders(
+    settings, db_session: Session
+) -> None:
+    _, response = await login_as(settings, db_session)
+    auth = auth_context(settings, db_session, raw_cookie_from_response(response))
+    vendor, part = await _create_vendor_and_part(db_session, auth)
+    await _create_and_submit_po(db_session, auth, vendor, part, unit_cost=10.0, quantity=1)
+
+    now = datetime.now(UTC)
+    report = await main.get_vendor_purchasing_report_record(
+        db_session, auth, now - timedelta(days=10), now - timedelta(days=5)
+    )
+
+    assert report.total_orders == 0
+    assert report.by_vendor == []
+
+
+async def test_vendor_purchasing_report_invalid_date_range_rejected(
+    settings, db_session: Session
+) -> None:
+    _, response = await login_as(settings, db_session)
+    auth = auth_context(settings, db_session, raw_cookie_from_response(response))
+
+    now = datetime.now(UTC)
+    with pytest.raises(HTTPException) as excinfo:
+        await main.get_vendor_purchasing_report_record(
+            db_session, auth, now, now - timedelta(days=1)
+        )
+    assert excinfo.value.status_code == 422
+
+
+async def test_vendor_purchasing_report_cross_user_isolation(settings, db_session: Session) -> None:
+    _, owner_response = await login_as(settings, db_session)
+    owner_auth = auth_context(settings, db_session, raw_cookie_from_response(owner_response))
+    create_user(
+        db_session, username="vendor-purchasing-isolation-other", password="other-password-123"
+    )
+    _, other_response = await login_as(
+        settings,
+        db_session,
+        username="vendor-purchasing-isolation-other",
+        password="other-password-123",
+    )
+    other_auth = auth_context(settings, db_session, raw_cookie_from_response(other_response))
+
+    vendor, part = await _create_vendor_and_part(db_session, owner_auth)
+    await _create_and_submit_po(db_session, owner_auth, vendor, part, unit_cost=10.0, quantity=1)
+
+    other_report = await main.get_vendor_purchasing_report_record(
+        db_session, other_auth, None, None
+    )
+    assert other_report.total_orders == 0
+    assert other_report.by_vendor == []
