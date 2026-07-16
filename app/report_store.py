@@ -8,9 +8,11 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.auth import AuthContext, effective_owner_id, ensure_utc
-from app.db_models import Invoice, InvoicePayment, Technician, TechnicianTimeEntry
+from app.db_models import Invoice, InvoicePayment, Part, Technician, TechnicianTimeEntry, Vendor
 from app.models import (
     DashboardMetric,
+    InventoryValuationReportResponse,
+    LowStockPartRead,
     PaymentActivityBreakdownItem,
     PaymentActivityEntryRead,
     PaymentActivityReportResponse,
@@ -20,7 +22,11 @@ from app.models import (
 )
 from app.technician_store import display_name as technician_display_name
 
-__all__ = ["get_payment_activity_report", "get_technician_time_report"]
+__all__ = [
+    "get_inventory_valuation_report",
+    "get_payment_activity_report",
+    "get_technician_time_report",
+]
 
 
 def get_payment_activity_report(
@@ -169,4 +175,54 @@ def get_technician_time_report(
                 "hours) instead of commission."
             ),
         ),
+    )
+
+
+def get_inventory_valuation_report(
+    *, db: Session, auth: AuthContext
+) -> InventoryValuationReportResponse:
+    parts = db.execute(
+        select(Part, Vendor.name)
+        .outerjoin(Vendor, Vendor.id == Part.vendor_id)
+        .where(
+            Part.owner_user_id == effective_owner_id(auth),
+            Part.is_archived.is_(False),
+        )
+    ).all()
+
+    total_valuation = Decimal("0")
+    total_units_on_hand = 0
+    parts_missing_cost_count = 0
+    low_stock_parts: list[LowStockPartRead] = []
+
+    for part, vendor_name in parts:
+        total_units_on_hand += part.quantity_on_hand
+        if part.unit_cost is not None:
+            total_valuation += part.unit_cost * part.quantity_on_hand
+        elif part.quantity_on_hand > 0:
+            # Uncosted parts are excluded from the dollar total rather than
+            # assigned a fabricated cost; counted separately so the gap is
+            # disclosed instead of silently understating the valuation.
+            parts_missing_cost_count += 1
+
+        if part.reorder_threshold is not None and part.quantity_on_hand <= part.reorder_threshold:
+            low_stock_parts.append(
+                LowStockPartRead(
+                    part_id=part.id,
+                    part_number=part.part_number,
+                    description=part.description,
+                    quantity_on_hand=part.quantity_on_hand,
+                    reorder_threshold=part.reorder_threshold,
+                    vendor_display_name=vendor_name,
+                )
+            )
+
+    low_stock_parts.sort(key=lambda p: p.quantity_on_hand - p.reorder_threshold)
+
+    return InventoryValuationReportResponse(
+        total_valuation=float(total_valuation),
+        total_units_on_hand=total_units_on_hand,
+        parts_counted=len(parts),
+        parts_missing_cost_count=parts_missing_cost_count,
+        low_stock_parts=low_stock_parts,
     )

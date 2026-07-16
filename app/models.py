@@ -1589,6 +1589,29 @@ class TechnicianTimeReportResponse(BaseModel):
     commission: DashboardMetric
 
 
+class LowStockPartRead(BaseModel):
+    part_id: int
+    part_number: str
+    description: str
+    quantity_on_hand: int
+    reorder_threshold: int
+    vendor_display_name: str | None = None
+
+
+class InventoryValuationReportResponse(BaseModel):
+    """A point-in-time snapshot (not date-ranged, unlike the other reports --
+    inventory valuation reflects current stock, not activity over a period).
+    `total_valuation` only sums parts with a recorded `unit_cost`; parts
+    missing one are excluded from the dollar total (not assigned a
+    fabricated cost) and counted in `parts_missing_cost_count` instead."""
+
+    total_valuation: float
+    total_units_on_hand: int
+    parts_counted: int
+    parts_missing_cost_count: int
+    low_stock_parts: list[LowStockPartRead]
+
+
 class VendorBase(BaseModel):
     name: NonBlank = Field(max_length=180)
     contact_name: str | None = Field(default=None, max_length=180)

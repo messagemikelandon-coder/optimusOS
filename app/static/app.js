@@ -6182,11 +6182,15 @@ async function loadReports() {
   const balancesTable = $("reports-balances-table");
   const paymentActivityTable = $("reports-payment-activity-table");
   const technicianTimeTable = $("reports-technician-time-table");
+  const inventoryValuationTable = $("reports-inventory-valuation-table");
+  const lowStockTable = $("reports-low-stock-table");
   [revenueTable, workOrderTable, invoiceStatusTable, balancesTable].forEach((el) => {
     el.innerHTML = "<tr><td colspan=\"2\">Loading…</td></tr>";
   });
   paymentActivityTable.innerHTML = "<tr><td colspan=\"2\">Loading…</td></tr>";
   technicianTimeTable.innerHTML = "<tr><td colspan=\"3\">Loading…</td></tr>";
+  inventoryValuationTable.innerHTML = "<tr><td colspan=\"2\">Loading…</td></tr>";
+  lowStockTable.innerHTML = "<tr><td colspan=\"3\">Loading…</td></tr>";
   const range = dashboardDateRangeFromPreset(30);
   $("reports-period-note").textContent = `${range.from.toLocaleDateString()} – ${range.to.toLocaleDateString()} (last 30 days, same window as the Overview dashboard default)`;
   try {
@@ -6194,20 +6198,23 @@ async function loadReports() {
       date_from: range.from.toISOString(),
       date_to: range.to.toISOString(),
     });
-    const [summaryResponse, invoicesResponse, paymentActivityResponse, technicianTimeResponse] = await Promise.all([
+    const [summaryResponse, invoicesResponse, paymentActivityResponse, technicianTimeResponse, inventoryValuationResponse] = await Promise.all([
       apiFetch(`/api/dashboard/summary?${searchParams.toString()}`),
       apiFetch("/api/invoices?page_size=100"),
       apiFetch(`/api/reports/payment-activity?${searchParams.toString()}`),
       apiFetch(`/api/reports/technician-time?${searchParams.toString()}`),
+      apiFetch("/api/reports/inventory-valuation"),
     ]);
     const summary = await readApiPayload(summaryResponse);
     const invoicesData = await readApiPayload(invoicesResponse);
     const paymentActivity = await readApiPayload(paymentActivityResponse);
     const technicianTime = await readApiPayload(technicianTimeResponse);
+    const inventoryValuation = await readApiPayload(inventoryValuationResponse);
     if (!summaryResponse.ok || !summary) throw apiError(summaryResponse, summary, "Dashboard summary failed");
     if (!invoicesResponse.ok || !invoicesData) throw apiError(invoicesResponse, invoicesData, "Invoice listing failed");
     if (!paymentActivityResponse.ok || !paymentActivity) throw apiError(paymentActivityResponse, paymentActivity, "Payment activity report failed");
     if (!technicianTimeResponse.ok || !technicianTime) throw apiError(technicianTimeResponse, technicianTime, "Technician time report failed");
+    if (!inventoryValuationResponse.ok || !inventoryValuation) throw apiError(inventoryValuationResponse, inventoryValuation, "Inventory valuation report failed");
 
     const metricsByKey = new Map(summary.metrics.map((metric) => [metric.key, metric]));
     const revenueRows = [
@@ -6270,12 +6277,27 @@ async function loadReports() {
           return `<tr><td>${escapeHtml(tech.technician_display_name)}</td><td>${tech.clocked_hours}${openNote}</td><td>${tech.labor_cost !== null ? money(tech.labor_cost) : "Not available"}</td></tr>`;
         }).join("")
       : "<tr><td colspan=\"3\">No clocked time recorded in this period.</td></tr>";
+
+    const missingCostPartsNote = inventoryValuation.parts_missing_cost_count > 0
+      ? ` ${inventoryValuation.parts_missing_cost_count} part(s) with stock on hand are missing a unit cost and are excluded from the valuation total.`
+      : "";
+    $("reports-inventory-valuation-note").textContent = `Current stock on hand, not date-ranged.${missingCostPartsNote}`;
+    inventoryValuationTable.innerHTML = [
+      ["Total valuation", money(inventoryValuation.total_valuation)],
+      ["Total units on hand", String(inventoryValuation.total_units_on_hand)],
+      ["Parts counted", String(inventoryValuation.parts_counted)],
+    ].map(([label, value]) => `<tr><td>${escapeHtml(label)}</td><td>${value}</td></tr>`).join("");
+    lowStockTable.innerHTML = inventoryValuation.low_stock_parts.length
+      ? inventoryValuation.low_stock_parts.map((part) => `<tr><td>${escapeHtml(part.part_number)} &mdash; ${escapeHtml(part.description)}</td><td>${part.quantity_on_hand} / ${part.reorder_threshold}</td><td>${escapeHtml(part.vendor_display_name || "—")}</td></tr>`).join("")
+      : "<tr><td colspan=\"3\">No parts at or below their reorder threshold.</td></tr>";
   } catch (error) {
     [revenueTable, workOrderTable, invoiceStatusTable, balancesTable].forEach((el) => {
       el.innerHTML = `<tr><td colspan="2">Failed to load: ${escapeHtml(error.message)}</td></tr>`;
     });
     paymentActivityTable.innerHTML = `<tr><td colspan="2">Failed to load: ${escapeHtml(error.message)}</td></tr>`;
     technicianTimeTable.innerHTML = `<tr><td colspan="3">Failed to load: ${escapeHtml(error.message)}</td></tr>`;
+    inventoryValuationTable.innerHTML = `<tr><td colspan="2">Failed to load: ${escapeHtml(error.message)}</td></tr>`;
+    lowStockTable.innerHTML = `<tr><td colspan="3">Failed to load: ${escapeHtml(error.message)}</td></tr>`;
     showToast(`Reports load failed: ${error.message}`, "error");
   }
 }
@@ -6366,9 +6388,14 @@ function renderGauge(key, metric) {
     return;
   }
   if (unavailableEl) unavailableEl.hidden = true;
-  const percent = Math.max(0, Math.min(100, metric.value));
-  if (ring) ring.setAttribute("stroke-dashoffset", String(100 - percent));
-  if (label) label.textContent = `${Math.round(percent)}%`;
+  // The ring visual is clamped to [0, 100] since it can't render outside that
+  // range, but the label always shows the true, unclamped value -- some
+  // gauges (e.g. gross_profit_margin) aren't bounded to [0, 100] the way
+  // approval_conversion_rate/accounts_receivable_health are, and clamping the
+  // label too would silently show "0%" for a real negative-margin period.
+  const ringPercent = Math.max(0, Math.min(100, metric.value));
+  if (ring) ring.setAttribute("stroke-dashoffset", String(100 - ringPercent));
+  if (label) label.textContent = `${Math.round(metric.value)}%`;
 }
 
 function renderDashboardGauges(summary) {
@@ -6481,6 +6508,8 @@ function openDashboardInsightTarget(insight) {
   } else if (insight.link_view === "invoices") {
     navigate("invoices");
     if (insight.link_record_id) void selectInvoice(insight.link_record_id);
+  } else if (insight.link_view === "parts") {
+    navigate("parts");
   }
 }
 

@@ -4,7 +4,7 @@ from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
-from sqlalchemy import func, select
+from sqlalchemy import case, func, select
 from sqlalchemy.orm import Session, selectinload
 
 from app.auth import AuthContext, effective_owner_id, ensure_utc
@@ -12,6 +12,8 @@ from app.db_models import (
     Estimate,
     EstimateApprovalRequest,
     Invoice,
+    PartAllocation,
+    PartAllocationEvent,
     WorkOrder,
     WorkOrderStatusEvent,
 )
@@ -89,6 +91,59 @@ def _period_aggregate(
         count=int(count),
         average=average,
     )
+
+
+def _period_cogs(
+    db: Session, auth: AuthContext, date_from: datetime, date_to: datetime
+) -> tuple[float, int]:
+    """Approximate cost of parts consumed in the period, from Phase 6 Part
+    F's real purchase-cost data: sums quantity x unit_cost_snapshot for every
+    part_allocation_events row marked "used" with created_at in the window.
+
+    This is a *usage-period* approximation, not accrual-matched to invoice
+    revenue in the same window -- a part used on the last day of June but not
+    invoiced until July counts its cost in June's Gross Profit and its
+    revenue in July's. Accepted as directionally useful, not exact accrual
+    accounting; see KNOWN_ISSUES.md.
+
+    Parts used without a recorded `unit_cost_snapshot` (never received
+    through a costed purchase order) are excluded from the cost sum rather
+    than assigned a fabricated cost; their quantity is returned separately so
+    the caller can disclose the gap instead of silently understating COGS."""
+    cost_expr = func.coalesce(
+        func.sum(
+            case(
+                (
+                    PartAllocation.unit_cost_snapshot.is_not(None),
+                    PartAllocationEvent.quantity_delta * PartAllocation.unit_cost_snapshot,
+                ),
+                else_=0,
+            )
+        ),
+        0.0,
+    )
+    missing_cost_quantity_expr = func.coalesce(
+        func.sum(
+            case(
+                (PartAllocation.unit_cost_snapshot.is_(None), PartAllocationEvent.quantity_delta),
+                else_=0,
+            )
+        ),
+        0,
+    )
+    row = db.execute(
+        select(cost_expr, missing_cost_quantity_expr)
+        .select_from(PartAllocationEvent)
+        .join(PartAllocation, PartAllocation.id == PartAllocationEvent.allocation_id)
+        .where(
+            PartAllocation.owner_user_id == effective_owner_id(auth),
+            PartAllocationEvent.event_type == "used",
+            PartAllocationEvent.created_at >= date_from,
+            PartAllocationEvent.created_at <= date_to,
+        )
+    ).one()
+    cogs, missing_cost_quantity = row
+    return float(cogs), int(missing_cost_quantity or 0)
 
 
 def _change_percent(current: float | None, previous: float | None) -> float | None:
@@ -491,6 +546,28 @@ def _declining_average_repair_order_insight(
     ]
 
 
+def _missing_part_cost_insight(missing_cost_quantity: int, now: datetime) -> list[DashboardInsight]:
+    if missing_cost_quantity <= 0:
+        return []
+    return [
+        DashboardInsight(
+            key="parts-missing-cost-data",
+            priority=DashboardInsightPriority.LOW,
+            issue=(
+                f"{missing_cost_quantity} part unit(s) used this period have no recorded "
+                "purchase cost, so Gross Profit is understated by that amount."
+            ),
+            metric=f"{missing_cost_quantity} unit(s) missing cost",
+            recommended_action=(
+                "Receive those parts through a Purchase Order so their cost is recorded, "
+                "or set a unit cost directly on the Part record."
+            ),
+            link_view="parts",
+            generated_at=now,
+        )
+    ]
+
+
 def get_dashboard_summary(
     *,
     db: Session,
@@ -505,6 +582,10 @@ def get_dashboard_summary(
 
     current = _period_aggregate(db, auth, date_from, date_to)
     previous = _period_aggregate(db, auth, previous_from, previous_to)
+    current_cogs, current_missing_cost_quantity = _period_cogs(db, auth, date_from, date_to)
+    previous_cogs, _ = _period_cogs(db, auth, previous_from, previous_to)
+    current_gross_profit = current.revenue - current_cogs
+    previous_gross_profit = previous.revenue - previous_cogs
 
     def metric(
         key: str, label: str, current_value: float, previous_value: float | None
@@ -551,15 +632,7 @@ def get_dashboard_summary(
             available=True,
             value=float(operations.awaiting_customer_approval),
         ),
-        DashboardMetric(
-            key="gross_profit",
-            label="Gross Profit",
-            available=False,
-            unavailable_reason=(
-                "Connect parts-cost (COGS) tracking to display this metric. "
-                "OptimusOS currently tracks customer-facing parts revenue, not wholesale part cost."
-            ),
-        ),
+        metric("gross_profit", "Gross Profit", current_gross_profit, previous_gross_profit),
         DashboardMetric(
             key="net_profit",
             label="Net Profit",
@@ -591,11 +664,25 @@ def get_dashboard_summary(
         else []
     )
 
-    gross_profit_margin = DashboardMetric(
-        key="gross_profit_margin",
-        label="Gross Profit Margin",
-        available=False,
-        unavailable_reason="Connect parts-cost (COGS) tracking to display this metric.",
+    gross_profit_margin = (
+        DashboardMetric(
+            key="gross_profit_margin",
+            label="Gross Profit Margin",
+            available=True,
+            value=round((current_gross_profit / current.revenue) * 100, 1),
+            previous_value=(
+                round((previous_gross_profit / previous.revenue) * 100, 1)
+                if previous.revenue > 0
+                else None
+            ),
+        )
+        if current.revenue > 0
+        else DashboardMetric(
+            key="gross_profit_margin",
+            label="Gross Profit Margin",
+            available=False,
+            unavailable_reason="No revenue in the selected period.",
+        )
     )
 
     insights = (
@@ -606,6 +693,7 @@ def get_dashboard_summary(
         + _stalled_work_order_insights(db, auth, now)
         + _stalled_approval_insights(db, auth, now)
         + _declining_average_repair_order_insight(current, previous, now)
+        + _missing_part_cost_insight(current_missing_cost_quantity, now)
     )
     priority_order = {
         DashboardInsightPriority.HIGH: 0,
