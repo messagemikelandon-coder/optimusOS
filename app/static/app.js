@@ -6186,6 +6186,7 @@ async function loadReports() {
   const lowStockTable = $("reports-low-stock-table");
   const partsUsageTable = $("reports-parts-usage-table");
   const vendorPurchasingTable = $("reports-vendor-purchasing-table");
+  const cycleTimeTable = $("reports-cycle-time-table");
   [revenueTable, workOrderTable, invoiceStatusTable, balancesTable].forEach((el) => {
     el.innerHTML = "<tr><td colspan=\"2\">Loading…</td></tr>";
   });
@@ -6195,6 +6196,7 @@ async function loadReports() {
   lowStockTable.innerHTML = "<tr><td colspan=\"3\">Loading…</td></tr>";
   partsUsageTable.innerHTML = "<tr><td colspan=\"3\">Loading…</td></tr>";
   vendorPurchasingTable.innerHTML = "<tr><td colspan=\"3\">Loading…</td></tr>";
+  cycleTimeTable.innerHTML = "<tr><td colspan=\"2\">Loading…</td></tr>";
   const range = dashboardDateRangeFromPreset(30);
   $("reports-period-note").textContent = `${range.from.toLocaleDateString()} – ${range.to.toLocaleDateString()} (last 30 days, same window as the Overview dashboard default)`;
   try {
@@ -6202,7 +6204,7 @@ async function loadReports() {
       date_from: range.from.toISOString(),
       date_to: range.to.toISOString(),
     });
-    const [summaryResponse, invoicesResponse, paymentActivityResponse, technicianTimeResponse, inventoryValuationResponse, partsUsageResponse, vendorPurchasingResponse] = await Promise.all([
+    const [summaryResponse, invoicesResponse, paymentActivityResponse, technicianTimeResponse, inventoryValuationResponse, partsUsageResponse, vendorPurchasingResponse, cycleTimeResponse] = await Promise.all([
       apiFetch(`/api/dashboard/summary?${searchParams.toString()}`),
       apiFetch("/api/invoices?page_size=100"),
       apiFetch(`/api/reports/payment-activity?${searchParams.toString()}`),
@@ -6210,6 +6212,7 @@ async function loadReports() {
       apiFetch("/api/reports/inventory-valuation"),
       apiFetch(`/api/reports/parts-usage?${searchParams.toString()}`),
       apiFetch(`/api/reports/vendor-purchasing?${searchParams.toString()}`),
+      apiFetch(`/api/reports/work-order-cycle-time?${searchParams.toString()}`),
     ]);
     const summary = await readApiPayload(summaryResponse);
     const invoicesData = await readApiPayload(invoicesResponse);
@@ -6218,6 +6221,7 @@ async function loadReports() {
     const inventoryValuation = await readApiPayload(inventoryValuationResponse);
     const partsUsage = await readApiPayload(partsUsageResponse);
     const vendorPurchasing = await readApiPayload(vendorPurchasingResponse);
+    const cycleTime = await readApiPayload(cycleTimeResponse);
     if (!summaryResponse.ok || !summary) throw apiError(summaryResponse, summary, "Dashboard summary failed");
     if (!invoicesResponse.ok || !invoicesData) throw apiError(invoicesResponse, invoicesData, "Invoice listing failed");
     if (!paymentActivityResponse.ok || !paymentActivity) throw apiError(paymentActivityResponse, paymentActivity, "Payment activity report failed");
@@ -6225,6 +6229,7 @@ async function loadReports() {
     if (!inventoryValuationResponse.ok || !inventoryValuation) throw apiError(inventoryValuationResponse, inventoryValuation, "Inventory valuation report failed");
     if (!partsUsageResponse.ok || !partsUsage) throw apiError(partsUsageResponse, partsUsage, "Parts usage report failed");
     if (!vendorPurchasingResponse.ok || !vendorPurchasing) throw apiError(vendorPurchasingResponse, vendorPurchasing, "Vendor purchasing report failed");
+    if (!cycleTimeResponse.ok || !cycleTime) throw apiError(cycleTimeResponse, cycleTime, "Work order cycle time report failed");
 
     const metricsByKey = new Map(summary.metrics.map((metric) => [metric.key, metric]));
     const revenueRows = [
@@ -6316,6 +6321,17 @@ async function loadReports() {
     vendorPurchasingTable.innerHTML = vendorPurchasing.by_vendor.length
       ? vendorPurchasing.by_vendor.map((item) => `<tr><td>${escapeHtml(item.vendor_name)}</td><td>${item.order_count}</td><td>${money(item.total_spend)}</td></tr>`).join("")
       : "<tr><td colspan=\"3\">No purchase orders submitted in this period.</td></tr>";
+
+    $("reports-cycle-time-note").textContent = `${cycleTime.completed_work_order_count} work order(s) completed in this period. Cycle time is total elapsed time from creation to completion, not active wrench time. Comeback rate reflects only work orders the owner manually flagged as a comeback -- OptimusOS does not automatically detect repeat repairs.`;
+    cycleTimeTable.innerHTML = cycleTime.completed_work_order_count
+      ? [
+          ["Average cycle time", `${cycleTime.average_cycle_time_hours} hrs`],
+          ["Median cycle time", `${cycleTime.median_cycle_time_hours} hrs`],
+          ["Fastest", `${cycleTime.fastest_cycle_time_hours} hrs`],
+          ["Slowest", `${cycleTime.slowest_cycle_time_hours} hrs`],
+          ["Comeback rate (owner-flagged)", `${cycleTime.comeback_rate_percent}% (${cycleTime.comeback_count} of ${cycleTime.completed_work_order_count})`],
+        ].map(([label, value]) => `<tr><td>${escapeHtml(label)}</td><td>${escapeHtml(value)}</td></tr>`).join("")
+      : "<tr><td colspan=\"2\">No work orders completed in this period.</td></tr>";
   } catch (error) {
     [revenueTable, workOrderTable, invoiceStatusTable, balancesTable].forEach((el) => {
       el.innerHTML = `<tr><td colspan="2">Failed to load: ${escapeHtml(error.message)}</td></tr>`;
@@ -6326,6 +6342,7 @@ async function loadReports() {
     lowStockTable.innerHTML = `<tr><td colspan="3">Failed to load: ${escapeHtml(error.message)}</td></tr>`;
     partsUsageTable.innerHTML = `<tr><td colspan="3">Failed to load: ${escapeHtml(error.message)}</td></tr>`;
     vendorPurchasingTable.innerHTML = `<tr><td colspan="3">Failed to load: ${escapeHtml(error.message)}</td></tr>`;
+    cycleTimeTable.innerHTML = `<tr><td colspan="2">Failed to load: ${escapeHtml(error.message)}</td></tr>`;
     showToast(`Reports load failed: ${error.message}`, "error");
   }
 }

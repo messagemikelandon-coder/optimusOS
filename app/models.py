@@ -1658,6 +1658,29 @@ class VendorPurchasingReportResponse(BaseModel):
     cancelled_order_count: int
 
 
+class WorkOrderCycleTimeReportResponse(BaseModel):
+    """Cycle time is measured from work-order creation to its first (and,
+    since `completed` is a terminal status, only) transition into
+    `completed` -- total elapsed calendar time, not active wrench time, so a
+    job that spent days waiting on a backordered part still counts that wait
+    toward its cycle time. `comeback_rate_percent` reflects the owner's own
+    manual `WorkOrder.is_comeback` flag (set via the existing work-order
+    detail checkbox) among completed work orders in the window -- OptimusOS
+    does not attempt to automatically detect comebacks (e.g. same
+    vehicle/same complaint within N days); that would require a business
+    rule the owner hasn't defined yet."""
+
+    date_from: datetime
+    date_to: datetime
+    completed_work_order_count: int
+    average_cycle_time_hours: float
+    median_cycle_time_hours: float
+    fastest_cycle_time_hours: float
+    slowest_cycle_time_hours: float
+    comeback_count: int
+    comeback_rate_percent: float
+
+
 class VendorBase(BaseModel):
     name: NonBlank = Field(max_length=180)
     contact_name: str | None = Field(default=None, max_length=180)

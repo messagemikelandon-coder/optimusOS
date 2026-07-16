@@ -4,11 +4,12 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 from fastapi import HTTPException
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 import app.main as main
 from app.auth import effective_owner_id
-from app.db_models import TechnicianTimeEntry
+from app.db_models import TechnicianTimeEntry, WorkOrder, WorkOrderStatusEvent
 from app.models import (
     InvoicePaymentCreate,
     InvoicePaymentVoidRequest,
@@ -16,6 +17,7 @@ from app.models import (
     PurchaseOrderCreate,
     PurchaseOrderLineItemCreate,
     PurchaseOrderReceiveRequest,
+    WorkOrderUpdate,
 )
 from tests.test_context_api import auth_context, create_user, login_as, raw_cookie_from_response
 from tests.test_dashboard_api import _use_part
@@ -796,3 +798,171 @@ async def test_vendor_purchasing_report_cross_user_isolation(settings, db_sessio
     )
     assert other_report.total_orders == 0
     assert other_report.by_vendor == []
+
+
+# ---- Work order cycle time & comebacks report ----
+
+
+def _set_cycle_time(db_session: Session, work_order_id: int, *, hours: float) -> None:
+    """Directly back-dates a completed work order's creation timestamp so its
+    cycle time is deterministic, mirroring the direct-timestamp-manipulation
+    style already used by `_add_time_entry` for technician-time tests --
+    real request timing in a test is near-instant and can't otherwise
+    exercise a specific elapsed duration."""
+    completed_event = db_session.scalars(
+        select(WorkOrderStatusEvent).where(
+            WorkOrderStatusEvent.work_order_id == work_order_id,
+            WorkOrderStatusEvent.to_status == "completed",
+        )
+    ).one()
+    work_order = db_session.get(WorkOrder, work_order_id)
+    assert work_order is not None
+    work_order.created_at = completed_event.created_at - timedelta(hours=hours)
+    db_session.add(work_order)
+    db_session.commit()
+
+
+async def test_work_order_cycle_time_report_computes_average_median_fastest_slowest(
+    monkeypatch, settings, db_session: Session
+) -> None:
+    _, response = await login_as(settings, db_session)
+    auth = auth_context(settings, db_session, raw_cookie_from_response(response))
+
+    work_order_a, _ = await create_completed_work_order_with_invoice(
+        monkeypatch, settings, db_session, auth, vin="1FTFW1ET1EFA00390"
+    )
+    _set_cycle_time(db_session, work_order_a.id, hours=10)
+    work_order_b, _ = await create_completed_work_order_with_invoice(
+        monkeypatch, settings, db_session, auth, vin="1FTFW1ET1EFA00391"
+    )
+    _set_cycle_time(db_session, work_order_b.id, hours=20)
+    work_order_c, _ = await create_completed_work_order_with_invoice(
+        monkeypatch, settings, db_session, auth, vin="1FTFW1ET1EFA00392"
+    )
+    _set_cycle_time(db_session, work_order_c.id, hours=30)
+
+    report = await main.get_work_order_cycle_time_report_record(db_session, auth, None, None)
+
+    assert report.completed_work_order_count == 3
+    assert report.average_cycle_time_hours == pytest.approx(20.0)
+    assert report.median_cycle_time_hours == pytest.approx(20.0)
+    assert report.fastest_cycle_time_hours == pytest.approx(10.0)
+    assert report.slowest_cycle_time_hours == pytest.approx(30.0)
+    assert report.comeback_count == 0
+    assert report.comeback_rate_percent == 0.0
+
+
+async def test_work_order_cycle_time_report_computes_median_for_even_count(
+    monkeypatch, settings, db_session: Session
+) -> None:
+    """Pins the even-count branch of the median calculation separately from
+    the odd-count case above -- 1h/2h/3h/100h has a median of (2+3)/2=2.5,
+    clearly distinct from the average (26.5), so this can't accidentally
+    pass under the wrong formula."""
+    _, response = await login_as(settings, db_session)
+    auth = auth_context(settings, db_session, raw_cookie_from_response(response))
+
+    hours_values = [1, 2, 3, 100]
+    for index, hours in enumerate(hours_values):
+        work_order, _ = await create_completed_work_order_with_invoice(
+            monkeypatch, settings, db_session, auth, vin=f"1FTFW1ET1EFA0038{index}"
+        )
+        _set_cycle_time(db_session, work_order.id, hours=hours)
+
+    report = await main.get_work_order_cycle_time_report_record(db_session, auth, None, None)
+
+    assert report.completed_work_order_count == 4
+    assert report.median_cycle_time_hours == pytest.approx(2.5)
+    assert report.average_cycle_time_hours == pytest.approx(26.5)
+
+
+async def test_work_order_cycle_time_report_computes_comeback_rate_from_manual_flag(
+    monkeypatch, settings, db_session: Session
+) -> None:
+    _, response = await login_as(settings, db_session)
+    auth = auth_context(settings, db_session, raw_cookie_from_response(response))
+
+    comeback_work_order, _ = await create_completed_work_order_with_invoice(
+        monkeypatch, settings, db_session, auth, vin="1FTFW1ET1EFA00393"
+    )
+    await main.update_work_order_record(
+        comeback_work_order.id, WorkOrderUpdate(is_comeback=True), db_session, auth
+    )
+    await create_completed_work_order_with_invoice(
+        monkeypatch, settings, db_session, auth, vin="1FTFW1ET1EFA00394"
+    )
+
+    report = await main.get_work_order_cycle_time_report_record(db_session, auth, None, None)
+
+    assert report.completed_work_order_count == 2
+    assert report.comeback_count == 1
+    assert report.comeback_rate_percent == pytest.approx(50.0)
+
+
+async def test_work_order_cycle_time_report_empty_state_returns_zeros(
+    settings, db_session: Session
+) -> None:
+    _, response = await login_as(settings, db_session)
+    auth = auth_context(settings, db_session, raw_cookie_from_response(response))
+
+    report = await main.get_work_order_cycle_time_report_record(db_session, auth, None, None)
+
+    assert report.completed_work_order_count == 0
+    assert report.average_cycle_time_hours == 0.0
+    assert report.median_cycle_time_hours == 0.0
+    assert report.fastest_cycle_time_hours == 0.0
+    assert report.slowest_cycle_time_hours == 0.0
+    assert report.comeback_count == 0
+    assert report.comeback_rate_percent == 0.0
+
+
+async def test_work_order_cycle_time_report_date_range_excludes_out_of_window_completions(
+    monkeypatch, settings, db_session: Session
+) -> None:
+    _, response = await login_as(settings, db_session)
+    auth = auth_context(settings, db_session, raw_cookie_from_response(response))
+    await create_completed_work_order_with_invoice(
+        monkeypatch, settings, db_session, auth, vin="1FTFW1ET1EFA00395"
+    )
+
+    now = datetime.now(UTC)
+    report = await main.get_work_order_cycle_time_report_record(
+        db_session, auth, now - timedelta(days=10), now - timedelta(days=5)
+    )
+
+    assert report.completed_work_order_count == 0
+
+
+async def test_work_order_cycle_time_report_invalid_date_range_rejected(
+    settings, db_session: Session
+) -> None:
+    _, response = await login_as(settings, db_session)
+    auth = auth_context(settings, db_session, raw_cookie_from_response(response))
+
+    now = datetime.now(UTC)
+    with pytest.raises(HTTPException) as excinfo:
+        await main.get_work_order_cycle_time_report_record(
+            db_session, auth, now, now - timedelta(days=1)
+        )
+    assert excinfo.value.status_code == 422
+
+
+async def test_work_order_cycle_time_report_cross_user_isolation(
+    monkeypatch, settings, db_session: Session
+) -> None:
+    _, owner_response = await login_as(settings, db_session)
+    owner_auth = auth_context(settings, db_session, raw_cookie_from_response(owner_response))
+    create_user(db_session, username="cycle-time-isolation-other", password="other-password-123")
+    _, other_response = await login_as(
+        settings, db_session, username="cycle-time-isolation-other", password="other-password-123"
+    )
+    other_auth = auth_context(settings, db_session, raw_cookie_from_response(other_response))
+
+    await create_completed_work_order_with_invoice(
+        monkeypatch, settings, db_session, owner_auth, vin="1FTFW1ET1EFA00396"
+    )
+
+    other_report = await main.get_work_order_cycle_time_report_record(
+        db_session, other_auth, None, None
+    )
+    assert other_report.completed_work_order_count == 0
