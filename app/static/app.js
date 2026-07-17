@@ -6187,6 +6187,7 @@ async function loadReports() {
   const partsUsageTable = $("reports-parts-usage-table");
   const vendorPurchasingTable = $("reports-vendor-purchasing-table");
   const cycleTimeTable = $("reports-cycle-time-table");
+  const diagnosticInspectionTable = $("reports-diagnostic-inspection-table");
   [revenueTable, workOrderTable, invoiceStatusTable, balancesTable].forEach((el) => {
     el.innerHTML = "<tr><td colspan=\"2\">Loading…</td></tr>";
   });
@@ -6197,6 +6198,7 @@ async function loadReports() {
   partsUsageTable.innerHTML = "<tr><td colspan=\"3\">Loading…</td></tr>";
   vendorPurchasingTable.innerHTML = "<tr><td colspan=\"3\">Loading…</td></tr>";
   cycleTimeTable.innerHTML = "<tr><td colspan=\"2\">Loading…</td></tr>";
+  diagnosticInspectionTable.innerHTML = "<tr><td colspan=\"2\">Loading…</td></tr>";
   const range = dashboardDateRangeFromPreset(30);
   $("reports-period-note").textContent = `${range.from.toLocaleDateString()} – ${range.to.toLocaleDateString()} (last 30 days, same window as the Overview dashboard default)`;
   try {
@@ -6204,7 +6206,7 @@ async function loadReports() {
       date_from: range.from.toISOString(),
       date_to: range.to.toISOString(),
     });
-    const [summaryResponse, invoicesResponse, paymentActivityResponse, technicianTimeResponse, inventoryValuationResponse, partsUsageResponse, vendorPurchasingResponse, cycleTimeResponse] = await Promise.all([
+    const [summaryResponse, invoicesResponse, paymentActivityResponse, technicianTimeResponse, inventoryValuationResponse, partsUsageResponse, vendorPurchasingResponse, cycleTimeResponse, diagnosticInspectionResponse] = await Promise.all([
       apiFetch(`/api/dashboard/summary?${searchParams.toString()}`),
       apiFetch("/api/invoices?page_size=100"),
       apiFetch(`/api/reports/payment-activity?${searchParams.toString()}`),
@@ -6213,6 +6215,7 @@ async function loadReports() {
       apiFetch(`/api/reports/parts-usage?${searchParams.toString()}`),
       apiFetch(`/api/reports/vendor-purchasing?${searchParams.toString()}`),
       apiFetch(`/api/reports/work-order-cycle-time?${searchParams.toString()}`),
+      apiFetch(`/api/reports/diagnostic-inspection?${searchParams.toString()}`),
     ]);
     const summary = await readApiPayload(summaryResponse);
     const invoicesData = await readApiPayload(invoicesResponse);
@@ -6222,6 +6225,7 @@ async function loadReports() {
     const partsUsage = await readApiPayload(partsUsageResponse);
     const vendorPurchasing = await readApiPayload(vendorPurchasingResponse);
     const cycleTime = await readApiPayload(cycleTimeResponse);
+    const diagnosticInspection = await readApiPayload(diagnosticInspectionResponse);
     if (!summaryResponse.ok || !summary) throw apiError(summaryResponse, summary, "Dashboard summary failed");
     if (!invoicesResponse.ok || !invoicesData) throw apiError(invoicesResponse, invoicesData, "Invoice listing failed");
     if (!paymentActivityResponse.ok || !paymentActivity) throw apiError(paymentActivityResponse, paymentActivity, "Payment activity report failed");
@@ -6230,6 +6234,7 @@ async function loadReports() {
     if (!partsUsageResponse.ok || !partsUsage) throw apiError(partsUsageResponse, partsUsage, "Parts usage report failed");
     if (!vendorPurchasingResponse.ok || !vendorPurchasing) throw apiError(vendorPurchasingResponse, vendorPurchasing, "Vendor purchasing report failed");
     if (!cycleTimeResponse.ok || !cycleTime) throw apiError(cycleTimeResponse, cycleTime, "Work order cycle time report failed");
+    if (!diagnosticInspectionResponse.ok || !diagnosticInspection) throw apiError(diagnosticInspectionResponse, diagnosticInspection, "Diagnostic/inspection report failed");
 
     const metricsByKey = new Map(summary.metrics.map((metric) => [metric.key, metric]));
     const revenueRows = [
@@ -6332,6 +6337,19 @@ async function loadReports() {
           ["Comeback rate (owner-flagged)", `${cycleTime.comeback_rate_percent}% (${cycleTime.comeback_count} of ${cycleTime.completed_work_order_count})`],
         ].map(([label, value]) => `<tr><td>${escapeHtml(label)}</td><td>${escapeHtml(value)}</td></tr>`).join("")
       : "<tr><td colspan=\"2\">No work orders completed in this period.</td></tr>";
+
+    $("reports-diagnostic-inspection-note").textContent = `${diagnosticInspection.diagnostic_finding_count} diagnostic finding(s) and ${diagnosticInspection.inspection_count} inspection(s) logged in this period, including any since archived.`;
+    diagnosticInspectionTable.innerHTML = (diagnosticInspection.diagnostic_finding_count || diagnosticInspection.inspection_count)
+      ? [
+          ["Diagnostic findings logged", String(diagnosticInspection.diagnostic_finding_count)],
+          ["Findings still missing a conclusion", String(diagnosticInspection.findings_missing_conclusion)],
+          ["Inspections logged", String(diagnosticInspection.inspection_count)],
+          ["Inspection items checked", String(diagnosticInspection.inspection_item_count)],
+          ["Items OK", String(diagnosticInspection.items_ok)],
+          ["Items flagged for attention", String(diagnosticInspection.items_attention)],
+          ["Items failed", String(diagnosticInspection.items_fail)],
+        ].map(([label, value]) => `<tr><td>${escapeHtml(label)}</td><td>${escapeHtml(value)}</td></tr>`).join("")
+      : "<tr><td colspan=\"2\">No diagnostic findings or inspections logged in this period.</td></tr>";
   } catch (error) {
     [revenueTable, workOrderTable, invoiceStatusTable, balancesTable].forEach((el) => {
       el.innerHTML = `<tr><td colspan="2">Failed to load: ${escapeHtml(error.message)}</td></tr>`;
@@ -6343,6 +6361,7 @@ async function loadReports() {
     partsUsageTable.innerHTML = `<tr><td colspan="3">Failed to load: ${escapeHtml(error.message)}</td></tr>`;
     vendorPurchasingTable.innerHTML = `<tr><td colspan="3">Failed to load: ${escapeHtml(error.message)}</td></tr>`;
     cycleTimeTable.innerHTML = `<tr><td colspan="2">Failed to load: ${escapeHtml(error.message)}</td></tr>`;
+    diagnosticInspectionTable.innerHTML = `<tr><td colspan="2">Failed to load: ${escapeHtml(error.message)}</td></tr>`;
     showToast(`Reports load failed: ${error.message}`, "error");
   }
 }

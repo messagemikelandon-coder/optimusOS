@@ -4,51 +4,52 @@ Purpose: replaceable handoff template for the next substantial Codex/Claude sess
 Information owner: the active session author.
 Read when: starting or resuming work.
 Update when: a substantial task completes or context needs to be handed forward.
-Last verified date: 2026-07-16.
+Last verified date: 2026-07-17.
 Relevant sources: `docs/context/CURRENT_STATE.md`, `docs/context/PLANS.md`, `git log`/`git status`, a full local gate run plus a live proof against a throwaway Postgres container, an independent `optimus-reviewer` pass.
 
 ## Identity
 
-- Updated UTC: 2026-07-16.
+- Updated UTC: 2026-07-17.
 - Agent: Claude.
-- `main` HEAD: `c48a5ea3` (merge of PR #40, Phase 6 Part G Slice 3 — Parts Usage + Vendor Purchasing). Verified via `git fetch origin main` at session start.
-- Worktree used this session: `.claude/worktrees/release-process`, branch `agent/claude/cost-inventory-reports` (recreated fresh from `origin/main` after Slice 3 merged and its own branch was deleted). Not yet committed, pushed, or opened as a PR.
+- `main` HEAD: `d9817201` (merge of PR #41, Phase 6 Part G Slice 4 — Work Order Cycle Time + Comebacks). Verified via `git fetch origin main` at session start.
+- Worktree used this session: `.claude/worktrees/release-process`, branch `agent/claude/cost-inventory-reports`. **Note the git-history lesson from Slice 3/4 this session**: this branch name has been reused across multiple squash-merged PRs; after each merge, local work must be rebased onto fresh `origin/main` before pushing the next slice (a plain local commit on top of the branch's pre-squash-merge tip causes a spurious GitHub merge conflict). Confirmed clean ancestry (`git merge-base HEAD origin/main` equals `origin/main`'s tip) before this slice's work.
 
 ## Active task
 
-Phase 6 Part G, Slice 4 (Work Order Cycle Time + Comebacks report) — the fourth Part G slice this session. **Implemented, independently reviewed (no blocking findings; one should-fix finding and one nice-to-have both fixed before merge, everything else confirmed correct), and live-verified; not yet committed, pushed, or merged.**
+Phase 6 Part G, Slice 5 (Diagnostic Findings + Inspections report) — the fifth and likely final Part G reporting slice this session. **Implemented, independently reviewed (no blocking findings; two should-fix findings and one nice-to-have all fixed before merge), and live-verified; not yet committed, pushed, or merged.**
 
-- New `app/report_store.py::get_work_order_cycle_time_report`: joins `WorkOrder` to its `WorkOrderStatusEvent` completion row (`to_status='completed'`), computes cycle time (creation → completion, total elapsed calendar time not active wrench time) and comeback rate (from the existing manual `WorkOrder.is_comeback` flag, not automatic detection).
-- **This unblocks the previously-blocked Comeback Rate item** from the roadmap: instead of inventing an auto-detection business rule the owner hasn't defined (same vehicle/complaint within N days? same customer?), the report surfaces the rate from the flag the owner already manually sets via the existing work-order detail checkbox.
-- New owner-only route: `GET /api/reports/work-order-cycle-time`.
-- New Pydantic model: `WorkOrderCycleTimeReportResponse`.
-- Frontend: one new report card ("Work order cycle time & comebacks") wired into `loadReports()`.
-- Full detail in `docs/context/PLANS.md`'s Part G Slice 4 entry.
+- New `app/report_store.py::get_diagnostic_inspection_report`: counts `DiagnosticFinding` and `Inspection` rows created in the window. `findings_missing_conclusion` discloses diagnostic findings with no conclusion recorded yet (the only structured signal available — diagnostic findings have no status/severity column at all). `items_ok`/`items_attention`/`items_fail` breaks down inspection items by their app-enforced `InspectionItem.status` (`ok`/`attention`/`fail`), read via `InspectionItem.model_validate(item)` rather than a raw dict key (matches `inspection_store.py`'s established pattern; a corrupted status value now raises loudly instead of being silently miscounted).
+- **This closes Phase 6 Part G's reporting-content scope** — every report identified as buildable from existing schema is now shipped. Only CSV export (a cross-cutting UI feature, not a new report) and report scheduling/delivery (explicitly deferred to a future phase from the start) remain open under Part G.
+- New owner-only route: `GET /api/reports/diagnostic-inspection`.
+- New Pydantic model: `DiagnosticInspectionReportResponse`.
+- Frontend: one new report card ("Diagnostics & inspections") wired into `loadReports()`.
+- Full detail in `docs/context/PLANS.md`'s Part G Slice 5 entry.
 
 ## Verified baseline
 
 - `env UV_CACHE_DIR=/tmp/uv-cache uv run ruff format .` → clean.
 - `env UV_CACHE_DIR=/tmp/uv-cache uv run ruff check .` → all checks passed.
 - `env UV_CACHE_DIR=/tmp/uv-cache uv run pyright` → 0 errors, 0 warnings.
-- `env UV_CACHE_DIR=/tmp/uv-cache uv run pytest -q -rA` → 371 passed, 2 skipped (pre-existing, unrelated — `tests/test_rate_limit.py` needs a real local Redis), 0 failed. Includes 7 new tests in `tests/test_reports_api.py`.
+- `env UV_CACHE_DIR=/tmp/uv-cache uv run pytest -q -rA` → 379 passed, 2 skipped (pre-existing, unrelated — `tests/test_rate_limit.py` needs a real local Redis), 0 failed. Includes 8 new tests in `tests/test_reports_api.py`.
 - `node --check app/static/app.js` → OK.
 - `tests/test_role_isolation.py::test_every_business_route_is_role_gated_as_expected` → passes; the new route correctly defaulted to owner-only with zero manual list maintenance.
 
 ## Evidence
 
-- **Live-proven against a real, freshly-migrated throwaway Postgres 16 container** (not SQLite, not mocked): spun up a fresh container, ran `alembic upgrade head` (single linear head, `021_part_allocations`), then via a standalone script created 3 real completed work orders with engineered cycle times (8h/24h/40h, via direct timestamp back-dating on the ORM rows post-creation, since a real request-response cycle completes near-instantly), one flagged `is_comeback=True`, plus a second owner. Confirmed exact expected arithmetic: average=24.0h, median=24.0h, fastest=8.0h, slowest=40.0h, comeback_rate=33.3% (1 of 3) — all matched precisely; the second owner correctly saw a fully-zeroed report. Container torn down after.
-- **Independent review (`optimus-reviewer`) finding, fixed before merge**: the median calculation's even-count branch (`(a+b)/2` averaging the two middle values) had no dedicated test — the only cycle-time test used an odd count (3 work orders), so the even-count arithmetic was correct by inspection but unverified by any passing test. Fixed by adding `test_work_order_cycle_time_report_computes_median_for_even_count` (4 work orders at asymmetric 1h/2h/3h/100h hours, median 2.5 vs. average 26.5 — deliberately chosen so the two values can't be confused and the test can't accidentally pass under the wrong formula).
-- **Independent review nice-to-have, fixed as a hardening item**: the comeback-rate disclosure existed (backend docstring, and inline in the stat row as "owner-flagged") but wasn't in the shared top-level note paragraph — given the explicit sensitivity of a business owner potentially misreading this as automatic same-vehicle/same-complaint detection, made the disclosure more prominent: the note paragraph now explicitly states the comeback figure is owner-flagged and not automatically detected, and the stat row label itself now reads "Comeback rate (owner-flagged)".
-- **Independent review, confirmed correct with no changes needed** (verified by direct inspection of `work_order_store.py`'s `TRANSITIONS` dict and `_append_status_event`, not just trusted from the docstring): the terminal-status/no-fan-out claim (`completed` has zero outbound transitions, so at most one completion event per work order); cross-user isolation (filtering only on `WorkOrderStatusEvent.owner_user_id` is safe since that column can never diverge from its parent `WorkOrder`'s owner); the odd-count median branch's arithmetic; the `_set_cycle_time` test helper's direct-timestamp-manipulation approach (mirrors the existing `_add_time_entry` pattern from Technician Time report tests); route/response wiring consistency with sibling report routes; all loading/populated/empty/error frontend states.
+- **Live-proven against a real, freshly-migrated throwaway Postgres 16 container** (not SQLite, not mocked): spun up a fresh container, ran `alembic upgrade head` (single linear head, `021_part_allocations`), then via a standalone script created 2 real diagnostic findings (one with a conclusion, then archived; one still open) and 2 real inspections (a 3-item inspection covering all three statuses, plus a 1-item inspection), plus a second owner. Confirmed exact expected counts: 2 findings / 1 missing-conclusion (the archived one still correctly included); 2 inspections / 4 items / 2 ok / 1 attention / 1 fail — all matched precisely; the second owner correctly saw a fully-zeroed report. Container torn down after.
+- **Independent review (`optimus-reviewer`) findings, both fixed before merge**:
+  1. The frontend note text omitted the "counts activity regardless of later archiving" disclosure that every other report card's note in the same function includes for its own non-obvious methodology choice (Inventory Valuation discloses it's a snapshot not a range; Cycle Time discloses it's elapsed time not wrench time and that comeback is owner-flagged). Fixed by appending "including any since archived" to the note.
+  2. The inspection-item status read originally used raw `item.get("status")`, silently bucketing anything not exactly `"attention"`/`"fail"` as `"ok"`. While today's write path is fully guarded (no route writes `Inspection.items` without Pydantic validation), this diverged from `inspection_store.py`'s own established pattern for reading this exact field and would have silently laundered a hypothetical future data-quality problem into the safest-looking bucket. Fixed to revalidate via `InspectionItem.model_validate(item)`, matching the existing precedent.
+- **Independent review nice-to-have, fixed as a hardening item**: no test covered an inspection with an empty `items` list (a realistic shape — a technician starting an inspection before filling in items). Added `test_diagnostic_inspection_report_counts_inspection_with_no_items_yet`.
+- **Independent review, confirmed correct with no changes needed**: `findings_missing_conclusion`'s SQL/Python boundary (verified consistent with `DiagnosticFindingBase`'s validator, which already converts empty/whitespace strings to `None` before persistence, so there's no live empty-string-vs-NULL ambiguity); the "count regardless of archived" choice applied consistently on both queries with no accidental `is_archived` filter leaking in; cross-user isolation on both new queries; the frontend's two-independent-counts empty-state condition; route/response wiring consistency with sibling report routes.
 
 ## Unverified
 
-- No live/billable OpenAI calls were made (the live-proof script stubbed the research orchestrator the same way the pytest suite does).
+- No live/billable OpenAI calls were made (the live-proof script used direct store/route function calls, no research orchestrator involved in this slice at all).
 - Not committed, pushed, opened as a PR, or merged — awaiting the next step in this same task.
 - No dedicated `optimus-security-reviewer` pass was run on this change (read-only, owner-scoped reporting — lower risk profile than prior write-path slices, but not independently security-reviewed).
 - CI has not yet run against this branch (no PR opened yet).
 - No live Playwright/browser check of the new report card — verified via `node --check` (syntax only) and code reading, not a rendered DOM.
-- **Known git-history gotcha from the prior slice, applies here too**: reusing the same local branch name `agent/claude/cost-inventory-reports` across squash-merged PRs (as happened for Slice 3, requiring a rebase + force-push to fix a spurious merge conflict on PR #40) means this session's branch was recreated fresh from `origin/main` after Slice 3 merged, specifically to avoid that issue recurring for Slice 4's PR.
 
 ## Unrelated preexisting changes
 
@@ -60,15 +61,15 @@ Phase 6 Part G, Slice 4 (Work Order Cycle Time + Comebacks report) — the fourt
 
 ## Exact next task
 
-Get explicit current-turn owner approval, then commit the Slice 4 changes, push `agent/claude/cost-inventory-reports`, open a PR, verify all CI checks pass (`gh pr checks`), and merge with explicit current-turn owner approval (same no-human-review pattern used for prior PRs this session).
+Get explicit current-turn owner approval, then commit the Slice 5 changes. **Before pushing, verify `git merge-base HEAD origin/main` equals `origin/main`'s current tip** (rebase first if not — see the git-history lesson under Identity above), push `agent/claude/cost-inventory-reports`, open a PR, verify all CI checks pass (`gh pr checks`), and merge with explicit current-turn owner approval (same no-human-review pattern used for prior PRs this session).
 
 After that, per the owner's approved roadmap (`docs/context/PLANS.md` Phase 6), the remaining open items are:
 
-- **Part G remainder** — diagnostic/inspection findings report, CSV export. Not started; deliberately deferred out of this slice to keep it reviewable. (Cycle-time and comeback rate are now DONE as of this slice; comeback rate is no longer blocked.)
+- **Part G remainder** — CSV export only (a cross-cutting UI feature: exporting a report table's data client-side, not a new backend report). Report scheduling/delivery is explicitly deferred to a separate future phase. Everything else in Part G's reporting scope is now DONE.
 - **Part H remainder** — threat model, full security-event taxonomy, OpenAI usage/cost logging, customer-data retention/export/deletion policy, monitoring/alerting.
 - **Part I** — staging verification + deployment checklist, including catching the staging droplet up to current `main` (still behind).
 
-None of these are started. Pick one with the owner before beginning.
+None of these are started. Pick one with the owner before beginning — Part G is close enough to fully closed that switching focus to Part H or Part I is a reasonable next checkpoint to raise with the owner.
 
 ## Carried over from prior sessions — not touched by this session
 

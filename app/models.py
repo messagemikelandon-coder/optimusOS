@@ -1681,6 +1681,32 @@ class WorkOrderCycleTimeReportResponse(BaseModel):
     comeback_rate_percent: float
 
 
+class DiagnosticInspectionReportResponse(BaseModel):
+    """Diagnostic findings and inspections are two separate, differently-shaped
+    logs, reported together since both are real technician-observation
+    records from the same window. Diagnostic findings have no structured
+    status field, so `findings_missing_conclusion` -- findings with no
+    `conclusion` recorded yet, i.e. diagnosis still open -- is the honest
+    disclosure available rather than a fabricated category. Inspection items
+    DO have a structured status (`ok`/`attention`/`fail`, enforced by
+    `InspectionItem` at the application layer even though storage is a JSON
+    column), so `items_ok`/`items_attention`/`items_fail` are a genuine
+    breakdown, not an approximation. Counts activity created in the window
+    regardless of a finding/inspection's current archived status -- archiving
+    is a later administrative action, not a retroactive undo of activity
+    that already happened."""
+
+    date_from: datetime
+    date_to: datetime
+    diagnostic_finding_count: int
+    findings_missing_conclusion: int
+    inspection_count: int
+    inspection_item_count: int
+    items_ok: int
+    items_attention: int
+    items_fail: int
+
+
 class VendorBase(BaseModel):
     name: NonBlank = Field(max_length=180)
     contact_name: str | None = Field(default=None, max_length=180)

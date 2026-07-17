@@ -11,6 +11,9 @@ import app.main as main
 from app.auth import effective_owner_id
 from app.db_models import TechnicianTimeEntry, WorkOrder, WorkOrderStatusEvent
 from app.models import (
+    DiagnosticFindingCreate,
+    InspectionCreate,
+    InspectionItem,
     InvoicePaymentCreate,
     InvoicePaymentVoidRequest,
     PaymentAppliesTo,
@@ -21,6 +24,7 @@ from app.models import (
 )
 from tests.test_context_api import auth_context, create_user, login_as, raw_cookie_from_response
 from tests.test_dashboard_api import _use_part
+from tests.test_diagnostics_and_inspections_api import _create_vehicle
 from tests.test_payments_api import create_completed_work_order_with_invoice, issue
 from tests.test_technicians_api import technician_payload
 from tests.test_vendors_and_parts_api import part_payload, vendor_payload
@@ -966,3 +970,211 @@ async def test_work_order_cycle_time_report_cross_user_isolation(
         db_session, other_auth, None, None
     )
     assert other_report.completed_work_order_count == 0
+
+
+# ---- Diagnostic findings & inspections report ----
+
+
+async def test_diagnostic_inspection_report_counts_findings_and_missing_conclusion(
+    settings, db_session: Session
+) -> None:
+    _, response = await login_as(settings, db_session)
+    auth = auth_context(settings, db_session, raw_cookie_from_response(response))
+    vehicle = await _create_vehicle(settings, db_session, auth)
+
+    await main.create_diagnostic_finding_record(
+        DiagnosticFindingCreate(
+            vehicle_id=vehicle.id,
+            symptoms="Rough idle at startup.",
+            conclusion="Replaced ignition coil #3.",
+        ),
+        db_session,
+        auth,
+    )
+    await main.create_diagnostic_finding_record(
+        DiagnosticFindingCreate(vehicle_id=vehicle.id, symptoms="Intermittent stall."),
+        db_session,
+        auth,
+    )
+
+    report = await main.get_diagnostic_inspection_report_record(db_session, auth, None, None)
+
+    assert report.diagnostic_finding_count == 2
+    assert report.findings_missing_conclusion == 1
+    assert report.inspection_count == 0
+    assert report.inspection_item_count == 0
+
+
+async def test_diagnostic_inspection_report_breaks_down_inspection_item_status(
+    settings, db_session: Session
+) -> None:
+    _, response = await login_as(settings, db_session)
+    auth = auth_context(settings, db_session, raw_cookie_from_response(response))
+    vehicle = await _create_vehicle(settings, db_session, auth)
+
+    await main.create_inspection_record(
+        InspectionCreate(
+            vehicle_id=vehicle.id,
+            inspection_type="Multi-point",
+            items=[
+                InspectionItem(label="Brake pads", status="ok"),
+                InspectionItem(label="Tire tread", status="attention", note="4/32 remaining"),
+                InspectionItem(label="Battery", status="fail", note="Below minimum voltage"),
+            ],
+        ),
+        db_session,
+        auth,
+    )
+    await main.create_inspection_record(
+        InspectionCreate(
+            vehicle_id=vehicle.id,
+            items=[InspectionItem(label="Wipers", status="ok")],
+        ),
+        db_session,
+        auth,
+    )
+
+    report = await main.get_diagnostic_inspection_report_record(db_session, auth, None, None)
+
+    assert report.inspection_count == 2
+    assert report.inspection_item_count == 4
+    assert report.items_ok == 2
+    assert report.items_attention == 1
+    assert report.items_fail == 1
+    assert report.diagnostic_finding_count == 0
+
+
+async def test_diagnostic_inspection_report_counts_inspection_with_no_items_yet(
+    settings, db_session: Session
+) -> None:
+    """A technician can start an inspection before filling in any checklist
+    items -- should still count toward inspection_count with zero items,
+    not be skipped or error."""
+    _, response = await login_as(settings, db_session)
+    auth = auth_context(settings, db_session, raw_cookie_from_response(response))
+    vehicle = await _create_vehicle(settings, db_session, auth)
+
+    await main.create_inspection_record(
+        InspectionCreate(vehicle_id=vehicle.id, items=[]),
+        db_session,
+        auth,
+    )
+
+    report = await main.get_diagnostic_inspection_report_record(db_session, auth, None, None)
+
+    assert report.inspection_count == 1
+    assert report.inspection_item_count == 0
+    assert report.items_ok == 0
+    assert report.items_attention == 0
+    assert report.items_fail == 0
+
+
+async def test_diagnostic_inspection_report_counts_archived_activity_in_the_window(
+    settings, db_session: Session
+) -> None:
+    """Activity is counted by when it was created, not by current archived
+    status -- archiving afterward is an administrative action, not a
+    retroactive undo. See the response model's docstring."""
+    _, response = await login_as(settings, db_session)
+    auth = auth_context(settings, db_session, raw_cookie_from_response(response))
+    vehicle = await _create_vehicle(settings, db_session, auth)
+
+    finding = await main.create_diagnostic_finding_record(
+        DiagnosticFindingCreate(vehicle_id=vehicle.id, symptoms="Squeaking brakes."),
+        db_session,
+        auth,
+    )
+    await main.archive_diagnostic_finding_record(finding.id, db_session, auth)
+
+    report = await main.get_diagnostic_inspection_report_record(db_session, auth, None, None)
+
+    assert report.diagnostic_finding_count == 1
+    assert report.findings_missing_conclusion == 1
+
+
+async def test_diagnostic_inspection_report_empty_state_returns_zeros(
+    settings, db_session: Session
+) -> None:
+    _, response = await login_as(settings, db_session)
+    auth = auth_context(settings, db_session, raw_cookie_from_response(response))
+
+    report = await main.get_diagnostic_inspection_report_record(db_session, auth, None, None)
+
+    assert report.diagnostic_finding_count == 0
+    assert report.findings_missing_conclusion == 0
+    assert report.inspection_count == 0
+    assert report.inspection_item_count == 0
+    assert report.items_ok == 0
+    assert report.items_attention == 0
+    assert report.items_fail == 0
+
+
+async def test_diagnostic_inspection_report_date_range_excludes_out_of_window_activity(
+    settings, db_session: Session
+) -> None:
+    _, response = await login_as(settings, db_session)
+    auth = auth_context(settings, db_session, raw_cookie_from_response(response))
+    vehicle = await _create_vehicle(settings, db_session, auth)
+    await main.create_diagnostic_finding_record(
+        DiagnosticFindingCreate(vehicle_id=vehicle.id, symptoms="Check engine light."),
+        db_session,
+        auth,
+    )
+
+    now = datetime.now(UTC)
+    report = await main.get_diagnostic_inspection_report_record(
+        db_session, auth, now - timedelta(days=10), now - timedelta(days=5)
+    )
+
+    assert report.diagnostic_finding_count == 0
+
+
+async def test_diagnostic_inspection_report_invalid_date_range_rejected(
+    settings, db_session: Session
+) -> None:
+    _, response = await login_as(settings, db_session)
+    auth = auth_context(settings, db_session, raw_cookie_from_response(response))
+
+    now = datetime.now(UTC)
+    with pytest.raises(HTTPException) as excinfo:
+        await main.get_diagnostic_inspection_report_record(
+            db_session, auth, now, now - timedelta(days=1)
+        )
+    assert excinfo.value.status_code == 422
+
+
+async def test_diagnostic_inspection_report_cross_user_isolation(
+    settings, db_session: Session
+) -> None:
+    _, owner_response = await login_as(settings, db_session)
+    owner_auth = auth_context(settings, db_session, raw_cookie_from_response(owner_response))
+    create_user(
+        db_session, username="diag-inspection-isolation-other", password="other-password-123"
+    )
+    _, other_response = await login_as(
+        settings,
+        db_session,
+        username="diag-inspection-isolation-other",
+        password="other-password-123",
+    )
+    other_auth = auth_context(settings, db_session, raw_cookie_from_response(other_response))
+
+    vehicle = await _create_vehicle(settings, db_session, owner_auth)
+    await main.create_diagnostic_finding_record(
+        DiagnosticFindingCreate(vehicle_id=vehicle.id, symptoms="Grinding noise."),
+        db_session,
+        owner_auth,
+    )
+    await main.create_inspection_record(
+        InspectionCreate(
+            vehicle_id=vehicle.id, items=[InspectionItem(label="Oil level", status="ok")]
+        ),
+        db_session,
+        owner_auth,
+    )
+
+    other_report = await main.get_diagnostic_inspection_report_record(
+        db_session, other_auth, None, None
+    )
+    assert other_report.diagnostic_finding_count == 0
+    assert other_report.inspection_count == 0
