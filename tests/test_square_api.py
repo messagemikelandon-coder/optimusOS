@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from decimal import Decimal
 from typing import Any
 
@@ -262,6 +263,32 @@ async def test_square_publish_failure_persists_nothing(
     assert row.square_invoice_id is None
     assert row.square_status is None
     assert row.square_payment_url is None
+
+
+@pytest.mark.anyio
+async def test_square_push_failure_logs_security_event(
+    monkeypatch, settings, db_session: Session, caplog
+) -> None:  # type: ignore[no-untyped-def]
+    _, response = await login_as(settings, db_session)
+    auth = auth_context(settings, db_session, raw_cookie_from_response(response))
+    issued = await issued_invoice_for(monkeypatch, settings, db_session, auth)
+    set_snapshot_email(db_session, issued.id, "casey@example.com")
+    configure_square(settings)
+    install_stub(monkeypatch, StubSquareClient(fail_at="publish_invoice"))
+
+    with (
+        caplog.at_level(logging.WARNING, logger="optimus"),
+        pytest.raises(HTTPException) as excinfo,
+    ):
+        await main.push_invoice_to_square_record(issued.id, db_session, settings, auth)
+    assert excinfo.value.status_code == 502
+    assert "security event: square.api_failed" in caplog.text
+    events = [
+        r for r in caplog.records if getattr(r, "security_event", None) == "square.api_failed"
+    ]
+    assert len(events) == 1
+    assert events[0].operation == "push"
+    assert events[0].invoice_id == issued.id
 
 
 @pytest.mark.anyio

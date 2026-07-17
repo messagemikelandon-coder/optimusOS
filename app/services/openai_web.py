@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import math
 import re
 import uuid
@@ -26,6 +27,8 @@ from app.models import (
     ResolvedLocation,
 )
 from app.security import UnsafeUrlError, validate_https_url
+
+logger = logging.getLogger("optimus")
 
 _JSON_BLOCK_RE = re.compile(r"```(?:json)?\s*(\{.*\})\s*```", re.DOTALL | re.IGNORECASE)
 _SECTION_RE = re.compile(r"^\*\*(.+?):\*\*\s*$", re.MULTILINE)
@@ -622,6 +625,7 @@ Security rules:
             input=cast(Any, self._request_input(vehicle=vehicle, job=job, location=location)),
             text=cast(Any, {"format": _text_format_param(CombinedResearchEnvelope)}),
         )
+        self._log_usage(model=model, response=response)
         raw_text = _response_output_text(response)
         try:
             payload = parse_json_object(raw_text)
@@ -631,6 +635,48 @@ Security rules:
             mode = "json_fallback"
         parsed = _coerce_combined_research_envelope(payload)
         return parsed, response, mode
+
+    def _log_usage(self, *, model: str, response: Any) -> None:
+        """Always logs real, verifiable token counts from the API response.
+        Only adds a dollar estimate when the owner has configured per-model
+        $/1K pricing (see Settings' openai_*_cost_per_1k fields) -- OpenAI's
+        prices change over time and this app has no live pricing API, so
+        computing a cost without owner-supplied pricing would be a
+        fabricated number, not a real one."""
+        usage = getattr(response, "usage", None)
+        input_tokens = getattr(usage, "input_tokens", None)
+        output_tokens = getattr(usage, "output_tokens", None)
+        total_tokens = getattr(usage, "total_tokens", None)
+        fields: dict[str, object] = {
+            "openai_model": model,
+            "openai_input_tokens": input_tokens,
+            "openai_output_tokens": output_tokens,
+            "openai_total_tokens": total_tokens,
+        }
+        cost = self._estimate_cost_usd(
+            model=model, input_tokens=input_tokens, output_tokens=output_tokens
+        )
+        if cost is not None:
+            fields["openai_estimated_cost_usd"] = round(cost, 6)
+        logger.info("OpenAI usage", extra=fields)
+
+    def _estimate_cost_usd(
+        self, *, model: str, input_tokens: object, output_tokens: object
+    ) -> float | None:
+        if not isinstance(input_tokens, int | float) or not isinstance(output_tokens, int | float):
+            return None
+        settings = self._settings
+        if model == settings.estimator_model:
+            input_price = settings.openai_estimator_model_input_cost_per_1k
+            output_price = settings.openai_estimator_model_output_cost_per_1k
+        elif model == settings.openai_fallback_model:
+            input_price = settings.openai_fallback_model_input_cost_per_1k
+            output_price = settings.openai_fallback_model_output_cost_per_1k
+        else:
+            return None
+        if input_price is None or output_price is None:
+            return None
+        return (input_tokens / 1000) * input_price + (output_tokens / 1000) * output_price
 
     @staticmethod
     def _error_code(exc: Exception) -> str:

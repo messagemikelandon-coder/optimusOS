@@ -5,9 +5,29 @@ from collections.abc import Generator
 import pytest
 from sqlalchemy.orm import Session
 
+import app.main as main
 from app.auth import bootstrap_owner_account
 from app.config import Settings
 from app.db import Base, build_engine, build_session_factory
+
+
+@pytest.fixture(autouse=True)
+def _reset_rate_limiter_singletons() -> None:
+    """`main.py`'s rate limiters are process-wide, lazily-constructed
+    singletons (by design, so a real deployment shares one limiter across
+    requests) -- without a reset, their in-process fallback state
+    accumulates across every test in a single pytest run, since nearly
+    every test authenticates via the same fake client host from
+    `request_for()`. Without this fixture, tests unrelated to rate
+    limiting can start failing with a real 429 purely because enough
+    *other* tests logged in earlier in the same process. Resetting to
+    None forces a fresh limiter (and empty fallback event history) per
+    test -- this only affects test isolation, not production behavior,
+    since a real process never resets these between requests either."""
+    main._rate_limiter = None
+    main._rate_limiter_redis_url = None
+    main._login_rate_limiter = None
+    main._login_rate_limiter_redis_url = None
 
 
 @pytest.fixture
