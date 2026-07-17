@@ -150,6 +150,7 @@ from app.models import (
     DiagnosticFindingListResponse,
     DiagnosticFindingRead,
     DiagnosticFindingUpdate,
+    DiagnosticInspectionReportResponse,
     EstimateApprovalActionRequest,
     EstimateApprovalActionResponse,
     EstimateApprovalAuditResponse,
@@ -292,6 +293,7 @@ from app.purchase_order_store import (
 )
 from app.rate_limit import RateLimiter, RateLimitExceeded, RedisSlidingWindowRateLimiter
 from app.report_store import (
+    get_diagnostic_inspection_report,
     get_inventory_valuation_report,
     get_parts_usage_report,
     get_payment_activity_report,
@@ -3251,6 +3253,29 @@ async def get_work_order_cycle_time_report_record(
         )
     except SQLAlchemyError as exc:
         logger.warning("Work order cycle time report failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Report storage is unavailable.",
+        ) from exc
+
+
+@app.get("/api/reports/diagnostic-inspection", response_model=DiagnosticInspectionReportResponse)
+async def get_diagnostic_inspection_report_record(
+    db: DbSessionDep,
+    auth: OwnerAuthContextDep,
+    date_from: Annotated[datetime | None, Query()] = None,
+    date_to: Annotated[datetime | None, Query()] = None,
+) -> DiagnosticInspectionReportResponse:
+    resolved_to = date_to or datetime.now(UTC)
+    resolved_from = date_from or (resolved_to - timedelta(days=30))
+    if resolved_from >= resolved_to:
+        raise HTTPException(status_code=422, detail="date_from must be before date_to.")
+    try:
+        return get_diagnostic_inspection_report(
+            db=db, auth=auth, date_from=resolved_from, date_to=resolved_to
+        )
+    except SQLAlchemyError as exc:
+        logger.warning("Diagnostic/inspection report failed due to storage error.")
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Report storage is unavailable.",

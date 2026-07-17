@@ -9,6 +9,8 @@ from sqlalchemy.orm import Session
 
 from app.auth import AuthContext, effective_owner_id, ensure_utc
 from app.db_models import (
+    DiagnosticFinding,
+    Inspection,
     Invoice,
     InvoicePayment,
     Part,
@@ -23,6 +25,8 @@ from app.db_models import (
 )
 from app.models import (
     DashboardMetric,
+    DiagnosticInspectionReportResponse,
+    InspectionItem,
     InventoryValuationReportResponse,
     LowStockPartRead,
     PartsUsageReportResponse,
@@ -42,6 +46,7 @@ from app.models import (
 from app.technician_store import display_name as technician_display_name
 
 __all__ = [
+    "get_diagnostic_inspection_report",
     "get_inventory_valuation_report",
     "get_parts_usage_report",
     "get_payment_activity_report",
@@ -457,4 +462,67 @@ def get_work_order_cycle_time_report(
         slowest_cycle_time_hours=round(slowest, 2),
         comeback_count=comeback_count,
         comeback_rate_percent=round((comeback_count / count * 100) if count else 0.0, 1),
+    )
+
+
+def get_diagnostic_inspection_report(
+    *, db: Session, auth: AuthContext, date_from: datetime, date_to: datetime
+) -> DiagnosticInspectionReportResponse:
+    """Counts findings/inspections created in the window regardless of
+    current `is_archived` status -- a deliberate choice, since this is an
+    activity report (what work was logged in the period), and archiving
+    afterward doesn't undo that the observation was made. Inspection `items`
+    is stored as an untyped JSON column at the DB level, but the application
+    layer (`InspectionItem` in `app/models.py`) enforces its shape on every
+    write, so counting status literals in Python here is reading a genuinely
+    structured field, not guessing at freeform data."""
+    owner_id = effective_owner_id(auth)
+
+    finding_rows = db.execute(
+        select(DiagnosticFinding.conclusion).where(
+            DiagnosticFinding.owner_user_id == owner_id,
+            DiagnosticFinding.created_at >= date_from,
+            DiagnosticFinding.created_at < date_to,
+        )
+    ).all()
+    diagnostic_finding_count = len(finding_rows)
+    findings_missing_conclusion = sum(1 for (conclusion,) in finding_rows if not conclusion)
+
+    inspection_rows = db.execute(
+        select(Inspection.items).where(
+            Inspection.owner_user_id == owner_id,
+            Inspection.created_at >= date_from,
+            Inspection.created_at < date_to,
+        )
+    ).all()
+    inspection_count = len(inspection_rows)
+    inspection_item_count = 0
+    items_ok = 0
+    items_attention = 0
+    items_fail = 0
+    for (items,) in inspection_rows:
+        for item in items or []:
+            inspection_item_count += 1
+            # Revalidate through the Pydantic model rather than reading the
+            # raw dict directly -- matches inspection_store.py's own pattern
+            # and means a malformed/corrupted status value raises loudly
+            # instead of being silently counted as "ok".
+            status = InspectionItem.model_validate(item).status
+            if status == "attention":
+                items_attention += 1
+            elif status == "fail":
+                items_fail += 1
+            else:
+                items_ok += 1
+
+    return DiagnosticInspectionReportResponse(
+        date_from=ensure_utc(date_from),
+        date_to=ensure_utc(date_to),
+        diagnostic_finding_count=diagnostic_finding_count,
+        findings_missing_conclusion=findings_missing_conclusion,
+        inspection_count=inspection_count,
+        inspection_item_count=inspection_item_count,
+        items_ok=items_ok,
+        items_attention=items_attention,
+        items_fail=items_fail,
     )
