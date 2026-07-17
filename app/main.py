@@ -195,6 +195,7 @@ from app.models import (
     PartAllocationListResponse,
     PartAllocationRead,
     PartAllocationReturnRequest,
+    PartAllocationTechnicianRead,
     PartAllocationUseRequest,
     PartArchiveResponse,
     PartCreate,
@@ -677,7 +678,11 @@ async def login(
         SecurityEventType.LOGIN_SUCCEEDED,
         request=request,
         level=logging.INFO,
-        username=payload.username,
+        # Hashed for the same reason as LOGIN_FAILED above, and for
+        # consistency with it -- a plaintext username has no legitimate need
+        # to sit in a structured log line when `user_id` already identifies
+        # the account precisely.
+        username_hash=hashlib.sha256(payload.username.encode("utf-8")).hexdigest()[:12],
         user_id=user.id,
     )
     return AuthSessionResponse(
@@ -1679,13 +1684,16 @@ async def list_purchase_order_receipt_records(
         ) from exc
 
 
-@app.post("/api/work-orders/{work_order_id}/part-allocations", response_model=PartAllocationRead)
+@app.post(
+    "/api/work-orders/{work_order_id}/part-allocations",
+    response_model=PartAllocationRead | PartAllocationTechnicianRead,
+)
 async def create_part_allocation_record(
     work_order_id: int,
     payload: PartAllocationCreate,
     db: DbSessionDep,
     auth: OwnerOrTechnicianAuthContextDep,
-) -> PartAllocationRead:
+) -> PartAllocationRead | PartAllocationTechnicianRead:
     try:
         return create_part_allocation(
             db=db, auth=auth, work_order_id=work_order_id, payload=payload
@@ -1720,12 +1728,15 @@ async def list_part_allocation_records(
         ) from exc
 
 
-@app.get("/api/part-allocations/{allocation_id}", response_model=PartAllocationRead)
+@app.get(
+    "/api/part-allocations/{allocation_id}",
+    response_model=PartAllocationRead | PartAllocationTechnicianRead,
+)
 async def get_part_allocation_record(
     allocation_id: int,
     db: DbSessionDep,
     auth: OwnerOrTechnicianAuthContextDep,
-) -> PartAllocationRead:
+) -> PartAllocationRead | PartAllocationTechnicianRead:
     try:
         return get_part_allocation(db=db, auth=auth, allocation_id=allocation_id)
     except PartAllocationNotFoundError as exc:
@@ -1738,13 +1749,16 @@ async def get_part_allocation_record(
         ) from exc
 
 
-@app.post("/api/part-allocations/{allocation_id}/allocate", response_model=PartAllocationRead)
+@app.post(
+    "/api/part-allocations/{allocation_id}/allocate",
+    response_model=PartAllocationRead | PartAllocationTechnicianRead,
+)
 async def allocate_part_record(
     allocation_id: int,
     payload: PartAllocationAllocateRequest,
     db: DbSessionDep,
     auth: OwnerOrTechnicianAuthContextDep,
-) -> PartAllocationRead:
+) -> PartAllocationRead | PartAllocationTechnicianRead:
     try:
         return allocate_part(db=db, auth=auth, allocation_id=allocation_id, payload=payload)
     except PartAllocationNotFoundError as exc:
@@ -1759,13 +1773,16 @@ async def allocate_part_record(
         ) from exc
 
 
-@app.post("/api/part-allocations/{allocation_id}/use", response_model=PartAllocationRead)
+@app.post(
+    "/api/part-allocations/{allocation_id}/use",
+    response_model=PartAllocationRead | PartAllocationTechnicianRead,
+)
 async def use_part_allocation_record(
     allocation_id: int,
     payload: PartAllocationUseRequest,
     db: DbSessionDep,
     auth: OwnerOrTechnicianAuthContextDep,
-) -> PartAllocationRead:
+) -> PartAllocationRead | PartAllocationTechnicianRead:
     try:
         return use_part_allocation(db=db, auth=auth, allocation_id=allocation_id, payload=payload)
     except PartAllocationNotFoundError as exc:
@@ -1780,13 +1797,16 @@ async def use_part_allocation_record(
         ) from exc
 
 
-@app.post("/api/part-allocations/{allocation_id}/return", response_model=PartAllocationRead)
+@app.post(
+    "/api/part-allocations/{allocation_id}/return",
+    response_model=PartAllocationRead | PartAllocationTechnicianRead,
+)
 async def return_part_allocation_record(
     allocation_id: int,
     payload: PartAllocationReturnRequest,
     db: DbSessionDep,
     auth: OwnerOrTechnicianAuthContextDep,
-) -> PartAllocationRead:
+) -> PartAllocationRead | PartAllocationTechnicianRead:
     try:
         return return_part_allocation(
             db=db, auth=auth, allocation_id=allocation_id, payload=payload

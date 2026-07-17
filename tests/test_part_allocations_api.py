@@ -9,6 +9,7 @@ from app.models import (
     EstimatePaymentOptionCode,
     PartAllocationAllocateRequest,
     PartAllocationCreate,
+    PartAllocationRead,
     PartAllocationReturnRequest,
     PartAllocationUseRequest,
     TechnicianCreate,
@@ -103,6 +104,7 @@ async def test_create_and_list_part_allocation_snapshots_unit_cost(
     )
     assert created.quantity_required == 3
     assert created.quantity_allocated == 0
+    assert isinstance(created, PartAllocationRead)  # owner session: full read, cost included
     assert created.unit_cost_snapshot == part.unit_cost
 
     listed = await main.list_part_allocation_records(work_order.id, db_session, auth)
@@ -276,6 +278,114 @@ async def test_technician_can_create_and_allocate_parts_on_own_assigned_work_ord
     # The owner can see it too.
     owner_fetched = await main.get_part_allocation_record(created.id, db_session, owner_auth)
     assert owner_fetched.id == created.id
+
+
+async def test_technician_part_allocation_response_excludes_unit_cost_snapshot(
+    monkeypatch, settings, db_session: Session
+) -> None:
+    """`unit_cost_snapshot` is an internal cost-basis field that feeds the
+    owner's Gross Profit calculation -- a technician's own view of a part
+    allocation must not expose it, same reasoning as `TechnicianSelfRead`
+    omitting `hourly_cost`. Found by an `optimus-security-reviewer` pass
+    (2026-07-17); this test pins the fix."""
+    _, owner_response = await login_as(settings, db_session)
+    owner_auth = auth_context(settings, db_session, raw_cookie_from_response(owner_response))
+    technician_auth, work_order, _vehicle = await _create_technician_with_assigned_work_order(
+        monkeypatch, settings, db_session, owner_auth
+    )
+    vendor = await main.create_vendor_record(vendor_payload(), db_session, owner_auth)
+    part = await main.create_part_record(
+        part_payload(vendor_id=vendor.id, quantity_on_hand=10, unit_cost=42.5),
+        db_session,
+        owner_auth,
+    )
+
+    created = await main.create_part_allocation_record(
+        work_order.id,
+        PartAllocationCreate(part_id=part.id, quantity_required=1),
+        db_session,
+        technician_auth,
+    )
+    assert "unit_cost_snapshot" not in type(created).model_fields
+
+    owner_fetched = await main.get_part_allocation_record(created.id, db_session, owner_auth)
+    assert isinstance(owner_fetched, PartAllocationRead)  # owner session: full read, cost included
+    assert owner_fetched.unit_cost_snapshot == 42.5
+
+    listed = await main.list_part_allocation_records(work_order.id, db_session, technician_auth)
+    assert "unit_cost_snapshot" not in type(listed.items[0]).model_fields
+
+
+def test_technician_part_allocation_wire_response_omits_unit_cost_snapshot_key(
+    monkeypatch, settings, db_session: Session
+) -> None:
+    """Real HTTP through the actual FastAPI dependency graph, not a direct
+    handler call -- proves the `PartAllocationRead | PartAllocationTechnicianRead`
+    `response_model` union actually omits `unit_cost_snapshot` from the JSON
+    body for a technician session rather than serializing it as `null`
+    (FastAPI/Pydantic union serialization behavior, not just a Python-object
+    type check). Companion to
+    `test_technician_part_allocation_response_excludes_unit_cost_snapshot`,
+    which proves the store returns the narrower model but not what actually
+    lands on the wire."""
+    import asyncio
+
+    from fastapi.testclient import TestClient
+
+    from app.db import get_db_session, get_settings
+
+    async def _seed() -> tuple[int, int]:
+        _, owner_response = await login_as(settings, db_session)
+        owner_auth = auth_context(settings, db_session, raw_cookie_from_response(owner_response))
+        _technician_auth, work_order, _vehicle = await _create_technician_with_assigned_work_order(
+            monkeypatch, settings, db_session, owner_auth
+        )
+        vendor = await main.create_vendor_record(vendor_payload(), db_session, owner_auth)
+        part = await main.create_part_record(
+            part_payload(vendor_id=vendor.id, quantity_on_hand=10, unit_cost=42.5),
+            db_session,
+            owner_auth,
+        )
+        allocation = await main.create_part_allocation_record(
+            work_order.id,
+            PartAllocationCreate(part_id=part.id, quantity_required=1),
+            db_session,
+            owner_auth,
+        )
+        return allocation.id, work_order.id
+
+    allocation_id, work_order_id = asyncio.run(_seed())
+
+    main.app.dependency_overrides[get_settings] = lambda: settings
+    main.app.dependency_overrides[get_db_session] = lambda: db_session
+    try:
+        client = TestClient(main.app)
+        tech_login = client.post(
+            "/api/auth/login",
+            json={"username": "jordan.reyes", "password": "tech-login-pass-123"},
+        )
+        assert tech_login.status_code == 200
+        assert tech_login.json()["user"]["role"] == "technician"
+
+        get_response = client.get(f"/api/part-allocations/{allocation_id}")
+        assert get_response.status_code == 200
+        assert "unit_cost_snapshot" not in get_response.json()
+
+        list_response = client.get(f"/api/work-orders/{work_order_id}/part-allocations")
+        assert list_response.status_code == 200
+        assert "unit_cost_snapshot" not in list_response.json()["items"][0]
+        client.post("/api/auth/logout")
+
+        owner_login = client.post(
+            "/api/auth/login",
+            json={"username": "owner", "password": "owner-password-123"},
+        )
+        assert owner_login.status_code == 200
+        owner_get = client.get(f"/api/part-allocations/{allocation_id}")
+        assert owner_get.status_code == 200
+        assert owner_get.json()["unit_cost_snapshot"] == 42.5
+    finally:
+        main.app.dependency_overrides.clear()
 
 
 async def test_technician_cannot_access_allocations_on_an_unassigned_work_order(

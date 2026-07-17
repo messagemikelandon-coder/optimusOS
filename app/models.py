@@ -1985,8 +1985,30 @@ class PartAllocationRead(BaseModel):
     updated_at: datetime
 
 
+class PartAllocationTechnicianRead(BaseModel):
+    """Same shape as `PartAllocationRead` minus `unit_cost_snapshot` -- that's
+    an internal cost-basis field (it feeds the owner's Gross Profit
+    calculation, see `docs/context/KNOWN_ISSUES.md`) that a technician's own
+    view of a part allocation should not expose, same reasoning as
+    `TechnicianSelfRead` omitting `hourly_cost`."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    work_order_id: int
+    part_id: int
+    part_number: str
+    part_description: str
+    quantity_required: int
+    quantity_allocated: int
+    quantity_used: int
+    quantity_returned: int
+    created_at: datetime
+    updated_at: datetime
+
+
 class PartAllocationListResponse(BaseModel):
-    items: list[PartAllocationRead]
+    items: list[PartAllocationRead | PartAllocationTechnicianRead]
 
 
 class PartAllocationAllocateRequest(BaseModel):

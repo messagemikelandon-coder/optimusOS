@@ -13,6 +13,7 @@ from app.models import (
     PartAllocationListResponse,
     PartAllocationRead,
     PartAllocationReturnRequest,
+    PartAllocationTechnicianRead,
     PartAllocationUseRequest,
 )
 from app.technician_store import get_technician_for_user
@@ -74,7 +75,28 @@ def _require_part(db: Session, auth: AuthContext, part_id: int) -> Part:
     return part
 
 
-def _to_read(allocation: PartAllocation) -> PartAllocationRead:
+def _to_read(
+    allocation: PartAllocation, auth: AuthContext
+) -> PartAllocationRead | PartAllocationTechnicianRead:
+    if auth.user.role == "technician":
+        # `unit_cost_snapshot` is an internal cost-basis field that feeds the
+        # owner's Gross Profit calculation -- omitted entirely for a
+        # technician's own view, same reasoning as `TechnicianSelfRead`
+        # omitting `hourly_cost`, not just nulled out (nulling it would be
+        # ambiguous with "no cost data recorded").
+        return PartAllocationTechnicianRead(
+            id=allocation.id,
+            work_order_id=allocation.work_order_id,
+            part_id=allocation.part_id,
+            part_number=allocation.part.part_number,
+            part_description=allocation.part.description,
+            quantity_required=allocation.quantity_required,
+            quantity_allocated=allocation.quantity_allocated,
+            quantity_used=allocation.quantity_used,
+            quantity_returned=allocation.quantity_returned,
+            created_at=ensure_utc(allocation.created_at),
+            updated_at=ensure_utc(allocation.updated_at),
+        )
     return PartAllocationRead(
         id=allocation.id,
         work_order_id=allocation.work_order_id,
@@ -120,7 +142,7 @@ def _record_event(
 
 def create_part_allocation(
     *, db: Session, auth: AuthContext, work_order_id: int, payload: PartAllocationCreate
-) -> PartAllocationRead:
+) -> PartAllocationRead | PartAllocationTechnicianRead:
     _validate_work_order_access(db, auth, work_order_id)
     part = _require_part(db, auth, payload.part_id)
     if part.is_archived:
@@ -138,13 +160,13 @@ def create_part_allocation(
     db.add(allocation)
     db.commit()
     db.refresh(allocation)
-    return _to_read(allocation)
+    return _to_read(allocation, auth)
 
 
 def get_part_allocation(
     *, db: Session, auth: AuthContext, allocation_id: int
-) -> PartAllocationRead:
-    return _to_read(_get_allocation(db, auth, allocation_id))
+) -> PartAllocationRead | PartAllocationTechnicianRead:
+    return _to_read(_get_allocation(db, auth, allocation_id), auth)
 
 
 def list_part_allocations(
@@ -156,12 +178,12 @@ def list_part_allocations(
         .where(PartAllocation.work_order_id == work_order_id)
         .order_by(PartAllocation.created_at.asc(), PartAllocation.id.asc())
     ).all()
-    return PartAllocationListResponse(items=[_to_read(item) for item in allocations])
+    return PartAllocationListResponse(items=[_to_read(item, auth) for item in allocations])
 
 
 def allocate_part(
     *, db: Session, auth: AuthContext, allocation_id: int, payload: PartAllocationAllocateRequest
-) -> PartAllocationRead:
+) -> PartAllocationRead | PartAllocationTechnicianRead:
     allocation = _get_allocation(db, auth, allocation_id)
 
     # Lock the allocation and its part, then reload both with
@@ -217,12 +239,12 @@ def allocate_part(
     )
     db.commit()
     db.refresh(allocation)
-    return _to_read(allocation)
+    return _to_read(allocation, auth)
 
 
 def use_part_allocation(
     *, db: Session, auth: AuthContext, allocation_id: int, payload: PartAllocationUseRequest
-) -> PartAllocationRead:
+) -> PartAllocationRead | PartAllocationTechnicianRead:
     allocation = _get_allocation(db, auth, allocation_id)
     allocation = db.scalar(
         select(PartAllocation)
@@ -243,12 +265,12 @@ def use_part_allocation(
     _record_event(db, allocation, auth, event_type="used", quantity_delta=payload.quantity)
     db.commit()
     db.refresh(allocation)
-    return _to_read(allocation)
+    return _to_read(allocation, auth)
 
 
 def return_part_allocation(
     *, db: Session, auth: AuthContext, allocation_id: int, payload: PartAllocationReturnRequest
-) -> PartAllocationRead:
+) -> PartAllocationRead | PartAllocationTechnicianRead:
     allocation = _get_allocation(db, auth, allocation_id)
     allocation = db.scalar(
         select(PartAllocation)
@@ -280,7 +302,7 @@ def return_part_allocation(
     _record_event(db, allocation, auth, event_type="returned", quantity_delta=payload.quantity)
     db.commit()
     db.refresh(allocation)
-    return _to_read(allocation)
+    return _to_read(allocation, auth)
 
 
 def list_part_allocation_events(
