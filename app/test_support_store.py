@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import secrets
+import threading
+import time
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Literal
@@ -15,6 +17,46 @@ from app.models import TechnicianCreate, TechnicianProvisionLoginRequest
 from app.technician_store import create_technician, provision_login
 
 _USERNAME_PREFIX = "e2e-"
+
+# Process-global state for the concurrency probe below -- deliberately not
+# request-scoped, since the whole point is to observe overlap *across*
+# concurrent requests within this one process. Guarded by a lock since
+# multiple request-handling threads touch it at once (that's the point).
+_concurrency_probe_lock = threading.Lock()
+_concurrency_probe_in_flight = 0
+_concurrency_probe_max_observed = 0
+
+
+def concurrency_probe(delay_ms: int) -> int:
+    """Sleeps for `delay_ms` while tracking how many concurrent invocations
+    of this function were in flight at once, process-wide. Used by
+    `tests/e2e/test_request_concurrency.py` to prove real HTTP-level
+    request concurrency exists (Phase 1 of the /goal roadmap) -- a timing
+    threshold (e.g. "two requests took ~1x not ~2x as long") is flaky under
+    real scheduling jitter; a shared in-flight counter is not. This is a
+    blocking, synchronous function by design, called via
+    `asyncio.to_thread` from the route layer exactly like every other store
+    function in this app -- it wouldn't prove anything about real
+    concurrency if it were natively async.
+    """
+    global _concurrency_probe_in_flight, _concurrency_probe_max_observed
+    with _concurrency_probe_lock:
+        _concurrency_probe_in_flight += 1
+        _concurrency_probe_max_observed = max(
+            _concurrency_probe_max_observed, _concurrency_probe_in_flight
+        )
+    time.sleep(delay_ms / 1000)
+    with _concurrency_probe_lock:
+        observed = _concurrency_probe_max_observed
+        _concurrency_probe_in_flight -= 1
+    return observed
+
+
+def reset_concurrency_probe() -> None:
+    global _concurrency_probe_in_flight, _concurrency_probe_max_observed
+    with _concurrency_probe_lock:
+        _concurrency_probe_in_flight = 0
+        _concurrency_probe_max_observed = 0
 
 
 class TestSupportError(ValueError):
