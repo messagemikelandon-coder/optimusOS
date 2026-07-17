@@ -193,6 +193,13 @@ async def test_login_success_logs_security_event(settings, db_session: Session, 
         r for r in caplog.records if getattr(r, "security_event", None) == "auth.login_succeeded"
     ]
     assert len(events) == 1
+    # Same hashing discipline as the failure-path event -- a successful
+    # login still has no legitimate reason to put a plaintext username in a
+    # structured log line when `user_id` already identifies the account.
+    assert hasattr(events[0], "username_hash")
+    assert not hasattr(events[0], "username")
+    assert "owner" not in events[0].getMessage()
+    assert events[0].username_hash != "owner"
 
 
 @pytest.mark.anyio

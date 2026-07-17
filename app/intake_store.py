@@ -224,6 +224,17 @@ def convert_intake_request(
     payload: IntakeRequestConvertRequest,
 ) -> IntakeRequestConvertResponse:
     intake_request = _get_intake_request(db, auth, intake_request_id)
+
+    # Lock the row before checking status, then reload it with
+    # populate_existing so a concurrent double-conversion request (two
+    # requests that both read the row before either commits) serializes on
+    # the lock rather than both passing the status check -- same pattern as
+    # `purchase_order_store.py`'s receive-line-item lock and
+    # `part_allocation_store.py`'s allocate/use/return locks.
+    db.execute(
+        select(IntakeRequest.id).where(IntakeRequest.id == intake_request.id).with_for_update()
+    )
+    db.refresh(intake_request)
     if intake_request.status == "converted":
         raise IntakeConflictError("This intake request has already been converted.")
 
