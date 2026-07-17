@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 
 from app.auth import AuthContext, hash_password, normalize_username
 from app.config import Settings
-from app.db_models import AuthSession, UserAccount
+from app.db_models import Appointment, AuthSession, UserAccount
 from app.models import TechnicianCreate, TechnicianProvisionLoginRequest
 from app.technician_store import create_technician, provision_login
 
@@ -150,6 +150,28 @@ def _delete_owner_and_dependents(db: Session, owner: UserAccount) -> None:
     technicians = db.scalars(select(UserAccount).where(UserAccount.shop_owner_id == owner.id)).all()
     for technician_user in technicians:
         db.delete(technician_user)
+
+    # Appointments must be deleted before the owner cascade reaches
+    # customers/vehicles/technicians: `appointments.customer_id`/`vehicle_id`/
+    # `technician_id` are deliberately `ON DELETE RESTRICT` (an appointment
+    # must never silently vanish or lose its audit trail if a customer/
+    # vehicle/technician record is later removed in real usage, which only
+    # ever archives those records rather than hard-deleting them). This test
+    # -support cleanup path is the one place in the whole codebase that does
+    # hard-delete them, and it was the first thing to ever exercise this
+    # combination against real Postgres (SQLite, used by the fast unit
+    # suite, does not enforce foreign keys, so this was never caught there)
+    # -- found via a real `ForeignKeyViolation` on `appointments_vehicle_id_
+    # fkey` while adding `tests/e2e/test_scheduling_concurrency.py`.
+    # `owner_user_id` on `appointments` does cascade, so this explicit
+    # delete is only needed to get the ordering right within one
+    # transaction, not to avoid an orphaned row.
+    appointments = db.scalars(
+        select(Appointment).where(Appointment.owner_user_id == owner.id)
+    ).all()
+    for appointment in appointments:
+        db.delete(appointment)
+
     db.delete(owner)
 
 

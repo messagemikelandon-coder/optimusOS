@@ -148,10 +148,18 @@ def synthetic_owner(live_server: LiveServer) -> Generator[SyntheticCredentials, 
     try:
         yield credentials
     finally:
-        httpx.delete(
+        # raise_for_status() here matters: this call previously failed
+        # silently (fire-and-forget) whenever a test created Scheduling data
+        # for this owner, because of a real FK-ordering bug in
+        # `app/test_support_store.py::_delete_owner_and_dependents` (fixed
+        # alongside `tests/e2e/test_scheduling_concurrency.py`) -- a
+        # regression here should fail loudly, not leave synthetic data
+        # behind unnoticed for the rest of the session.
+        cleanup_response = httpx.delete(
             f"{live_server.base_url}/api/test-support/synthetic-accounts/{credentials.user_id}",
             timeout=10,
         )
+        cleanup_response.raise_for_status()
 
 
 @pytest.fixture
