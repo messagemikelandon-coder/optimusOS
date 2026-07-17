@@ -591,15 +591,15 @@ def _tcp_dependency_ready(url: str, default_port: int, timeout_seconds: float = 
 
 @app.get("/ready")
 async def ready(settings: SettingsDep) -> dict[str, object]:
-    postgres_ready = _tcp_dependency_ready(settings.database_url, 5432)
-    redis_ready = _tcp_dependency_ready(settings.redis_url, 6379)
+    postgres_ready = await asyncio.to_thread(_tcp_dependency_ready, settings.database_url, 5432)
+    redis_ready = await asyncio.to_thread(_tcp_dependency_ready, settings.redis_url, 6379)
 
     schema_compatibility: str = SchemaCompatibility.UNREACHABLE.value
     database_migration_revision: str | None = None
     schema_safe_to_serve = False
     if postgres_ready:
         try:
-            report = check_schema_compatibility(get_engine(settings))
+            report = await asyncio.to_thread(check_schema_compatibility, get_engine(settings))
             schema_compatibility = report.compatibility.value
             database_migration_revision = report.database_migration_revision
             schema_safe_to_serve = report.safe_to_serve
@@ -2342,7 +2342,7 @@ async def get_context(
     auth: AuthContextDep,
     scope: ContextScope = ContextScope.PROJECT,
 ) -> ContextListResponse:
-    ensure_context_dependencies(settings)
+    await asyncio.to_thread(ensure_context_dependencies, settings)
     try:
         return await asyncio.to_thread(
             list_entries,
@@ -2372,7 +2372,7 @@ async def put_context(
     auth: AuthContextDep,
     scope: ContextScope = ContextScope.PROJECT,
 ) -> ContextEntryRead:
-    ensure_context_dependencies(settings)
+    await asyncio.to_thread(ensure_context_dependencies, settings)
     try:
         return await asyncio.to_thread(
             upsert_entry,
@@ -2409,7 +2409,7 @@ async def remove_context(
     scope: ContextScope = ContextScope.PROJECT,
     expected_revision: int | None = None,
 ) -> ContextDeleteResponse:
-    ensure_context_dependencies(settings)
+    await asyncio.to_thread(ensure_context_dependencies, settings)
     try:
         return await asyncio.to_thread(
             delete_entry,
@@ -3142,7 +3142,9 @@ async def record_invoice_payment(
     auth: OwnerAuthContextDep,
 ) -> InvoiceRead:
     try:
-        return record_payment(db=db, auth=auth, invoice_id=invoice_id, payload=payload)
+        return await asyncio.to_thread(
+            record_payment, db=db, auth=auth, invoice_id=invoice_id, payload=payload
+        )
     except InvoiceNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except InvoiceStoreError as exc:
@@ -3164,7 +3166,8 @@ async def void_invoice_payment(
     auth: OwnerAuthContextDep,
 ) -> InvoiceRead:
     try:
-        return void_payment(
+        return await asyncio.to_thread(
+            void_payment,
             db=db,
             auth=auth,
             invoice_id=invoice_id,

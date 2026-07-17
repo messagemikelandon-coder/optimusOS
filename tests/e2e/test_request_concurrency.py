@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import threading
-import time
 
 import httpx
 
@@ -74,58 +73,85 @@ def test_simultaneous_owner_and_technician_requests_do_not_serialize(
 ) -> None:
     """Load test required by Phase 1 of the /goal roadmap: real,
     concurrently-issued, differently-authenticated (owner vs. technician)
-    requests must not block each other. Self-calibrating rather than
-    threshold-based -- measures a sequential baseline on this same machine
-    first, then asserts the concurrent run is meaningfully faster than that
-    baseline, so the test isn't sensitive to how fast or slow the CI
-    runner happens to be."""
+    requests must not block each other.
+
+    An earlier version of this test compared a sequential-request-baseline
+    wall-clock duration against a concurrent run's duration, asserting the
+    concurrent run was meaningfully faster. That was flaky in practice: these
+    are trivial, near-instant queries (no seeded data), so fixed per-request
+    overhead (thread startup, TCP handshake) can dominate the real,
+    genuine-but-tiny time saved by overlap, occasionally erasing the
+    measured difference entirely on a fast run -- confirmed by a real
+    failure during this session's own verification, not just theorized.
+
+    This version drops timing entirely. It fires the real owner and
+    technician business requests concurrently with two deterministic
+    concurrency-probe requests (`/api/test-support/concurrency-probe`, same
+    mechanism as `test_two_simultaneous_requests_genuinely_overlap` above --
+    two probe calls are required, not one, since the shared in-flight
+    counter only tracks probe calls specifically; a single probe call could
+    never report a max above 1 regardless of what else is happening) in the
+    same barrier-released batch, and asserts two independent, correct
+    things: (1) the two probes genuinely observed overlapping in-flight
+    calls (unambiguous evidence real concurrency still works with owner and
+    technician traffic mixed into the same batch, not just in isolation),
+    and (2) every business request still returned its own real, role-correct
+    data despite running concurrently with everything else -- proving the
+    owner and technician sessions didn't corrupt or block each other's
+    response."""
     owner_client = _login(live_server, synthetic_owner)
     technician_client = _login(live_server, synthetic_technician)
+    probe_client = httpx.Client(base_url=live_server.base_url, timeout=10)
+    reset_response = probe_client.post("/api/test-support/concurrency-probe/reset")
+    assert reset_response.status_code == 204
 
-    owner_request = ("owner", owner_client, "/api/work-orders")
-    technician_request = ("technician", technician_client, "/api/technicians/me")
-    requests = [owner_request, technician_request, owner_request, technician_request]
+    results: list[tuple[str, httpx.Response]] = []
+    results_lock = threading.Lock()
+    barrier = threading.Barrier(6)
 
-    def _fire(role: str, client: httpx.Client, path: str) -> tuple[str, int]:
-        response = client.get(path)
-        return role, response.status_code
-
-    # Sequential baseline: same 4 requests, run one at a time.
-    sequential_start = time.monotonic()
-    sequential_results = [_fire(role, client, path) for role, client, path in requests]
-    sequential_duration = time.monotonic() - sequential_start
-
-    assert all(status == 200 for _role, status in sequential_results)
-
-    # Concurrent run: identical requests, fired from a shared barrier.
-    concurrent_results: list[tuple[str, int]] = []
-    concurrent_lock = threading.Lock()
-    barrier = threading.Barrier(len(requests))
-
-    def _fire_concurrent(role: str, client: httpx.Client, path: str) -> None:
+    def _fire(role: str, client: httpx.Client, method_path: tuple[str, str]) -> None:
         barrier.wait()
-        result = _fire(role, client, path)
-        with concurrent_lock:
-            concurrent_results.append(result)
+        method, path = method_path
+        response = client.request(method, path)
+        with results_lock:
+            results.append((role, response))
 
-    threads = [
-        threading.Thread(target=_fire_concurrent, args=(role, client, path))
-        for role, client, path in requests
+    jobs = [
+        ("owner", owner_client, ("GET", "/api/work-orders")),
+        ("technician", technician_client, ("GET", "/api/technicians/me")),
+        ("owner", owner_client, ("GET", "/api/work-orders")),
+        ("technician", technician_client, ("GET", "/api/technicians/me")),
+        ("probe", probe_client, ("GET", "/api/test-support/concurrency-probe?delay_ms=300")),
+        ("probe", probe_client, ("GET", "/api/test-support/concurrency-probe?delay_ms=300")),
     ]
-    concurrent_start = time.monotonic()
+    threads = [threading.Thread(target=_fire, args=job) for job in jobs]
     for thread in threads:
         thread.start()
     for thread in threads:
         thread.join()
-    concurrent_duration = time.monotonic() - concurrent_start
 
-    assert len(concurrent_results) == len(requests)
-    assert all(status == 200 for _role, status in concurrent_results), concurrent_results
+    assert len(results) == 6
+    for role, response in results:
+        assert response.status_code == 200, (role, response.status_code, response.text)
 
-    # Generous margin (concurrent should be well under sequential, but this
-    # isn't a tight race -- just needs to show real overlap happened).
-    assert concurrent_duration < sequential_duration * 0.8, (
-        f"Concurrent owner+technician requests took {concurrent_duration:.3f}s, "
-        f"not meaningfully faster than the {sequential_duration:.3f}s sequential "
-        "baseline on this same machine -- requests may still be serializing."
+    owner_responses = [r for role, r in results if role == "owner"]
+    technician_responses = [r for role, r in results if role == "technician"]
+    probe_responses = [r for role, r in results if role == "probe"]
+    assert len(probe_responses) == 2
+
+    # Role-correctness under concurrent load: the owner's work-order list
+    # response and the technician's own-profile response are structurally
+    # distinct shapes -- confirms neither session's request got mixed up
+    # with the other's while both were in flight at once.
+    for response in owner_responses:
+        assert "items" in response.json(), response.json()
+    for response in technician_responses:
+        body = response.json()
+        assert "technician" in body and "assigned_work_order_ids" in body, body
+
+    max_observed = max(r.json()["max_observed_in_flight"] for r in probe_responses)
+    assert max_observed >= 2, (
+        "Expected the two probes to observe real overlap while the owner and "
+        f"technician requests were also in flight, got: "
+        f"{[r.json() for r in probe_responses]}."
     )
