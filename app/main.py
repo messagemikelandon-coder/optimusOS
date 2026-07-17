@@ -133,6 +133,7 @@ from app.models import (
     BayUpdate,
     ChatRequest,
     ChatResponse,
+    ConcurrencyProbeResponse,
     ContextDeleteResponse,
     ContextEntryRead,
     ContextEntryUpsertRequest,
@@ -360,9 +361,11 @@ from app.test_support_store import (
     TestSupportError,
     cleanup_all_synthetic_accounts,
     cleanup_synthetic_account,
+    concurrency_probe,
     provision_synthetic_owner,
     provision_synthetic_technician,
     provisioning_enabled,
+    reset_concurrency_probe,
 )
 from app.vehicle_store import (
     VehicleNotFoundError,
@@ -588,15 +591,15 @@ def _tcp_dependency_ready(url: str, default_port: int, timeout_seconds: float = 
 
 @app.get("/ready")
 async def ready(settings: SettingsDep) -> dict[str, object]:
-    postgres_ready = _tcp_dependency_ready(settings.database_url, 5432)
-    redis_ready = _tcp_dependency_ready(settings.redis_url, 6379)
+    postgres_ready = await asyncio.to_thread(_tcp_dependency_ready, settings.database_url, 5432)
+    redis_ready = await asyncio.to_thread(_tcp_dependency_ready, settings.redis_url, 6379)
 
     schema_compatibility: str = SchemaCompatibility.UNREACHABLE.value
     database_migration_revision: str | None = None
     schema_safe_to_serve = False
     if postgres_ready:
         try:
-            report = check_schema_compatibility(get_engine(settings))
+            report = await asyncio.to_thread(check_schema_compatibility, get_engine(settings))
             schema_compatibility = report.compatibility.value
             database_migration_revision = report.database_migration_revision
             schema_safe_to_serve = report.safe_to_serve
@@ -733,7 +736,7 @@ async def create_synthetic_owner(
     """
     _require_test_support_enabled(settings)
     try:
-        account = provision_synthetic_owner(db=db, settings=settings)
+        account = await asyncio.to_thread(provision_synthetic_owner, db=db, settings=settings)
     except TestSupportDisabledError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND) from exc
     except SQLAlchemyError as exc:
@@ -760,8 +763,11 @@ async def create_synthetic_technician(
     """Provision a synthetic technician under an existing synthetic owner."""
     _require_test_support_enabled(settings)
     try:
-        account = provision_synthetic_technician(
-            db=db, settings=settings, owner_username=payload.owner_username
+        account = await asyncio.to_thread(
+            provision_synthetic_technician,
+            db=db,
+            settings=settings,
+            owner_username=payload.owner_username,
         )
     except TestSupportDisabledError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND) from exc
@@ -804,7 +810,9 @@ async def delete_synthetic_account(
     """
     _require_test_support_enabled(settings)
     try:
-        deleted = cleanup_synthetic_account(db=db, settings=settings, user_id=user_id)
+        deleted = await asyncio.to_thread(
+            cleanup_synthetic_account, db=db, settings=settings, user_id=user_id
+        )
     except TestSupportDisabledError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND) from exc
     except SQLAlchemyError as exc:
@@ -830,7 +838,7 @@ async def delete_all_synthetic_accounts(
     """
     _require_test_support_enabled(settings)
     try:
-        count = cleanup_all_synthetic_accounts(db=db, settings=settings)
+        count = await asyncio.to_thread(cleanup_all_synthetic_accounts, db=db, settings=settings)
     except TestSupportDisabledError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND) from exc
     except SQLAlchemyError as exc:
@@ -842,6 +850,32 @@ async def delete_all_synthetic_accounts(
     return SyntheticCleanupResponse(deleted_count=count)
 
 
+@app.post("/api/test-support/concurrency-probe/reset", status_code=status.HTTP_204_NO_CONTENT)
+async def reset_concurrency_probe_record(settings: SettingsDep) -> None:
+    """Resets the concurrency probe's shared in-flight/max-observed
+    counters. Call before a batch of concurrent probe requests so a
+    previous test's leftover state can't inflate this one's result."""
+    _require_test_support_enabled(settings)
+    reset_concurrency_probe()
+
+
+@app.get("/api/test-support/concurrency-probe", response_model=ConcurrencyProbeResponse)
+async def get_concurrency_probe_record(
+    settings: SettingsDep, delay_ms: int = Query(default=200, ge=1, le=5000)
+) -> ConcurrencyProbeResponse:
+    """Sleeps for `delay_ms` while tracking how many concurrent calls to
+    this route were in flight at once, process-wide -- proof that request
+    handling is no longer serialized (Phase 1 of the /goal roadmap: this
+    route's blocking work is offloaded via `asyncio.to_thread`, same as
+    every other route in this app). See
+    `tests/e2e/test_request_concurrency.py`. Gated the same way as every
+    other `/api/test-support/*` route -- off by default, off in production.
+    """
+    _require_test_support_enabled(settings)
+    max_observed = await asyncio.to_thread(concurrency_probe, delay_ms)
+    return ConcurrencyProbeResponse(max_observed_in_flight=max_observed)
+
+
 @app.post("/api/customers", response_model=CustomerRead)
 async def create_customer_record(
     payload: CustomerCreate,
@@ -849,7 +883,7 @@ async def create_customer_record(
     auth: OwnerAuthContextDep,
 ) -> CustomerRead:
     try:
-        return create_customer(db=db, auth=auth, payload=payload)
+        return await asyncio.to_thread(create_customer, db=db, auth=auth, payload=payload)
     except CustomerStoreError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except SQLAlchemyError as exc:
@@ -871,7 +905,8 @@ async def list_customer_records(
     archived: bool = False,
 ) -> CustomerListResponse:
     try:
-        return list_customers(
+        return await asyncio.to_thread(
+            list_customers,
             db=db,
             auth=auth,
             settings=settings,
@@ -897,7 +932,7 @@ async def get_customer_record(
     auth: OwnerAuthContextDep,
 ) -> CustomerRead:
     try:
-        return get_customer(db=db, auth=auth, customer_id=customer_id)
+        return await asyncio.to_thread(get_customer, db=db, auth=auth, customer_id=customer_id)
     except CustomerNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except CustomerStoreError as exc:
@@ -918,7 +953,9 @@ async def update_customer_record(
     auth: OwnerAuthContextDep,
 ) -> CustomerRead:
     try:
-        return update_customer(db=db, auth=auth, customer_id=customer_id, payload=payload)
+        return await asyncio.to_thread(
+            update_customer, db=db, auth=auth, customer_id=customer_id, payload=payload
+        )
     except CustomerNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except CustomerStoreError as exc:
@@ -938,7 +975,7 @@ async def archive_customer_record(
     auth: OwnerAuthContextDep,
 ) -> CustomerArchiveResponse:
     try:
-        return archive_customer(db=db, auth=auth, customer_id=customer_id)
+        return await asyncio.to_thread(archive_customer, db=db, auth=auth, customer_id=customer_id)
     except CustomerNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except CustomerStoreError as exc:
@@ -959,7 +996,9 @@ async def create_vehicle_record(
     auth: OwnerAuthContextDep,
 ) -> VehicleRead:
     try:
-        return create_vehicle(db=db, auth=auth, customer_id=customer_id, payload=payload)
+        return await asyncio.to_thread(
+            create_vehicle, db=db, auth=auth, customer_id=customer_id, payload=payload
+        )
     except CustomerNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except VehicleStoreError as exc:
@@ -984,7 +1023,8 @@ async def list_customer_vehicle_records(
     archived: bool = False,
 ) -> VehicleListResponse:
     try:
-        return list_vehicles(
+        return await asyncio.to_thread(
+            list_vehicles,
             db=db,
             auth=auth,
             settings=settings,
@@ -1014,7 +1054,9 @@ async def get_customer_history_record(
     limit: int = Query(default=20, ge=1, le=50),
 ) -> CustomerHistoryResponse:
     try:
-        return get_customer_history(db=db, auth=auth, customer_id=customer_id, limit=limit)
+        return await asyncio.to_thread(
+            get_customer_history, db=db, auth=auth, customer_id=customer_id, limit=limit
+        )
     except CustomerNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except CustomerStoreError as exc:
@@ -1039,7 +1081,8 @@ async def list_vehicle_records(
     archived: bool = False,
 ) -> VehicleListResponse:
     try:
-        return list_vehicles(
+        return await asyncio.to_thread(
+            list_vehicles,
             db=db,
             auth=auth,
             settings=settings,
@@ -1068,7 +1111,7 @@ async def get_vehicle_record(
     auth: OwnerAuthContextDep,
 ) -> VehicleRead:
     try:
-        return get_vehicle(db=db, auth=auth, vehicle_id=vehicle_id)
+        return await asyncio.to_thread(get_vehicle, db=db, auth=auth, vehicle_id=vehicle_id)
     except VehicleNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except VehicleStoreError as exc:
@@ -1089,7 +1132,9 @@ async def update_vehicle_record(
     auth: OwnerAuthContextDep,
 ) -> VehicleRead:
     try:
-        return update_vehicle(db=db, auth=auth, vehicle_id=vehicle_id, payload=payload)
+        return await asyncio.to_thread(
+            update_vehicle, db=db, auth=auth, vehicle_id=vehicle_id, payload=payload
+        )
     except VehicleNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except VehicleStoreError as exc:
@@ -1109,7 +1154,7 @@ async def archive_vehicle_record(
     auth: OwnerAuthContextDep,
 ) -> VehicleArchiveResponse:
     try:
-        return archive_vehicle(db=db, auth=auth, vehicle_id=vehicle_id)
+        return await asyncio.to_thread(archive_vehicle, db=db, auth=auth, vehicle_id=vehicle_id)
     except VehicleNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except VehicleStoreError as exc:
@@ -1129,7 +1174,7 @@ async def create_technician_record(
     auth: OwnerAuthContextDep,
 ) -> TechnicianRead:
     try:
-        return create_technician(db=db, auth=auth, payload=payload)
+        return await asyncio.to_thread(create_technician, db=db, auth=auth, payload=payload)
     except TechnicianStoreError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except SQLAlchemyError as exc:
@@ -1151,7 +1196,8 @@ async def list_technician_records(
     archived: bool = False,
 ) -> TechnicianListResponse:
     try:
-        return list_technicians(
+        return await asyncio.to_thread(
+            list_technicians,
             db=db,
             auth=auth,
             settings=settings,
@@ -1176,7 +1222,7 @@ async def get_my_technician_record(
     auth: OwnerOrTechnicianAuthContextDep,
 ) -> TechnicianMeResponse:
     try:
-        return get_my_technician_profile(db=db, auth=auth)
+        return await asyncio.to_thread(get_my_technician_profile, db=db, auth=auth)
     except TechnicianNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except SQLAlchemyError as exc:
@@ -1193,7 +1239,7 @@ async def clock_in_record(
     auth: OwnerOrTechnicianAuthContextDep,
 ) -> TechnicianClockResponse:
     try:
-        return clock_in(db=db, auth=auth)
+        return await asyncio.to_thread(clock_in, db=db, auth=auth)
     except TechnicianNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except TechnicianConflictError as exc:
@@ -1212,7 +1258,7 @@ async def clock_out_record(
     auth: OwnerOrTechnicianAuthContextDep,
 ) -> TechnicianClockResponse:
     try:
-        return clock_out(db=db, auth=auth)
+        return await asyncio.to_thread(clock_out, db=db, auth=auth)
     except TechnicianNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except TechnicianConflictError as exc:
@@ -1232,7 +1278,9 @@ async def get_technician_record(
     auth: OwnerAuthContextDep,
 ) -> TechnicianRead:
     try:
-        return get_technician(db=db, auth=auth, technician_id=technician_id)
+        return await asyncio.to_thread(
+            get_technician, db=db, auth=auth, technician_id=technician_id
+        )
     except TechnicianNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except TechnicianStoreError as exc:
@@ -1253,7 +1301,9 @@ async def update_technician_record(
     auth: OwnerAuthContextDep,
 ) -> TechnicianRead:
     try:
-        return update_technician(db=db, auth=auth, technician_id=technician_id, payload=payload)
+        return await asyncio.to_thread(
+            update_technician, db=db, auth=auth, technician_id=technician_id, payload=payload
+        )
     except TechnicianNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except TechnicianStoreError as exc:
@@ -1273,7 +1323,9 @@ async def archive_technician_record(
     auth: OwnerAuthContextDep,
 ) -> TechnicianArchiveResponse:
     try:
-        return archive_technician(db=db, auth=auth, technician_id=technician_id)
+        return await asyncio.to_thread(
+            archive_technician, db=db, auth=auth, technician_id=technician_id
+        )
     except TechnicianNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except TechnicianStoreError as exc:
@@ -1297,7 +1349,9 @@ async def provision_technician_login_record(
     auth: OwnerAuthContextDep,
 ) -> TechnicianProvisionLoginResponse:
     try:
-        return provision_login(db=db, auth=auth, technician_id=technician_id, payload=payload)
+        return await asyncio.to_thread(
+            provision_login, db=db, auth=auth, technician_id=technician_id, payload=payload
+        )
     except TechnicianNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except TechnicianConflictError as exc:
@@ -1319,7 +1373,7 @@ async def create_vendor_record(
     auth: OwnerAuthContextDep,
 ) -> VendorRead:
     try:
-        return create_vendor(db=db, auth=auth, payload=payload)
+        return await asyncio.to_thread(create_vendor, db=db, auth=auth, payload=payload)
     except VendorStoreError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except SQLAlchemyError as exc:
@@ -1341,7 +1395,8 @@ async def list_vendor_records(
     archived: bool = False,
 ) -> VendorListResponse:
     try:
-        return list_vendors(
+        return await asyncio.to_thread(
+            list_vendors,
             db=db,
             auth=auth,
             settings=settings,
@@ -1367,7 +1422,7 @@ async def get_vendor_record(
     auth: OwnerAuthContextDep,
 ) -> VendorRead:
     try:
-        return get_vendor(db=db, auth=auth, vendor_id=vendor_id)
+        return await asyncio.to_thread(get_vendor, db=db, auth=auth, vendor_id=vendor_id)
     except VendorNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except VendorStoreError as exc:
@@ -1388,7 +1443,9 @@ async def update_vendor_record(
     auth: OwnerAuthContextDep,
 ) -> VendorRead:
     try:
-        return update_vendor(db=db, auth=auth, vendor_id=vendor_id, payload=payload)
+        return await asyncio.to_thread(
+            update_vendor, db=db, auth=auth, vendor_id=vendor_id, payload=payload
+        )
     except VendorNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except VendorStoreError as exc:
@@ -1408,7 +1465,7 @@ async def archive_vendor_record(
     auth: OwnerAuthContextDep,
 ) -> VendorArchiveResponse:
     try:
-        return archive_vendor(db=db, auth=auth, vendor_id=vendor_id)
+        return await asyncio.to_thread(archive_vendor, db=db, auth=auth, vendor_id=vendor_id)
     except VendorNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except VendorStoreError as exc:
@@ -1428,7 +1485,7 @@ async def create_part_record(
     auth: OwnerAuthContextDep,
 ) -> PartRead:
     try:
-        return create_part(db=db, auth=auth, payload=payload)
+        return await asyncio.to_thread(create_part, db=db, auth=auth, payload=payload)
     except PartStoreError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except SQLAlchemyError as exc:
@@ -1452,7 +1509,8 @@ async def list_part_records(
     below_reorder_threshold_only: bool = False,
 ) -> PartListResponse:
     try:
-        return list_parts(
+        return await asyncio.to_thread(
+            list_parts,
             db=db,
             auth=auth,
             settings=settings,
@@ -1480,7 +1538,7 @@ async def get_part_record(
     auth: OwnerAuthContextDep,
 ) -> PartRead:
     try:
-        return get_part(db=db, auth=auth, part_id=part_id)
+        return await asyncio.to_thread(get_part, db=db, auth=auth, part_id=part_id)
     except PartNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except PartStoreError as exc:
@@ -1501,7 +1559,9 @@ async def update_part_record(
     auth: OwnerAuthContextDep,
 ) -> PartRead:
     try:
-        return update_part(db=db, auth=auth, part_id=part_id, payload=payload)
+        return await asyncio.to_thread(
+            update_part, db=db, auth=auth, part_id=part_id, payload=payload
+        )
     except PartNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except PartStoreError as exc:
@@ -1521,7 +1581,7 @@ async def archive_part_record(
     auth: OwnerAuthContextDep,
 ) -> PartArchiveResponse:
     try:
-        return archive_part(db=db, auth=auth, part_id=part_id)
+        return await asyncio.to_thread(archive_part, db=db, auth=auth, part_id=part_id)
     except PartNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except PartStoreError as exc:
@@ -1541,7 +1601,7 @@ async def create_purchase_order_record(
     auth: OwnerAuthContextDep,
 ) -> PurchaseOrderRead:
     try:
-        return create_purchase_order(db=db, auth=auth, payload=payload)
+        return await asyncio.to_thread(create_purchase_order, db=db, auth=auth, payload=payload)
     except PurchaseOrderStoreError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except SQLAlchemyError as exc:
@@ -1563,7 +1623,8 @@ async def list_purchase_order_records(
     vendor_id: int | None = Query(default=None, ge=1),
 ) -> PurchaseOrderListResponse:
     try:
-        return list_purchase_orders(
+        return await asyncio.to_thread(
+            list_purchase_orders,
             db=db,
             auth=auth,
             settings=settings,
@@ -1589,7 +1650,9 @@ async def get_purchase_order_record(
     auth: OwnerAuthContextDep,
 ) -> PurchaseOrderRead:
     try:
-        return get_purchase_order(db=db, auth=auth, purchase_order_id=purchase_order_id)
+        return await asyncio.to_thread(
+            get_purchase_order, db=db, auth=auth, purchase_order_id=purchase_order_id
+        )
     except PurchaseOrderNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except SQLAlchemyError as exc:
@@ -1607,7 +1670,9 @@ async def submit_purchase_order_record(
     auth: OwnerAuthContextDep,
 ) -> PurchaseOrderRead:
     try:
-        return submit_purchase_order(db=db, auth=auth, purchase_order_id=purchase_order_id)
+        return await asyncio.to_thread(
+            submit_purchase_order, db=db, auth=auth, purchase_order_id=purchase_order_id
+        )
     except PurchaseOrderNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except PurchaseOrderStoreError as exc:
@@ -1627,7 +1692,9 @@ async def cancel_purchase_order_record(
     auth: OwnerAuthContextDep,
 ) -> PurchaseOrderRead:
     try:
-        return cancel_purchase_order(db=db, auth=auth, purchase_order_id=purchase_order_id)
+        return await asyncio.to_thread(
+            cancel_purchase_order, db=db, auth=auth, purchase_order_id=purchase_order_id
+        )
     except PurchaseOrderNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except PurchaseOrderStoreError as exc:
@@ -1648,8 +1715,12 @@ async def receive_purchase_order_record(
     auth: OwnerAuthContextDep,
 ) -> PurchaseOrderRead:
     try:
-        return receive_purchase_order_line_item(
-            db=db, auth=auth, purchase_order_id=purchase_order_id, payload=payload
+        return await asyncio.to_thread(
+            receive_purchase_order_line_item,
+            db=db,
+            auth=auth,
+            purchase_order_id=purchase_order_id,
+            payload=payload,
         )
     except PurchaseOrderNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -1673,7 +1744,9 @@ async def list_purchase_order_receipt_records(
     auth: OwnerAuthContextDep,
 ) -> PurchaseOrderReceiptsResponse:
     try:
-        return list_purchase_order_receipts(db=db, auth=auth, purchase_order_id=purchase_order_id)
+        return await asyncio.to_thread(
+            list_purchase_order_receipts, db=db, auth=auth, purchase_order_id=purchase_order_id
+        )
     except PurchaseOrderNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except SQLAlchemyError as exc:
@@ -1695,8 +1768,8 @@ async def create_part_allocation_record(
     auth: OwnerOrTechnicianAuthContextDep,
 ) -> PartAllocationRead | PartAllocationTechnicianRead:
     try:
-        return create_part_allocation(
-            db=db, auth=auth, work_order_id=work_order_id, payload=payload
+        return await asyncio.to_thread(
+            create_part_allocation, db=db, auth=auth, work_order_id=work_order_id, payload=payload
         )
     except PartAllocationStoreError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -1717,7 +1790,9 @@ async def list_part_allocation_records(
     auth: OwnerOrTechnicianAuthContextDep,
 ) -> PartAllocationListResponse:
     try:
-        return list_part_allocations(db=db, auth=auth, work_order_id=work_order_id)
+        return await asyncio.to_thread(
+            list_part_allocations, db=db, auth=auth, work_order_id=work_order_id
+        )
     except PartAllocationStoreError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except SQLAlchemyError as exc:
@@ -1738,7 +1813,9 @@ async def get_part_allocation_record(
     auth: OwnerOrTechnicianAuthContextDep,
 ) -> PartAllocationRead | PartAllocationTechnicianRead:
     try:
-        return get_part_allocation(db=db, auth=auth, allocation_id=allocation_id)
+        return await asyncio.to_thread(
+            get_part_allocation, db=db, auth=auth, allocation_id=allocation_id
+        )
     except PartAllocationNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except SQLAlchemyError as exc:
@@ -1760,7 +1837,9 @@ async def allocate_part_record(
     auth: OwnerOrTechnicianAuthContextDep,
 ) -> PartAllocationRead | PartAllocationTechnicianRead:
     try:
-        return allocate_part(db=db, auth=auth, allocation_id=allocation_id, payload=payload)
+        return await asyncio.to_thread(
+            allocate_part, db=db, auth=auth, allocation_id=allocation_id, payload=payload
+        )
     except PartAllocationNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except PartAllocationStoreError as exc:
@@ -1784,7 +1863,9 @@ async def use_part_allocation_record(
     auth: OwnerOrTechnicianAuthContextDep,
 ) -> PartAllocationRead | PartAllocationTechnicianRead:
     try:
-        return use_part_allocation(db=db, auth=auth, allocation_id=allocation_id, payload=payload)
+        return await asyncio.to_thread(
+            use_part_allocation, db=db, auth=auth, allocation_id=allocation_id, payload=payload
+        )
     except PartAllocationNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except PartAllocationStoreError as exc:
@@ -1808,8 +1889,8 @@ async def return_part_allocation_record(
     auth: OwnerOrTechnicianAuthContextDep,
 ) -> PartAllocationRead | PartAllocationTechnicianRead:
     try:
-        return return_part_allocation(
-            db=db, auth=auth, allocation_id=allocation_id, payload=payload
+        return await asyncio.to_thread(
+            return_part_allocation, db=db, auth=auth, allocation_id=allocation_id, payload=payload
         )
     except PartAllocationNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -1832,7 +1913,9 @@ async def list_part_allocation_event_records(
     auth: OwnerAuthContextDep,
 ) -> PartAllocationEventsResponse:
     try:
-        return list_part_allocation_events(db=db, auth=auth, allocation_id=allocation_id)
+        return await asyncio.to_thread(
+            list_part_allocation_events, db=db, auth=auth, allocation_id=allocation_id
+        )
     except PartAllocationNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except SQLAlchemyError as exc:
@@ -1850,7 +1933,7 @@ async def create_intake_request_record(
     auth: OwnerAuthContextDep,
 ) -> IntakeRequestRead:
     try:
-        return create_intake_request(db=db, auth=auth, payload=payload)
+        return await asyncio.to_thread(create_intake_request, db=db, auth=auth, payload=payload)
     except IntakeStoreError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except SQLAlchemyError as exc:
@@ -1872,7 +1955,8 @@ async def list_intake_request_records(
     status_filter: Annotated[str | None, Query(alias="status")] = None,
 ) -> IntakeRequestListResponse:
     try:
-        return list_intake_requests(
+        return await asyncio.to_thread(
+            list_intake_requests,
             db=db,
             auth=auth,
             settings=settings,
@@ -1898,7 +1982,9 @@ async def get_intake_request_record(
     auth: OwnerAuthContextDep,
 ) -> IntakeRequestRead:
     try:
-        return get_intake_request(db=db, auth=auth, intake_request_id=intake_request_id)
+        return await asyncio.to_thread(
+            get_intake_request, db=db, auth=auth, intake_request_id=intake_request_id
+        )
     except IntakeRequestNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except IntakeStoreError as exc:
@@ -1919,8 +2005,12 @@ async def update_intake_request_record(
     auth: OwnerAuthContextDep,
 ) -> IntakeRequestRead:
     try:
-        return update_intake_request(
-            db=db, auth=auth, intake_request_id=intake_request_id, payload=payload
+        return await asyncio.to_thread(
+            update_intake_request,
+            db=db,
+            auth=auth,
+            intake_request_id=intake_request_id,
+            payload=payload,
         )
     except IntakeRequestNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -1947,8 +2037,12 @@ async def convert_intake_request_record(
     auth: OwnerAuthContextDep,
 ) -> IntakeRequestConvertResponse:
     try:
-        return convert_intake_request(
-            db=db, auth=auth, intake_request_id=intake_request_id, payload=payload
+        return await asyncio.to_thread(
+            convert_intake_request,
+            db=db,
+            auth=auth,
+            intake_request_id=intake_request_id,
+            payload=payload,
         )
     except IntakeRequestNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -1971,7 +2065,7 @@ async def create_diagnostic_finding_record(
     auth: OwnerOrTechnicianAuthContextDep,
 ) -> DiagnosticFindingRead:
     try:
-        return create_diagnostic_finding(db=db, auth=auth, payload=payload)
+        return await asyncio.to_thread(create_diagnostic_finding, db=db, auth=auth, payload=payload)
     except DiagnosticsStoreError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except SQLAlchemyError as exc:
@@ -1994,7 +2088,8 @@ async def list_diagnostic_finding_records(
     archived: bool = False,
 ) -> DiagnosticFindingListResponse:
     try:
-        return list_diagnostic_findings(
+        return await asyncio.to_thread(
+            list_diagnostic_findings,
             db=db,
             auth=auth,
             settings=settings,
@@ -2021,7 +2116,9 @@ async def get_diagnostic_finding_record(
     auth: OwnerOrTechnicianAuthContextDep,
 ) -> DiagnosticFindingRead:
     try:
-        return get_diagnostic_finding(db=db, auth=auth, finding_id=finding_id)
+        return await asyncio.to_thread(
+            get_diagnostic_finding, db=db, auth=auth, finding_id=finding_id
+        )
     except DiagnosticFindingNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except DiagnosticsStoreError as exc:
@@ -2042,7 +2139,9 @@ async def update_diagnostic_finding_record(
     auth: OwnerOrTechnicianAuthContextDep,
 ) -> DiagnosticFindingRead:
     try:
-        return update_diagnostic_finding(db=db, auth=auth, finding_id=finding_id, payload=payload)
+        return await asyncio.to_thread(
+            update_diagnostic_finding, db=db, auth=auth, finding_id=finding_id, payload=payload
+        )
     except DiagnosticFindingNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except DiagnosticsStoreError as exc:
@@ -2064,7 +2163,9 @@ async def archive_diagnostic_finding_record(
     auth: OwnerAuthContextDep,
 ) -> DiagnosticFindingArchiveResponse:
     try:
-        return archive_diagnostic_finding(db=db, auth=auth, finding_id=finding_id)
+        return await asyncio.to_thread(
+            archive_diagnostic_finding, db=db, auth=auth, finding_id=finding_id
+        )
     except DiagnosticFindingNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except SQLAlchemyError as exc:
@@ -2084,7 +2185,9 @@ async def list_diagnostic_finding_event_records(
     auth: OwnerAuthContextDep,
 ) -> DiagnosticFindingEventsResponse:
     try:
-        return list_diagnostic_finding_events(db=db, auth=auth, finding_id=finding_id)
+        return await asyncio.to_thread(
+            list_diagnostic_finding_events, db=db, auth=auth, finding_id=finding_id
+        )
     except DiagnosticFindingNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except SQLAlchemyError as exc:
@@ -2102,7 +2205,7 @@ async def create_inspection_record(
     auth: OwnerOrTechnicianAuthContextDep,
 ) -> InspectionRead:
     try:
-        return create_inspection(db=db, auth=auth, payload=payload)
+        return await asyncio.to_thread(create_inspection, db=db, auth=auth, payload=payload)
     except InspectionStoreError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except SQLAlchemyError as exc:
@@ -2125,7 +2228,8 @@ async def list_inspection_records(
     archived: bool = False,
 ) -> InspectionListResponse:
     try:
-        return list_inspections(
+        return await asyncio.to_thread(
+            list_inspections,
             db=db,
             auth=auth,
             settings=settings,
@@ -2152,7 +2256,9 @@ async def get_inspection_record(
     auth: OwnerOrTechnicianAuthContextDep,
 ) -> InspectionRead:
     try:
-        return get_inspection(db=db, auth=auth, inspection_id=inspection_id)
+        return await asyncio.to_thread(
+            get_inspection, db=db, auth=auth, inspection_id=inspection_id
+        )
     except InspectionNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except InspectionStoreError as exc:
@@ -2173,7 +2279,9 @@ async def update_inspection_record(
     auth: OwnerOrTechnicianAuthContextDep,
 ) -> InspectionRead:
     try:
-        return update_inspection(db=db, auth=auth, inspection_id=inspection_id, payload=payload)
+        return await asyncio.to_thread(
+            update_inspection, db=db, auth=auth, inspection_id=inspection_id, payload=payload
+        )
     except InspectionNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except InspectionStoreError as exc:
@@ -2193,7 +2301,9 @@ async def archive_inspection_record(
     auth: OwnerAuthContextDep,
 ) -> InspectionArchiveResponse:
     try:
-        return archive_inspection(db=db, auth=auth, inspection_id=inspection_id)
+        return await asyncio.to_thread(
+            archive_inspection, db=db, auth=auth, inspection_id=inspection_id
+        )
     except InspectionNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except SQLAlchemyError as exc:
@@ -2211,7 +2321,9 @@ async def list_inspection_event_records(
     auth: OwnerAuthContextDep,
 ) -> InspectionEventsResponse:
     try:
-        return list_inspection_events(db=db, auth=auth, inspection_id=inspection_id)
+        return await asyncio.to_thread(
+            list_inspection_events, db=db, auth=auth, inspection_id=inspection_id
+        )
     except InspectionNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except SQLAlchemyError as exc:
@@ -2230,9 +2342,10 @@ async def get_context(
     auth: AuthContextDep,
     scope: ContextScope = ContextScope.PROJECT,
 ) -> ContextListResponse:
-    ensure_context_dependencies(settings)
+    await asyncio.to_thread(ensure_context_dependencies, settings)
     try:
-        return list_entries(
+        return await asyncio.to_thread(
+            list_entries,
             db=db,
             auth=auth,
             settings=settings,
@@ -2259,9 +2372,10 @@ async def put_context(
     auth: AuthContextDep,
     scope: ContextScope = ContextScope.PROJECT,
 ) -> ContextEntryRead:
-    ensure_context_dependencies(settings)
+    await asyncio.to_thread(ensure_context_dependencies, settings)
     try:
-        return upsert_entry(
+        return await asyncio.to_thread(
+            upsert_entry,
             db=db,
             auth=auth,
             settings=settings,
@@ -2295,9 +2409,10 @@ async def remove_context(
     scope: ContextScope = ContextScope.PROJECT,
     expected_revision: int | None = None,
 ) -> ContextDeleteResponse:
-    ensure_context_dependencies(settings)
+    await asyncio.to_thread(ensure_context_dependencies, settings)
     try:
-        return delete_entry(
+        return await asyncio.to_thread(
+            delete_entry,
             db=db,
             auth=auth,
             settings=settings,
@@ -2415,7 +2530,8 @@ async def list_estimate_records(
     archived: bool = False,
 ) -> EstimateListResponse:
     try:
-        return list_estimates(
+        return await asyncio.to_thread(
+            list_estimates,
             db=db,
             auth=auth,
             page=page,
@@ -2448,7 +2564,7 @@ async def get_estimate_record(
     auth: OwnerAuthContextDep,
 ) -> EstimateRead:
     try:
-        return get_estimate(db=db, auth=auth, estimate_id=estimate_id)
+        return await asyncio.to_thread(get_estimate, db=db, auth=auth, estimate_id=estimate_id)
     except EstimateNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except EstimateStoreError as exc:
@@ -2469,7 +2585,9 @@ async def update_estimate_record(
     auth: OwnerAuthContextDep,
 ) -> EstimateRead:
     try:
-        return update_estimate(db=db, auth=auth, estimate_id=estimate_id, payload=payload)
+        return await asyncio.to_thread(
+            update_estimate, db=db, auth=auth, estimate_id=estimate_id, payload=payload
+        )
     except EstimateNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except EstimateStoreError as exc:
@@ -2531,7 +2649,8 @@ async def send_estimate_record_for_approval(
 ) -> EstimateApprovalSendResponse:
     del request_context
     try:
-        return send_estimate_for_approval(
+        return await asyncio.to_thread(
+            send_estimate_for_approval,
             db=db,
             auth=auth,
             estimate_id=estimate_id,
@@ -2562,7 +2681,8 @@ async def revoke_estimate_approval_request_record(
     auth: OwnerAuthContextDep,
 ) -> EstimateRead:
     try:
-        return revoke_estimate_approval_request(
+        return await asyncio.to_thread(
+            revoke_estimate_approval_request,
             db=db,
             auth=auth,
             estimate_id=estimate_id,
@@ -2590,7 +2710,7 @@ async def approval_view(
 ) -> EstimateApprovalPublicView:
     await enforce_rate_limit(request_context, settings)
     try:
-        return get_approval_view(db=db, payload=payload)
+        return await asyncio.to_thread(get_approval_view, db=db, payload=payload)
     except EstimateApprovalTokenError as exc:
         raise HTTPException(
             status_code=404,
@@ -2615,7 +2735,8 @@ async def approval_approve(
 ) -> EstimateApprovalActionResponse:
     await enforce_rate_limit(request_context, settings)
     try:
-        return approve_estimate(
+        return await asyncio.to_thread(
+            approve_estimate,
             db=db,
             payload=payload,
             ip_address=request_context.client.host if request_context.client else None,
@@ -2649,7 +2770,8 @@ async def approval_decline(
 ) -> EstimateApprovalActionResponse:
     await enforce_rate_limit(request_context, settings)
     try:
-        return decline_estimate(
+        return await asyncio.to_thread(
+            decline_estimate,
             db=db,
             payload=payload,
             ip_address=request_context.client.host if request_context.client else None,
@@ -2683,7 +2805,7 @@ async def estimate_approval_history(
     auth: OwnerAuthContextDep,
 ) -> EstimateApprovalAuditResponse:
     try:
-        return approval_history(db=db, auth=auth, estimate_id=estimate_id)
+        return await asyncio.to_thread(approval_history, db=db, auth=auth, estimate_id=estimate_id)
     except EstimateNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except EstimateStoreError as exc:
@@ -2703,7 +2825,9 @@ async def create_work_order_record(
     auth: OwnerAuthContextDep,
 ) -> WorkOrderRead:
     try:
-        return create_work_order_from_estimate(db=db, auth=auth, estimate_id=estimate_id)
+        return await asyncio.to_thread(
+            create_work_order_from_estimate, db=db, auth=auth, estimate_id=estimate_id
+        )
     except EstimateNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except (EstimateStoreError, WorkOrderStoreError) as exc:
@@ -2733,7 +2857,8 @@ async def list_work_order_records(
     vehicle_id: int | None = Query(default=None, ge=1),
 ) -> WorkOrderListResponse:
     try:
-        return list_work_orders(
+        return await asyncio.to_thread(
+            list_work_orders,
             db=db,
             auth=auth,
             settings=settings,
@@ -2761,7 +2886,9 @@ async def get_work_order_record(
     auth: OwnerOrTechnicianAuthContextDep,
 ) -> WorkOrderRead:
     try:
-        return get_work_order(db=db, auth=auth, work_order_id=work_order_id)
+        return await asyncio.to_thread(
+            get_work_order, db=db, auth=auth, work_order_id=work_order_id
+        )
     except WorkOrderNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except WorkOrderStoreError as exc:
@@ -2782,7 +2909,9 @@ async def update_work_order_record(
     auth: OwnerAuthContextDep,
 ) -> WorkOrderRead:
     try:
-        return update_work_order(db=db, auth=auth, work_order_id=work_order_id, payload=payload)
+        return await asyncio.to_thread(
+            update_work_order, db=db, auth=auth, work_order_id=work_order_id, payload=payload
+        )
     except WorkOrderNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except WorkOrderStoreError as exc:
@@ -2803,7 +2932,9 @@ async def assign_work_order_technician_record(
     auth: OwnerAuthContextDep,
 ) -> WorkOrderRead:
     try:
-        return assign_technician(db=db, auth=auth, work_order_id=work_order_id, payload=payload)
+        return await asyncio.to_thread(
+            assign_technician, db=db, auth=auth, work_order_id=work_order_id, payload=payload
+        )
     except WorkOrderNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except WorkOrderStoreError as exc:
@@ -2824,7 +2955,8 @@ async def update_work_order_status_record(
     auth: OwnerOrTechnicianAuthContextDep,
 ) -> WorkOrderRead:
     try:
-        return transition_work_order_status(
+        return await asyncio.to_thread(
+            transition_work_order_status,
             db=db,
             auth=auth,
             work_order_id=work_order_id,
@@ -2854,7 +2986,9 @@ async def add_work_order_note_record(
     auth: OwnerOrTechnicianAuthContextDep,
 ) -> WorkOrderRead:
     try:
-        return add_work_order_note(db=db, auth=auth, work_order_id=work_order_id, payload=payload)
+        return await asyncio.to_thread(
+            add_work_order_note, db=db, auth=auth, work_order_id=work_order_id, payload=payload
+        )
     except WorkOrderNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except WorkOrderStoreError as exc:
@@ -2878,7 +3012,8 @@ async def list_invoice_records(
     search: str | None = Query(default=None, max_length=120),
 ) -> InvoiceListResponse:
     try:
-        return list_invoices(
+        return await asyncio.to_thread(
+            list_invoices,
             db=db,
             auth=auth,
             settings=settings,
@@ -2904,7 +3039,7 @@ async def get_invoice_record(
     auth: OwnerAuthContextDep,
 ) -> InvoiceRead:
     try:
-        return get_invoice(db=db, auth=auth, invoice_id=invoice_id)
+        return await asyncio.to_thread(get_invoice, db=db, auth=auth, invoice_id=invoice_id)
     except InvoiceNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except InvoiceStoreError as exc:
@@ -2926,7 +3061,8 @@ async def issue_invoice_record(
     auth: OwnerAuthContextDep,
 ) -> InvoiceRead:
     try:
-        return issue_invoice(
+        return await asyncio.to_thread(
+            issue_invoice,
             db=db,
             auth=auth,
             settings=settings,
@@ -2953,9 +3089,11 @@ async def get_invoice_html(
     auth: OwnerAuthContextDep,
 ) -> Response:
     try:
-        invoice = get_invoice(db=db, auth=auth, invoice_id=invoice_id)
+        invoice = await asyncio.to_thread(get_invoice, db=db, auth=auth, invoice_id=invoice_id)
         return Response(
-            content=render_invoice_html(invoice, business_name=settings.business_name),
+            content=await asyncio.to_thread(
+                render_invoice_html, invoice, business_name=settings.business_name
+            ),
             media_type="text/html; charset=utf-8",
         )
     except InvoiceNotFoundError as exc:
@@ -2978,8 +3116,10 @@ async def get_invoice_pdf(
     auth: OwnerAuthContextDep,
 ) -> Response:
     try:
-        invoice = get_invoice(db=db, auth=auth, invoice_id=invoice_id)
-        pdf = render_invoice_pdf(invoice, business_name=settings.business_name)
+        invoice = await asyncio.to_thread(get_invoice, db=db, auth=auth, invoice_id=invoice_id)
+        pdf = await asyncio.to_thread(
+            render_invoice_pdf, invoice, business_name=settings.business_name
+        )
         headers = {"Content-Disposition": f'inline; filename="{invoice.invoice_number}.pdf"'}
         return Response(content=pdf, media_type="application/pdf", headers=headers)
     except InvoiceNotFoundError as exc:
@@ -3002,7 +3142,9 @@ async def record_invoice_payment(
     auth: OwnerAuthContextDep,
 ) -> InvoiceRead:
     try:
-        return record_payment(db=db, auth=auth, invoice_id=invoice_id, payload=payload)
+        return await asyncio.to_thread(
+            record_payment, db=db, auth=auth, invoice_id=invoice_id, payload=payload
+        )
     except InvoiceNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except InvoiceStoreError as exc:
@@ -3024,7 +3166,8 @@ async def void_invoice_payment(
     auth: OwnerAuthContextDep,
 ) -> InvoiceRead:
     try:
-        return void_payment(
+        return await asyncio.to_thread(
+            void_payment,
             db=db,
             auth=auth,
             invoice_id=invoice_id,
@@ -3146,7 +3289,8 @@ async def list_notification_records(
     unread: bool = Query(default=False),
 ) -> NotificationListResponse:
     try:
-        return list_notifications(
+        return await asyncio.to_thread(
+            list_notifications,
             db=db,
             auth=auth,
             settings=settings,
@@ -3171,7 +3315,9 @@ async def mark_notification_read_record(
     auth: OwnerAuthContextDep,
 ) -> NotificationMarkReadResponse:
     try:
-        return mark_notification_read(db=db, auth=auth, notification_id=notification_id)
+        return await asyncio.to_thread(
+            mark_notification_read, db=db, auth=auth, notification_id=notification_id
+        )
     except NotificationNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except NotificationStoreError as exc:
@@ -3190,7 +3336,7 @@ async def mark_all_notifications_read_record(
     auth: OwnerAuthContextDep,
 ) -> NotificationMarkReadResponse:
     try:
-        return mark_all_notifications_read(db=db, auth=auth)
+        return await asyncio.to_thread(mark_all_notifications_read, db=db, auth=auth)
     except NotificationStoreError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except SQLAlchemyError as exc:
@@ -3213,7 +3359,8 @@ async def get_dashboard_summary_record(
     if resolved_from >= resolved_to:
         raise HTTPException(status_code=422, detail="date_from must be before date_to.")
     try:
-        return get_dashboard_summary(
+        return await asyncio.to_thread(
+            get_dashboard_summary,
             db=db,
             auth=auth,
             date_from=resolved_from,
@@ -3239,8 +3386,12 @@ async def get_payment_activity_report_record(
     if resolved_from >= resolved_to:
         raise HTTPException(status_code=422, detail="date_from must be before date_to.")
     try:
-        return get_payment_activity_report(
-            db=db, auth=auth, date_from=resolved_from, date_to=resolved_to
+        return await asyncio.to_thread(
+            get_payment_activity_report,
+            db=db,
+            auth=auth,
+            date_from=resolved_from,
+            date_to=resolved_to,
         )
     except SQLAlchemyError as exc:
         logger.warning("Payment activity report failed due to storage error.")
@@ -3262,8 +3413,12 @@ async def get_technician_time_report_record(
     if resolved_from >= resolved_to:
         raise HTTPException(status_code=422, detail="date_from must be before date_to.")
     try:
-        return get_technician_time_report(
-            db=db, auth=auth, date_from=resolved_from, date_to=resolved_to
+        return await asyncio.to_thread(
+            get_technician_time_report,
+            db=db,
+            auth=auth,
+            date_from=resolved_from,
+            date_to=resolved_to,
         )
     except SQLAlchemyError as exc:
         logger.warning("Technician time report failed due to storage error.")
@@ -3279,7 +3434,7 @@ async def get_inventory_valuation_report_record(
     auth: OwnerAuthContextDep,
 ) -> InventoryValuationReportResponse:
     try:
-        return get_inventory_valuation_report(db=db, auth=auth)
+        return await asyncio.to_thread(get_inventory_valuation_report, db=db, auth=auth)
     except SQLAlchemyError as exc:
         logger.warning("Inventory valuation report failed due to storage error.")
         raise HTTPException(
@@ -3300,8 +3455,8 @@ async def get_parts_usage_report_record(
     if resolved_from >= resolved_to:
         raise HTTPException(status_code=422, detail="date_from must be before date_to.")
     try:
-        return get_parts_usage_report(
-            db=db, auth=auth, date_from=resolved_from, date_to=resolved_to
+        return await asyncio.to_thread(
+            get_parts_usage_report, db=db, auth=auth, date_from=resolved_from, date_to=resolved_to
         )
     except SQLAlchemyError as exc:
         logger.warning("Parts usage report failed due to storage error.")
@@ -3323,8 +3478,12 @@ async def get_vendor_purchasing_report_record(
     if resolved_from >= resolved_to:
         raise HTTPException(status_code=422, detail="date_from must be before date_to.")
     try:
-        return get_vendor_purchasing_report(
-            db=db, auth=auth, date_from=resolved_from, date_to=resolved_to
+        return await asyncio.to_thread(
+            get_vendor_purchasing_report,
+            db=db,
+            auth=auth,
+            date_from=resolved_from,
+            date_to=resolved_to,
         )
     except SQLAlchemyError as exc:
         logger.warning("Vendor purchasing report failed due to storage error.")
@@ -3346,8 +3505,12 @@ async def get_work_order_cycle_time_report_record(
     if resolved_from >= resolved_to:
         raise HTTPException(status_code=422, detail="date_from must be before date_to.")
     try:
-        return get_work_order_cycle_time_report(
-            db=db, auth=auth, date_from=resolved_from, date_to=resolved_to
+        return await asyncio.to_thread(
+            get_work_order_cycle_time_report,
+            db=db,
+            auth=auth,
+            date_from=resolved_from,
+            date_to=resolved_to,
         )
     except SQLAlchemyError as exc:
         logger.warning("Work order cycle time report failed due to storage error.")
@@ -3369,8 +3532,12 @@ async def get_diagnostic_inspection_report_record(
     if resolved_from >= resolved_to:
         raise HTTPException(status_code=422, detail="date_from must be before date_to.")
     try:
-        return get_diagnostic_inspection_report(
-            db=db, auth=auth, date_from=resolved_from, date_to=resolved_to
+        return await asyncio.to_thread(
+            get_diagnostic_inspection_report,
+            db=db,
+            auth=auth,
+            date_from=resolved_from,
+            date_to=resolved_to,
         )
     except SQLAlchemyError as exc:
         logger.warning("Diagnostic/inspection report failed due to storage error.")
@@ -3390,7 +3557,7 @@ async def create_bay_record(
     auth: OwnerAuthContextDep,
 ) -> BayRead:
     try:
-        return create_bay(db=db, auth=auth, payload=payload)
+        return await asyncio.to_thread(create_bay, db=db, auth=auth, payload=payload)
     except SchedulingStoreError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except SQLAlchemyError as exc:
@@ -3410,8 +3577,14 @@ async def list_bay_records(
     archived: bool = False,
 ) -> BayListResponse:
     try:
-        return list_bays(
-            db=db, auth=auth, settings=settings, page=page, page_size=page_size, archived=archived
+        return await asyncio.to_thread(
+            list_bays,
+            db=db,
+            auth=auth,
+            settings=settings,
+            page=page,
+            page_size=page_size,
+            archived=archived,
         )
     except SchedulingStoreError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -3425,7 +3598,7 @@ async def list_bay_records(
 @app.get("/api/bays/{bay_id}", response_model=BayRead)
 async def get_bay_record(bay_id: int, db: DbSessionDep, auth: OwnerAuthContextDep) -> BayRead:
     try:
-        return get_bay(db=db, auth=auth, bay_id=bay_id)
+        return await asyncio.to_thread(get_bay, db=db, auth=auth, bay_id=bay_id)
     except SchedulingNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except SQLAlchemyError as exc:
@@ -3443,7 +3616,7 @@ async def update_bay_record(
     auth: OwnerAuthContextDep,
 ) -> BayRead:
     try:
-        return update_bay(db=db, auth=auth, bay_id=bay_id, payload=payload)
+        return await asyncio.to_thread(update_bay, db=db, auth=auth, bay_id=bay_id, payload=payload)
     except SchedulingNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except SchedulingStoreError as exc:
@@ -3460,7 +3633,7 @@ async def archive_bay_record(
     bay_id: int, db: DbSessionDep, auth: OwnerAuthContextDep
 ) -> BayArchiveResponse:
     try:
-        return archive_bay(db=db, auth=auth, bay_id=bay_id)
+        return await asyncio.to_thread(archive_bay, db=db, auth=auth, bay_id=bay_id)
     except SchedulingNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except SQLAlchemyError as exc:
@@ -3480,7 +3653,7 @@ async def create_working_hours_record(
     auth: OwnerAuthContextDep,
 ) -> WorkingHoursRead:
     try:
-        return create_working_hours(db=db, auth=auth, payload=payload)
+        return await asyncio.to_thread(create_working_hours, db=db, auth=auth, payload=payload)
     except SchedulingStoreError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except SQLAlchemyError as exc:
@@ -3498,7 +3671,9 @@ async def list_working_hours_records(
     technician_id: int = Query(...),
 ) -> WorkingHoursListResponse:
     try:
-        return list_working_hours(db=db, auth=auth, technician_id=technician_id)
+        return await asyncio.to_thread(
+            list_working_hours, db=db, auth=auth, technician_id=technician_id
+        )
     except SchedulingStoreError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except SQLAlchemyError as exc:
@@ -3517,8 +3692,12 @@ async def update_working_hours_record(
     auth: OwnerAuthContextDep,
 ) -> WorkingHoursRead:
     try:
-        return update_working_hours(
-            db=db, auth=auth, working_hours_id=working_hours_id, payload=payload
+        return await asyncio.to_thread(
+            update_working_hours,
+            db=db,
+            auth=auth,
+            working_hours_id=working_hours_id,
+            payload=payload,
         )
     except SchedulingNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -3537,7 +3716,9 @@ async def delete_working_hours_record(
     working_hours_id: int, db: DbSessionDep, auth: OwnerAuthContextDep
 ) -> None:
     try:
-        delete_working_hours(db=db, auth=auth, working_hours_id=working_hours_id)
+        await asyncio.to_thread(
+            delete_working_hours, db=db, auth=auth, working_hours_id=working_hours_id
+        )
     except SchedulingNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except SQLAlchemyError as exc:
@@ -3558,7 +3739,7 @@ async def create_schedule_block_record(
     auth: OwnerAuthContextDep,
 ) -> ScheduleBlockRead:
     try:
-        return create_schedule_block(db=db, auth=auth, payload=payload)
+        return await asyncio.to_thread(create_schedule_block, db=db, auth=auth, payload=payload)
     except SchedulingStoreError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except SQLAlchemyError as exc:
@@ -3582,7 +3763,8 @@ async def list_schedule_block_records(
     date_to: Annotated[datetime | None, Query()] = None,
 ) -> ScheduleBlockListResponse:
     try:
-        return list_schedule_blocks(
+        return await asyncio.to_thread(
+            list_schedule_blocks,
             db=db,
             auth=auth,
             settings=settings,
@@ -3608,7 +3790,7 @@ async def get_schedule_block_record(
     block_id: int, db: DbSessionDep, auth: OwnerAuthContextDep
 ) -> ScheduleBlockRead:
     try:
-        return get_schedule_block(db=db, auth=auth, block_id=block_id)
+        return await asyncio.to_thread(get_schedule_block, db=db, auth=auth, block_id=block_id)
     except SchedulingNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except SQLAlchemyError as exc:
@@ -3627,7 +3809,9 @@ async def update_schedule_block_record(
     auth: OwnerAuthContextDep,
 ) -> ScheduleBlockRead:
     try:
-        return update_schedule_block(db=db, auth=auth, block_id=block_id, payload=payload)
+        return await asyncio.to_thread(
+            update_schedule_block, db=db, auth=auth, block_id=block_id, payload=payload
+        )
     except SchedulingNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except SchedulingStoreError as exc:
@@ -3645,7 +3829,7 @@ async def delete_schedule_block_record(
     block_id: int, db: DbSessionDep, auth: OwnerAuthContextDep
 ) -> None:
     try:
-        delete_schedule_block(db=db, auth=auth, block_id=block_id)
+        await asyncio.to_thread(delete_schedule_block, db=db, auth=auth, block_id=block_id)
     except SchedulingNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except SQLAlchemyError as exc:
@@ -3669,7 +3853,8 @@ async def get_availability_record(
     bay_id: int | None = Query(default=None),
 ) -> AvailabilityResponse:
     try:
-        return get_availability(
+        return await asyncio.to_thread(
+            get_availability,
             db=db,
             auth=auth,
             technician_id=technician_id,
@@ -3699,7 +3884,7 @@ async def create_appointment_record(
     auth: OwnerAuthContextDep,
 ) -> AppointmentRead:
     try:
-        return create_appointment(db=db, auth=auth, payload=payload)
+        return await asyncio.to_thread(create_appointment, db=db, auth=auth, payload=payload)
     except SchedulingNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except SchedulingConflictError as exc:
@@ -3730,7 +3915,8 @@ async def list_appointment_records(
     vehicle_id: int | None = Query(default=None),
 ) -> AppointmentListResponse:
     try:
-        return list_appointments(
+        return await asyncio.to_thread(
+            list_appointments,
             db=db,
             auth=auth,
             settings=settings,
@@ -3759,7 +3945,9 @@ async def get_appointment_record(
     appointment_id: int, db: DbSessionDep, auth: OwnerAuthContextDep
 ) -> AppointmentRead:
     try:
-        return get_appointment(db=db, auth=auth, appointment_id=appointment_id)
+        return await asyncio.to_thread(
+            get_appointment, db=db, auth=auth, appointment_id=appointment_id
+        )
     except SchedulingNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except SQLAlchemyError as exc:
@@ -3778,7 +3966,9 @@ async def update_appointment_record(
     auth: OwnerAuthContextDep,
 ) -> AppointmentRead:
     try:
-        return update_appointment(db=db, auth=auth, appointment_id=appointment_id, payload=payload)
+        return await asyncio.to_thread(
+            update_appointment, db=db, auth=auth, appointment_id=appointment_id, payload=payload
+        )
     except SchedulingNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except SchedulingConflictError as exc:
@@ -3801,7 +3991,9 @@ async def move_appointment_record(
     auth: OwnerAuthContextDep,
 ) -> AppointmentRead:
     try:
-        return move_appointment(db=db, auth=auth, appointment_id=appointment_id, payload=payload)
+        return await asyncio.to_thread(
+            move_appointment, db=db, auth=auth, appointment_id=appointment_id, payload=payload
+        )
     except SchedulingNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except SchedulingConflictError as exc:
@@ -3824,7 +4016,8 @@ async def cancel_appointment_record(
     auth: OwnerAuthContextDep,
 ) -> AppointmentRead:
     try:
-        return cancel_appointment(
+        return await asyncio.to_thread(
+            cancel_appointment,
             db=db,
             auth=auth,
             appointment_id=appointment_id,

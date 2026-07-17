@@ -39,6 +39,8 @@ _NOT_ROLE_GATED_ROUTES = {
     ("POST", "/api/test-support/synthetic-technician"),
     ("DELETE", "/api/test-support/synthetic-accounts/{user_id}"),
     ("DELETE", "/api/test-support/synthetic-accounts"),
+    ("POST", "/api/test-support/concurrency-probe/reset"),
+    ("GET", "/api/test-support/concurrency-probe"),
 }
 
 # Routes deliberately opened to BOTH owner and technician (Phase 5.6

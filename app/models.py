@@ -2625,3 +2625,7 @@ class SyntheticAccountResponse(BaseModel):
 
 class SyntheticCleanupResponse(BaseModel):
     deleted_count: int
+
+
+class ConcurrencyProbeResponse(BaseModel):
+    max_observed_in_flight: int
