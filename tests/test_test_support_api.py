@@ -161,6 +161,66 @@ def test_cleanup_deletes_synthetic_owner_and_cascades_technician(
         _clear_overrides()
 
 
+def test_cleanup_deletes_owner_with_scheduling_data(
+    settings: Settings, db_session: Session
+) -> None:
+    """Regression test for a real bug found while adding
+    tests/e2e/test_scheduling_concurrency.py: `appointments.customer_id`/
+    `vehicle_id`/`technician_id` are deliberately `ON DELETE RESTRICT` (an
+    appointment must never silently vanish or lose its audit trail if a
+    customer/vehicle/technician is later removed in real usage, which only
+    ever archives those records). `_delete_owner_and_dependents` hard-deletes
+    them directly, so it must delete Appointments first -- SQLite (used by
+    this fast test) doesn't enforce the FK, so this test can't reproduce the
+    real `ForeignKeyViolation` that only appeared against real Postgres, but
+    it does pin the fix's actual behavior: the appointment row is gone after
+    cleanup, not left orphaned."""
+    enabled_settings = settings.model_copy(update={"optimus_test_account_provisioning": True})
+    client = _client_with_overrides(enabled_settings, db_session)
+    try:
+        owner_body = client.post("/api/test-support/synthetic-owner").json()
+        login_response = client.post(
+            "/api/auth/login",
+            json={"username": owner_body["username"], "password": owner_body["password"]},
+        )
+        assert login_response.status_code == 200
+
+        customer = client.post(
+            "/api/customers", json={"first_name": "Sched", "last_name": "Regress"}
+        ).json()
+        vehicle = client.post(
+            f"/api/customers/{customer['id']}/vehicles",
+            json={"make": "Ford", "model": "F-150"},
+        ).json()
+        technician = client.post(
+            "/api/technicians", json={"first_name": "Regress", "last_name": "Tech"}
+        ).json()
+        appointment = client.post(
+            "/api/appointments",
+            json={
+                "customer_id": customer["id"],
+                "vehicle_id": vehicle["id"],
+                "technician_id": technician["id"],
+                "service_type": "Regression check",
+                "start_time": "2030-01-01T09:00:00Z",
+                "end_time": "2030-01-01T10:00:00Z",
+            },
+        ).json()
+        assert "id" in appointment
+
+        delete_response = client.delete(
+            f"/api/test-support/synthetic-accounts/{owner_body['user_id']}"
+        )
+        assert delete_response.status_code == 204
+        assert db_session.get(UserAccount, owner_body["user_id"]) is None
+
+        from app.db_models import Appointment
+
+        assert db_session.get(Appointment, appointment["id"]) is None
+    finally:
+        _clear_overrides()
+
+
 def test_cleanup_refuses_to_delete_non_synthetic_account(
     settings: Settings, db_session: Session
 ) -> None:

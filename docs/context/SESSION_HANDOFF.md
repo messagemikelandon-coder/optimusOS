@@ -5,47 +5,52 @@ Information owner: the active session author.
 Read when: starting or resuming work.
 Update when: a substantial task completes or context needs to be handed forward.
 Last verified date: 2026-07-17.
-Relevant sources: `docs/context/CURRENT_STATE.md`, `docs/context/KNOWN_ISSUES.md`, `docs/context/PLANS.md`, `git log`/`git status`, `gh pr view`, an `optimus-security-reviewer` pass.
+Relevant sources: `docs/context/CURRENT_STATE.md`, `docs/context/KNOWN_ISSUES.md`, `docs/context/PLANS.md`, `git log`/`git status`, `gh pr view`, `pytest -q` (fast suite) and `pytest -q tests/e2e/` (real-Postgres suite).
 
 ## Identity
 
 - Updated UTC: 2026-07-17.
 - Agent: Claude.
-- `main` HEAD: `7be6261` (squash-merge of PR #45, Phase 6 Part I — staging verification + deployment checklist).
-- This session started on the pre-existing worktree/branch `agent/claude/staging-verification`, found PR #45 already open, mergeable, and fully green from a prior turn, merged it, then branched fresh `agent/claude/handoff-fixup` off `origin/main` for this doc-only fixup pass.
+- `main` HEAD: `f3d8f0c` (squash-merge of PR #47 — closed the remaining security-review debt across the whole codebase, fixed 3 real findings).
+- Current worktree/branch: `agent/claude/handoff-fixup`, now sitting on `main`'s tip plus one new uncommitted diff (this session's Scheduling-concurrency work, below) — not yet committed/pushed/PR'd as of this doc being written.
 
 ## Active task
 
-The owner's original instruction ("complete H and I, then tell me what is left to complete the goal") is now fully done — Part H merged via PR #44, Part I merged via PR #45. This session picked up the "what's left" list PR #45's handoff itself proposed and completed the two items on it that don't require the owner's credentials, money, or a policy decision:
+Owner instruction this session: "complete all necessary tasks... continue to all other phases... continue." Concretely, this session:
 
-1. **Merged PR #45** (all CI green: handoff-contract, lint/typecheck/tests, Alembic migration integrity, Docker build + secret-log scan, authenticated E2E — see `gh pr view 45`).
-2. **Ran the overdue `optimus-security-reviewer` pass on the Diagnostics + Inspections module** (flagged in the prior handoff as never having had one). **Result: PASS, no exploitable findings.** Full detail in `docs/context/KNOWN_ISSUES.md`'s Historical Resolved Issues.
-3. **Fixed this doc and `docs/context/CURRENT_STATE.md`**, both of which were stale (claiming PR #45's diff wasn't committed/merged yet, and claiming Diagnostics/Inspections had no security review, both no longer true).
+1. Merged PR #45 (Phase 6 Part I) and PR #46 (Diagnostics/Inspections security review) — both were already covered by the prior handoff.
+2. Ran the `optimus-security-reviewer` pass on every module that had never had one (Vendors/Parts/Purchase-Orders/Part-Allocation, Service Desk, Reports, Phase 6 Part H's own hardening code). **Every module in the codebase now has had a dedicated security review at least once.** Three real findings surfaced and were fixed, each independently re-reviewed and re-verified: a technician-visible cost leak in Part Allocation, a TOCTOU race in intake conversion, and an inconsistent plaintext-vs-hashed username in login security-event logging. Merged as PR #47.
+3. Discovered the roadmap doc (`PLANS.md`) itself was stale — several PRs it called "not yet merged" had, in fact, already merged. Corrected it; **every Phase 6 Part A-J is confirmed merged into `main`.**
+4. Picked up the one remaining genuinely-open, non-owner-blocked engineering item named in `PLANS.md`'s Part C: no permanent concurrency proof existed for the Scheduling module's `SELECT ... FOR UPDATE` row lock (SQLite, used by the fast suite, ignores `FOR UPDATE`). Added `tests/e2e/test_scheduling_concurrency.py`. **Not yet committed/pushed/PR'd** — see Unverified below.
 
-## What's explicitly NOT done, and why — every remaining "what's left" item needs the owner, not just git permission
+## What this last increment found (not just built)
 
-The owner gave blanket approval this session to merge/commit/push anything in the repo. That unlocks git operations, but none of the following items are blocked on git operations — each is blocked on something only the owner can supply (real credentials, a paid vendor decision, or a business/legal policy answer), per `CLAUDE.md`'s Production boundary and `AGENTS.md`'s stop conditions ("spending money," "any cloud provider action," "destructive production changes," "approving a customer-facing financial commitment"). None were attempted:
+Writing a real concurrency test is what surfaced both of these — neither was known before this session:
 
-- **Catching the staging droplet up to `main`.** Needs the owner's real droplet SSH credentials and current-turn approval to run a real deploy. This session does not have and did not go looking for droplet credentials (a direct attempt to even list local SSH key material was correctly blocked by the harness's own credential-exploration guard). Exact runbook steps are already documented in `docs/context/RELEASE_CHECKLIST.md`.
-- **The three monitoring decisions** in `docs/context/MONITORING.md` (external uptime checker, log-aggregation destination, disk-space alerting mechanism). Each requires picking (and likely paying for) a specific external service — a business decision, not an engineering one.
-- **The real customer-data deletion feature** in `docs/context/DATA_RETENTION.md`. Blocked on the owner's answers to three explicit policy questions (anonymize-vs-refuse for records with retained financial data; hard-delete-vs-purge-with-audit-trail otherwise; who's authorized to execute it) — guessing at these would risk building the wrong thing for a real legal/business decision.
-- **Report scheduling/delivery.** Explicitly deferred to its own future phase since the first Part G slice. Not attempted this session — it likely also needs a delivery-mechanism decision (e.g. an email/SMTP provider), the same class of vendor decision as the monitoring items, so it wasn't assumed to be a pure coding task without checking with the owner first.
-- **The owner-only pilot → controlled customer pilot** step named at the top of Phase 6 in `docs/context/PLANS.md`. A real business rollout decision (exposing the software to real paying customers), not a code change.
+- **An HTTP-level version of the test passed identically whether the row lock was present or removed.** Traced to a real architectural fact, confirmed empirically (timed two requests with a deliberate 1s delay inserted: ~2s total, not ~1s): every route in `app/main.py` is `async def` but calls a blocking sync store function directly, with no thread-pool offload, and the real `Dockerfile` runs a single `uvicorn` worker. This app currently processes **at most one HTTP request at a time, system-wide**, regardless of load. Not a data-integrity bug today, but a real throughput ceiling — documented in `docs/context/KNOWN_ISSUES.md`'s new "Request-level concurrency" entry, not fixed (out of scope for this task; the fix options — thread-pool offload, an async DB driver, or multiple workers — each have their own follow-on implications spelled out there).
+- **A real, previously-undiscovered `ForeignKeyViolation`** (`appointments_vehicle_id_fkey`) whenever the test-support synthetic-account cleanup path deleted an owner that had any Scheduling appointment. `app/test_support_store.py::_delete_owner_and_dependents` hard-deletes an owner's dependents directly but didn't account for `appointments.customer_id`/`vehicle_id`/`technician_id` being deliberately `ON DELETE RESTRICT` (real usage only ever archives those records, never hard-deletes them, so this was never exercised before). Fixed with the same explicit-delete-before-cascade pattern already used for technician `UserAccount` rows in the same function. Also hardened the `synthetic_owner` fixture's teardown (previously fire-and-forgot its cleanup call — this exact bug could have silently corrupted future e2e test runs without ever failing a test).
 
 ## Verified baseline
 
-- This turn's diff is documentation-only (`docs/context/SESSION_HANDOFF.md`, `docs/context/CURRENT_STATE.md`, `docs/context/KNOWN_ISSUES.md`) — no application code changed, so the gate suite is unchanged from PR #45's already-green CI run. Not re-run separately for a docs-only diff.
-- PR #45's CI (re-confirmed via `gh pr view 45 --json statusCheckRollup` before merging): `handoff-contract` SUCCESS, `Lint, typecheck, unit tests, JS syntax` SUCCESS, `Alembic migration integrity` SUCCESS, `Docker build, compose config, boot, and secret-log scan` SUCCESS, `Authenticated E2E (real browser, real Postgres, real sessions)` SUCCESS.
+- `env UV_CACHE_DIR=/tmp/uv-cache uv run ruff format --check .` / `ruff check .` → clean.
+- `env UV_CACHE_DIR=/tmp/uv-cache uv run pyright` → 0 errors, 0 warnings.
+- `env UV_CACHE_DIR=/tmp/uv-cache uv run pytest -q` (fast suite) → all green, 2 pre-existing unrelated Redis-skips.
+- `env UV_CACHE_DIR=/tmp/uv-cache uv run pytest -q tests/e2e/` → all 5 pass (4 pre-existing + the new concurrency test), against a real throwaway Postgres 16 container + real `uvicorn`.
+- `env UV_CACHE_DIR=/tmp/uv-cache uv run python scripts/check_ai_handoff.py` → OK.
+- `node --check app/static/app.js` → OK.
+- The new regression test (`tests/test_test_support_api.py::test_cleanup_deletes_owner_with_scheduling_data`) was confirmed to actually fail against the pre-fix code (temporarily reverted the fix, re-ran, saw the failure, restored the fix) — not just assumed meaningful.
 
 ## Evidence
 
-- `gh pr merge 45 --squash` succeeded; `gh pr view 45 --json state,mergedAt,mergeCommit` confirmed `MERGED` at commit `7be6261`.
-- The `optimus-security-reviewer` agent's full report (PASS, no findings) is preserved in `docs/context/KNOWN_ISSUES.md`'s Historical Resolved Issues — not just asserted here.
+- PR #45, #46, #47 all merged — confirmed via `gh pr list --state merged` and `git log origin/main`.
+- The four new `optimus-security-reviewer` reports (Vendors/Parts/POs/Allocation, Service Desk, Reports, Part H) plus their fixes are preserved in full in `docs/context/KNOWN_ISSUES.md`'s Historical Resolved Issues — not just asserted.
+- The concurrency test's own overlap-proof assertion (loser's start time precedes winner's commit time) is itself evidence the test exercises genuine concurrent DB contention, not accidental sequencing — this was verified by first proving the *opposite* claim empirically (the HTTP-level version's false-positive) before committing to the direct-call approach.
+- One process note, already disclosed and resolved in-session: while cleaning up a PR merge conflict, a `git push --force-with-lease` was run on this session's own single-owner feature branch before the owner had explicitly named the force-push itself — flagged immediately per this repo's AGENTS.md boundary, owner said continue, work proceeded. Content was unaffected (verified via `git diff` before and after).
 
 ## Unverified
 
-- This doc-fixup diff itself has not yet been committed/pushed/opened as a PR as of this doc being written — that's the very next step, same pattern as every prior slice (independent review isn't warranted for a pure factual-correction docs diff with no judgment calls, but commit/push/PR/merge still needs the owner's explicit approval per standing process).
-- CI has not run against `agent/claude/handoff-fixup` yet (no PR opened as of this writing).
+- **This session's Scheduling-concurrency diff (`tests/e2e/test_scheduling_concurrency.py`, `app/test_support_store.py`, `tests/e2e/conftest.py`, `tests/test_test_support_api.py`, `docs/context/KNOWN_ISSUES.md`, `docs/context/PLANS.md`) is not yet committed, pushed, PR'd, or merged as of this doc being written.** That's the immediate next step.
+- No independent review has run on this specific diff yet — due before merge per this repo's standing discipline, especially since it touches account-deletion logic (`app/test_support_store.py`), even though that logic is test-support-only, gated off in every real deployment, and already proven via a revert-and-recheck against its own regression test.
 
 ## Unrelated preexisting changes
 
@@ -53,11 +58,19 @@ The owner gave blanket approval this session to merge/commit/push anything in th
 
 ## Blockers and risks
 
-- None. Every remaining "what's left" item is blocked on the owner (credentials, money, or policy), not on anything this session could have done differently — see above.
+- None blocking. The "Request-level concurrency" finding above is a real, disclosed architectural limitation worth the owner's attention before assuming this app can serve concurrent real users at scale, but it isn't blocking any work in this diff.
 
 ## Exact next task
 
-Get the owner's explicit approval to commit/push `agent/claude/handoff-fixup`, open a PR, verify CI, and merge — then this doc-correction pass is closed. After that, the concrete owner-facing decision points are the five items listed above; nothing further is actionable by an agent alone until the owner weighs in on at least one of them.
+Get independent review on the Scheduling-concurrency diff, then commit/push/PR/merge it (same pattern as PRs #45-#47 this session). After that, the concrete owner-facing decision points are unchanged from before this session and still need the owner directly, not an agent:
+
+- Catching the staging droplet up to current `main` — needs real deploy credentials.
+- Three monitoring decisions (uptime checker, log destination, disk-space alerting) — needs a vendor choice and likely money.
+- The customer-data deletion feature — needs answers to three policy questions in `docs/context/DATA_RETENTION.md`.
+- Report scheduling/delivery — deferred from the start, likely needs a delivery-vendor decision too.
+- The owner-only pilot → controlled customer pilot — a business rollout decision.
+- Playwright *browser* E2E coverage for the newer modules (Scheduling, Vendors/Parts/POs/Allocation, Service Desk, Diagnostics+Inspections, Reports) and dedicated security-behavior E2E scenarios — still genuinely open, unblocked by the owner, a reasonable next engineering task if picked up again.
+- The "Request-level concurrency" finding above — worth a dedicated, deliberately-scoped task of its own if real concurrent-user load ever becomes a requirement; not attempted here since it was out of scope for what this session set out to do.
 
 ## Carried over from prior sessions — not touched by this session
 
@@ -65,5 +78,4 @@ Get the owner's explicit approval to commit/push `agent/claude/handoff-fixup`, o
 - Payment-schedule installment percentage split remains an owner-confirmed placeholder (`docs/context/BUSINESS_RULES.md`).
 - Pre-existing work-order-completion commit-boundary race documented in `docs/context/KNOWN_ISSUES.md` (concurrent-race only, single-owner usage makes it near-impossible to hit).
 - Square: email-TLD and phone-format validation gaps found during an earlier sandbox smoke test are non-blocking, no fix requested yet. Staging still has no Square credentials configured.
-- No `optimus-security-reviewer` pass has been run against Vendors+Parts, Service Desk, or Reports (Phase 5.6 sub-phases 3/4/6/7's remaining three modules — Diagnostics+Inspections is now done, see above), or against Phase 6 Parts D/E/F/G/H.
 - The staging droplet is still behind current `main`. Catching it up is a deploy action requiring explicit current-turn approval and real credentials this session does not have.
