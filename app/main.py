@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 import os
 import socket
@@ -327,6 +328,7 @@ from app.scheduling_store import (
     update_schedule_block,
     update_working_hours,
 )
+from app.security_events import SecurityEventType, log_security_event
 from app.services.http import SafeHttpClient
 from app.services.location import LocationService
 from app.services.optimus_chat import OptimusChatService
@@ -453,7 +455,49 @@ async def enforce_rate_limit(request: Request, settings: Settings) -> None:
     try:
         await get_rate_limiter(settings).check(client_key)
     except RateLimitExceeded as exc:
+        log_security_event(
+            logger, SecurityEventType.RATE_LIMIT_EXCEEDED, request=request, limit_key=client_key
+        )
         raise HTTPException(status_code=429, detail=str(exc)) from exc
+
+
+_login_rate_limiter: RateLimiter | None = None
+_login_rate_limiter_redis_url: str | None = None
+
+
+def get_login_rate_limiter(settings: Settings) -> RateLimiter:
+    # Separate limiter/limit from get_rate_limiter's -- login attempts
+    # warrant a much lower per-minute ceiling than a customer refreshing an
+    # approval link, and the underlying limiter classes only support one
+    # configured limit per instance, so this mirrors that function's exact
+    # lazy-singleton pattern for its own purpose rather than parameterizing
+    # a shared one.
+    global _login_rate_limiter, _login_rate_limiter_redis_url
+    if (
+        _login_rate_limiter is None
+        or _login_rate_limiter.limit != settings.max_login_attempts_per_minute
+        or _login_rate_limiter_redis_url != settings.redis_url
+    ):
+        _login_rate_limiter = RedisSlidingWindowRateLimiter(
+            redis_client=Redis.from_url(settings.redis_url),
+            limit=settings.max_login_attempts_per_minute,
+        )
+        _login_rate_limiter_redis_url = settings.redis_url
+    return _login_rate_limiter
+
+
+async def enforce_login_rate_limit(request: Request, settings: Settings) -> None:
+    client_host = request.client.host if request.client else "unknown"
+    client_key = f"login:{client_host}"
+    try:
+        await get_login_rate_limiter(settings).check(client_key)
+    except RateLimitExceeded as exc:
+        log_security_event(
+            logger, SecurityEventType.RATE_LIMIT_EXCEEDED, request=request, limit_key=client_key
+        )
+        raise HTTPException(
+            status_code=429, detail="Too many login attempts. Try again shortly."
+        ) from exc
 
 
 def location_service(settings: Settings) -> LocationService:
@@ -604,8 +648,22 @@ async def login(
     db: DbSessionDep,
     settings: SettingsDep,
 ) -> AuthSessionResponse:
+    await enforce_login_rate_limit(request, settings)
     user = authenticate_user(db=db, username=payload.username, password=payload.password)
     if user is None:
+        # Logs a hash, not the raw attempted username: a real user who
+        # fat-fingers the login form can end up with their password typed
+        # into the username field, and this event fires on every failed
+        # attempt. The hash still lets an owner/monitor correlate repeated
+        # failures against the same attempted value (e.g. "47 failed
+        # attempts against the same username-hash in one minute") without
+        # ever persisting a value that could be a leaked password.
+        log_security_event(
+            logger,
+            SecurityEventType.LOGIN_FAILED,
+            request=request,
+            username_hash=hashlib.sha256(payload.username.encode("utf-8")).hexdigest()[:12],
+        )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid username or password."
         )
@@ -614,6 +672,14 @@ async def login(
         db=db, settings=settings, user=user, request=request
     )
     set_session_cookie(response, settings, session_token, auth_session.expires_at)
+    log_security_event(
+        logger,
+        SecurityEventType.LOGIN_SUCCEEDED,
+        request=request,
+        level=logging.INFO,
+        username=payload.username,
+        user_id=user.id,
+    )
     return AuthSessionResponse(
         user=auth_user_response(user),
         expires_at=auth_session.expires_at,
@@ -2987,7 +3053,13 @@ async def push_invoice_to_square_record(
     except (SquareStoreError, InvoiceStoreError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except SquareApiError as exc:
-        logger.warning("Square push failed: %s", exc)
+        log_security_event(
+            logger,
+            SecurityEventType.SQUARE_API_FAILED,
+            invoice_id=invoice_id,
+            operation="push",
+            error=str(exc),
+        )
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     except SQLAlchemyError as exc:
         logger.warning("Square push failed due to storage error.")
@@ -3026,7 +3098,13 @@ async def refresh_square_invoice_record(
     except SquareStoreError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except SquareApiError as exc:
-        logger.warning("Square refresh failed: %s", exc)
+        log_security_event(
+            logger,
+            SecurityEventType.SQUARE_API_FAILED,
+            invoice_id=invoice_id,
+            operation="refresh",
+            error=str(exc),
+        )
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     except SQLAlchemyError as exc:
         logger.warning("Square refresh failed due to storage error.")

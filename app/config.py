@@ -25,6 +25,17 @@ class Settings(BaseSettings):
     openai_model: str = "gpt-5.5"
     openai_estimator_model: str = ""
     openai_fallback_model: str = "gpt-4.1-mini"
+    # Optional, opt-in $/1K-token pricing for cost logging (Phase 6 Part H).
+    # Unset (None) by default -- OpenAI's published prices change over time
+    # and this app has no live pricing API, so guessing a number here would
+    # be a fabricated cost estimate, not a real one. When left unset, usage
+    # is still logged (real, verifiable token counts) but no dollar estimate
+    # is computed; the owner can fill these in from OpenAI's current pricing
+    # page to turn on estimated-cost logging.
+    openai_estimator_model_input_cost_per_1k: float | None = Field(default=None, ge=0)
+    openai_estimator_model_output_cost_per_1k: float | None = Field(default=None, ge=0)
+    openai_fallback_model_input_cost_per_1k: float | None = Field(default=None, ge=0)
+    openai_fallback_model_output_cost_per_1k: float | None = Field(default=None, ge=0)
     web_search_context_size: Literal["low", "medium", "high"] = "medium"
     estimator_reasoning_effort: Literal["low", "medium", "high"] = "low"
 
@@ -63,6 +74,7 @@ class Settings(BaseSettings):
     )
     redis_url: str = Field(default="redis://redis:6379/0", repr=False)
     max_estimates_per_minute: int = Field(default=20, ge=1, le=240)
+    max_login_attempts_per_minute: int = Field(default=10, ge=1, le=240)
     log_level: str = "INFO"
     session_ttl_hours: int = Field(default=12, ge=1, le=168)
     frontend_origin: str = "http://127.0.0.1:5173"
@@ -119,6 +131,27 @@ class Settings(BaseSettings):
     def parse_hosts(cls, value: object) -> object:
         if isinstance(value, str):
             return tuple(part.strip().lower() for part in value.split(",") if part.strip())
+        return value
+
+    @field_validator(
+        "openai_estimator_model_input_cost_per_1k",
+        "openai_estimator_model_output_cost_per_1k",
+        "openai_fallback_model_input_cost_per_1k",
+        "openai_fallback_model_output_cost_per_1k",
+        mode="before",
+    )
+    @classmethod
+    def blank_cost_is_unconfigured(cls, value: object) -> object:
+        # .env.example ships these keys present but blank (the documented
+        # "not configured yet" state) -- an empty string must mean None, not
+        # a float-parsing error, or a fresh checkout with these keys still
+        # blank would fail to start at all. These are this class's first
+        # `X | None`-typed numeric fields; any future Optional[int]/
+        # Optional[float] setting needs the same before-validator pattern,
+        # or a blank .env value for it will crash the app at startup the
+        # same way this one did before this fix.
+        if isinstance(value, str) and not value.strip():
+            return None
         return value
 
     @field_validator("openai_api_key")

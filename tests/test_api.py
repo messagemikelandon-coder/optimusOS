@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from typing import Any, cast
 
 import pytest
@@ -137,6 +138,80 @@ async def test_login_rejects_invalid_credentials(settings, db_session: Session) 
     with pytest.raises(HTTPException) as excinfo:
         await login(settings, db_session, password="wrong-password")
     assert excinfo.value.status_code == 401
+
+
+@pytest.mark.anyio
+async def test_login_failure_logs_security_event_without_leaking_password(
+    settings, db_session: Session, caplog
+) -> None:  # type: ignore[no-untyped-def]
+    with (
+        caplog.at_level(logging.WARNING, logger="optimus"),
+        pytest.raises(HTTPException),
+    ):
+        await login(settings, db_session, password="a-secret-guessed-password")
+    assert "security event: auth.login_failed" in caplog.text
+    events = [
+        r for r in caplog.records if getattr(r, "security_event", None) == "auth.login_failed"
+    ]
+    assert len(events) == 1
+    assert "a-secret-guessed-password" not in caplog.text
+    # The attempted username is hashed, not logged raw -- see the code
+    # comment in app/main.py::login. Confirms a correlatable hash is
+    # present but is not simply the raw username string.
+    assert hasattr(events[0], "username_hash")
+    assert events[0].username_hash != "owner"
+
+
+@pytest.mark.anyio
+async def test_login_failure_does_not_log_a_password_mistyped_into_the_username_field(
+    settings, db_session: Session, caplog
+) -> None:  # type: ignore[no-untyped-def]
+    """A real, common user mistake: fat-fingering the login form so a
+    password ends up typed into the username field. The failed-login
+    security event must never persist that value in any form."""
+    response = Response()
+    with (
+        caplog.at_level(logging.WARNING, logger="optimus"),
+        pytest.raises(HTTPException),
+    ):
+        await main.login(
+            AuthLoginRequest(username="my-actual-password-123", password="whatever"),
+            request_for("/api/auth/login", method="POST"),
+            response,
+            db_session,
+            settings,
+        )
+    assert "my-actual-password-123" not in caplog.text
+
+
+@pytest.mark.anyio
+async def test_login_success_logs_security_event(settings, db_session: Session, caplog) -> None:  # type: ignore[no-untyped-def]
+    with caplog.at_level(logging.INFO, logger="optimus"):
+        await login(settings, db_session)
+    assert "security event: auth.login_succeeded" in caplog.text
+    events = [
+        r for r in caplog.records if getattr(r, "security_event", None) == "auth.login_succeeded"
+    ]
+    assert len(events) == 1
+
+
+@pytest.mark.anyio
+async def test_login_rate_limit_returns_429_after_threshold(
+    settings, db_session: Session, caplog
+) -> None:  # type: ignore[no-untyped-def]
+    limited_settings = settings.model_copy(update={"max_login_attempts_per_minute": 2})
+    for _ in range(2):
+        with pytest.raises(HTTPException) as excinfo:
+            await login(limited_settings, db_session, password="wrong-password")
+        assert excinfo.value.status_code == 401
+
+    with (
+        caplog.at_level(logging.WARNING, logger="optimus"),
+        pytest.raises(HTTPException) as excinfo,
+    ):
+        await login(limited_settings, db_session, password="wrong-password")
+    assert excinfo.value.status_code == 429
+    assert "security event: rate_limit.exceeded" in caplog.text
 
 
 @pytest.mark.anyio

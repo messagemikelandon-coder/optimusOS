@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from typing import Any
 
 import httpx
@@ -21,10 +22,20 @@ from app.services.openai_web import (
 )
 
 
+class FakeUsage:
+    def __init__(self, *, input_tokens: int, output_tokens: int) -> None:
+        self.input_tokens = input_tokens
+        self.output_tokens = output_tokens
+        self.total_tokens = input_tokens + output_tokens
+
+
 class FakeResponse:
-    def __init__(self, output=None, output_text: str | None = None):  # type: ignore[no-untyped-def]
+    def __init__(  # type: ignore[no-untyped-def]
+        self, output=None, output_text: str | None = None, usage: FakeUsage | None = None
+    ):
         self.output = output or []
         self.output_text = output_text
+        self.usage = usage
 
     def model_dump(self, mode="json"):  # type: ignore[no-untyped-def]
         del mode
@@ -32,9 +43,10 @@ class FakeResponse:
 
 
 class FakeResponses:
-    def __init__(self) -> None:
+    def __init__(self, *, usage: FakeUsage | None = None) -> None:
         self.create_calls = 0
         self.last_create_kwargs: dict[str, Any] | None = None
+        self.usage = usage
 
     @staticmethod
     def envelope() -> CombinedResearchEnvelope:
@@ -108,7 +120,9 @@ class FakeResponses:
         self.create_calls += 1
         self.last_create_kwargs = kwargs
         payload = self.envelope().model_dump(mode="json")
-        return FakeResponse(output=self.sources(), output_text=json.dumps(payload))
+        return FakeResponse(
+            output=self.sources(), output_text=json.dumps(payload), usage=self.usage
+        )
 
 
 class FakeClient:
@@ -157,6 +171,63 @@ def test_research_uses_one_combined_structured_call_and_removes_unsafe_links() -
     assert text_param["format"]["type"] == "json_schema"
     assert text_param["format"]["strict"] is True
     assert "schema" in text_param["format"]
+
+
+def test_research_logs_real_token_usage_without_fabricating_cost_when_unpriced(
+    caplog,
+) -> None:
+    """Pricing is unconfigured by default (Settings' openai_*_cost_per_1k
+    fields default to None) -- real token counts must still be logged, but
+    no dollar figure should be fabricated without owner-supplied pricing."""
+    client = FakeClient()
+    client.responses.usage = FakeUsage(input_tokens=1200, output_tokens=340)
+
+    with caplog.at_level(logging.INFO, logger="optimus"):
+        run_research(client)
+
+    usage_records = [r for r in caplog.records if r.getMessage() == "OpenAI usage"]
+    assert len(usage_records) == 1
+    record = usage_records[0]
+    assert record.openai_input_tokens == 1200
+    assert record.openai_output_tokens == 340
+    assert record.openai_total_tokens == 1540
+    assert not hasattr(record, "openai_estimated_cost_usd")
+
+
+def test_research_logs_estimated_cost_when_pricing_configured(caplog) -> None:
+    settings = Settings(
+        openai_api_key="test",
+        parts_retailer_hosts=("autozone.com",),
+        allow_public_https_parts_links=False,
+        openai_estimator_model_input_cost_per_1k=0.01,
+        openai_estimator_model_output_cost_per_1k=0.03,
+    )
+    client = FakeClient()
+    client.responses.usage = FakeUsage(input_tokens=1000, output_tokens=1000)
+
+    with caplog.at_level(logging.INFO, logger="optimus"):
+        service(client, settings=settings).research(
+            vehicle=DecodedVehicle(year=2020, make="Dodge", model="Charger"),
+            job="Replace starter",
+            location=ResolvedLocation(city="Junction City", region="KS", postal_code="66441"),
+        )
+
+    usage_records = [r for r in caplog.records if r.getMessage() == "OpenAI usage"]
+    assert len(usage_records) == 1
+    # 1000 input tokens @ $0.01/1K + 1000 output tokens @ $0.03/1K = $0.04
+    assert usage_records[0].openai_estimated_cost_usd == pytest.approx(0.04)
+
+
+def test_research_usage_logging_tolerates_a_response_with_no_usage_object(caplog) -> None:
+    client = FakeClient()  # usage defaults to None, matching a stub/test double
+
+    with caplog.at_level(logging.INFO, logger="optimus"):
+        run_research(client)
+
+    usage_records = [r for r in caplog.records if r.getMessage() == "OpenAI usage"]
+    assert len(usage_records) == 1
+    assert usage_records[0].openai_input_tokens is None
+    assert not hasattr(usage_records[0], "openai_estimated_cost_usd")
 
 
 def test_prompt_keeps_job_as_data_and_contains_injection_rules() -> None:
