@@ -5,76 +5,59 @@ Information owner: the active session author.
 Read when: starting or resuming work.
 Update when: a substantial task completes or context needs to be handed forward.
 Last verified date: 2026-07-17.
-Relevant sources: `docs/context/CURRENT_STATE.md`, `docs/context/PLANS.md`, `git log`/`git status`, a full local gate run plus a live proof against a real docker-compose-managed Postgres + Redis, the real Part C Playwright e2e suite.
+Relevant sources: `docs/context/CURRENT_STATE.md`, `docs/context/KNOWN_ISSUES.md`, `docs/context/PLANS.md`, `git log`/`git status`, `gh pr view`, an `optimus-security-reviewer` pass.
 
 ## Identity
 
 - Updated UTC: 2026-07-17.
 - Agent: Claude.
-- `main` HEAD: `a13a68d` (merge of PR #44, Phase 6 Part H — threat model, security-event logging, OpenAI cost logging, policy docs).
-- Worktree used this session: `.claude/worktrees/release-process`, branch `agent/claude/staging-verification`, branched fresh from `origin/main`. Not yet committed, pushed, or opened as a PR.
+- `main` HEAD: `7be6261` (squash-merge of PR #45, Phase 6 Part I — staging verification + deployment checklist).
+- This session started on the pre-existing worktree/branch `agent/claude/staging-verification`, found PR #45 already open, mergeable, and fully green from a prior turn, merged it, then branched fresh `agent/claude/handoff-fixup` off `origin/main` for this doc-only fixup pass.
 
 ## Active task
 
-Phase 6 Part I (staging verification) — the second half of the owner's explicit instruction "complete H and I, then tell me what is left to complete the goal." Part H merged earlier this session (PR #44). **Everything Part I calls for that's achievable without touching real staging infrastructure is done, live-verified, and documented; not yet committed, pushed, or merged.**
+The owner's original instruction ("complete H and I, then tell me what is left to complete the goal") is now fully done — Part H merged via PR #44, Part I merged via PR #45. This session picked up the "what's left" list PR #45's handoff itself proposed and completed the two items on it that don't require the owner's credentials, money, or a policy decision:
 
-- Ran the full gate suite for real against the exact merged Part H commit: `ruff`/`pyright`/`pytest`/`node --check` all clean; a real `docker compose build` of backend/worker; a genuinely fresh Postgres migrated to a single linear head; `/health`/`/ready` confirmed the exact commit and `schema_compatibility: "matched"`; a real log-secret scan found nothing; the real Part C Playwright e2e suite (3 tests) passed; the customer-facing HTML/PDF field-exclusion test passed; confirmed zero Scheduling code touched across this entire session's diff range.
-- Extended `docs/context/RELEASE_CHECKLIST.md` (rather than creating a new document) with the missing Part I gate items and a new, concrete 11-step ordered Deployment Checklist section.
-- Full detail, including a real environment quirk hit and worked around during the rehearsal (this app's `.env`-over-shell-env precedence design silently defeating a test fixture's env var override), in `docs/context/PLANS.md`'s Part I entry.
+1. **Merged PR #45** (all CI green: handoff-contract, lint/typecheck/tests, Alembic migration integrity, Docker build + secret-log scan, authenticated E2E — see `gh pr view 45`).
+2. **Ran the overdue `optimus-security-reviewer` pass on the Diagnostics + Inspections module** (flagged in the prior handoff as never having had one). **Result: PASS, no exploitable findings.** Full detail in `docs/context/KNOWN_ISSUES.md`'s Historical Resolved Issues.
+3. **Fixed this doc and `docs/context/CURRENT_STATE.md`**, both of which were stale (claiming PR #45's diff wasn't committed/merged yet, and claiming Diagnostics/Inspections had no security review, both no longer true).
 
-## What's explicitly NOT done, and why
+## What's explicitly NOT done, and why — every remaining "what's left" item needs the owner, not just git permission
 
-Per `CLAUDE.md`'s Production boundary — this was never in scope for Part I regardless of session progress:
+The owner gave blanket approval this session to merge/commit/push anything in the repo. That unlocks git operations, but none of the following items are blocked on git operations — each is blocked on something only the owner can supply (real credentials, a paid vendor decision, or a business/legal policy answer), per `CLAUDE.md`'s Production boundary and `AGENTS.md`'s stop conditions ("spending money," "any cloud provider action," "destructive production changes," "approving a customer-facing financial commitment"). None were attempted:
 
-- **Catching the real staging droplet up to current `main` was not attempted.** This is explicitly named as a separate action in `docs/context/PLANS.md`'s own Part I entry ("does not require any of Parts A-H and can happen independently once approved") — it needs the owner's current-turn approval and real droplet credentials, neither of which this session has or went looking for.
-- Everything else Part I calls for (gates, the deployment checklist document, the Playwright smoke test, the log scan) is genuinely complete — this isn't a partial-credit situation, just a hard boundary between "verify the process is correct and documented" and "execute it against a real production target."
+- **Catching the staging droplet up to `main`.** Needs the owner's real droplet SSH credentials and current-turn approval to run a real deploy. This session does not have and did not go looking for droplet credentials (a direct attempt to even list local SSH key material was correctly blocked by the harness's own credential-exploration guard). Exact runbook steps are already documented in `docs/context/RELEASE_CHECKLIST.md`.
+- **The three monitoring decisions** in `docs/context/MONITORING.md` (external uptime checker, log-aggregation destination, disk-space alerting mechanism). Each requires picking (and likely paying for) a specific external service — a business decision, not an engineering one.
+- **The real customer-data deletion feature** in `docs/context/DATA_RETENTION.md`. Blocked on the owner's answers to three explicit policy questions (anonymize-vs-refuse for records with retained financial data; hard-delete-vs-purge-with-audit-trail otherwise; who's authorized to execute it) — guessing at these would risk building the wrong thing for a real legal/business decision.
+- **Report scheduling/delivery.** Explicitly deferred to its own future phase since the first Part G slice. Not attempted this session — it likely also needs a delivery-mechanism decision (e.g. an email/SMTP provider), the same class of vendor decision as the monitoring items, so it wasn't assumed to be a pure coding task without checking with the owner first.
+- **The owner-only pilot → controlled customer pilot** step named at the top of Phase 6 in `docs/context/PLANS.md`. A real business rollout decision (exposing the software to real paying customers), not a code change.
 
 ## Verified baseline
 
-- `env UV_CACHE_DIR=/tmp/uv-cache uv run ruff format --check .` → clean.
-- `env UV_CACHE_DIR=/tmp/uv-cache uv run ruff check .` → all checks passed.
-- `env UV_CACHE_DIR=/tmp/uv-cache uv run pyright` → 0 errors, 0 warnings.
-- `env UV_CACHE_DIR=/tmp/uv-cache uv run pytest -q -rA` → 387 passed, 2 skipped (pre-existing, unrelated — needs a real local Redis), 0 failed.
-- `node --check app/static/app.js` → OK.
-- This is a documentation-only diff (`docs/context/PLANS.md`, `docs/context/RELEASE_CHECKLIST.md`, this file) — no application code changed, so the above are unchanged from Part H's already-verified baseline, re-confirmed rather than assumed stale.
+- This turn's diff is documentation-only (`docs/context/SESSION_HANDOFF.md`, `docs/context/CURRENT_STATE.md`, `docs/context/KNOWN_ISSUES.md`) — no application code changed, so the gate suite is unchanged from PR #45's already-green CI run. Not re-run separately for a docs-only diff.
+- PR #45's CI (re-confirmed via `gh pr view 45 --json statusCheckRollup` before merging): `handoff-contract` SUCCESS, `Lint, typecheck, unit tests, JS syntax` SUCCESS, `Alembic migration integrity` SUCCESS, `Docker build, compose config, boot, and secret-log scan` SUCCESS, `Authenticated E2E (real browser, real Postgres, real sessions)` SUCCESS.
 
 ## Evidence
 
-- **Real `docker compose build backend worker`** succeeded against the exact Part H merge commit, using a throwaway local `.env` (placeholder values only, deleted afterward).
-- **A genuinely fresh Postgres** (new container, no prior state) reached `alembic heads` → exactly one head (`021_part_allocations`) via the real built backend image running `alembic upgrade head`, not a shortcut.
-- **`/health` and `/ready`**, hit directly against the backend container's Docker-network IP (another unrelated project already held the usual `8000`/`5173` host ports this app's `docker-compose.yml` normally publishes, during this session — worked around without touching that other project's containers), confirmed the exact commit SHA and migration head, with `schema_compatibility: "matched"`.
-- **A real `python -m scripts.scan_logs_for_secrets --project release-process --services backend worker`** scan of the real container's boot logs found nothing.
-- **The real Part C authenticated Playwright suite** (`tests/e2e/`, 3 tests, its own separately-managed real browser/Postgres/session stack) passed.
-- **A real environment quirk was hit and fixed during this rehearsal, not a code bug**: a leftover throwaway `.env` from earlier in the same rehearsal (pointing `DATABASE_URL` at a since-torn-down container IP) broke the Playwright suite's own fixture on the first attempt, because this app deliberately makes its `.env` file take precedence over shell-exported environment variables (by design, per an existing code comment). Fixed by deleting the stale `.env` before rerunning.
-- All containers, volumes, networks, and Docker images created for this rehearsal were torn down afterward; the worktree is clean (`git status --short` shows only the intended doc changes).
+- `gh pr merge 45 --squash` succeeded; `gh pr view 45 --json state,mergedAt,mergeCommit` confirmed `MERGED` at commit `7be6261`.
+- The `optimus-security-reviewer` agent's full report (PASS, no findings) is preserved in `docs/context/KNOWN_ISSUES.md`'s Historical Resolved Issues — not just asserted here.
 
 ## Unverified
 
-- Not committed, pushed, opened as a PR, or merged — awaiting the next step in this same task.
-- No independent review has run on this diff yet (it's documentation-only, but this repo's own discipline calls for an independent pass before merge regardless — do that next, before asking for commit approval).
-- CI has not yet run against this branch (no PR opened yet).
+- This doc-fixup diff itself has not yet been committed/pushed/opened as a PR as of this doc being written — that's the very next step, same pattern as every prior slice (independent review isn't warranted for a pure factual-correction docs diff with no judgment calls, but commit/push/PR/merge still needs the owner's explicit approval per standing process).
+- CI has not run against `agent/claude/handoff-fixup` yet (no PR opened as of this writing).
 
 ## Unrelated preexisting changes
 
 - Untracked stray `optimusOS/` directory at the repo root — predates every session on record, not part of any commit, still present, still "leave alone" per every prior handoff.
-- Another, unrelated project's Docker containers (`optimus-server-backend-1` et al., 23+ hours uptime, holding host ports `8000`/`5173`) were observed running during this session's local rehearsal — not touched, not stopped, not investigated further than confirming they belong to a different compose project.
 
 ## Blockers and risks
 
-- None blocking the work in this diff. The one explicitly-not-done item (catching the staging droplet up to `main`) is blocked on the owner's credentials/approval, not on anything this session could have done differently.
+- None. Every remaining "what's left" item is blocked on the owner (credentials, money, or policy), not on anything this session could have done differently — see above.
 
 ## Exact next task
 
-Launch an independent review of this diff (docs-only, but still due one per this repo's standing discipline), then get explicit current-turn owner approval, commit, push `agent/claude/staging-verification`, open a PR, verify CI, and merge with explicit approval (same pattern as PRs #38-44 this session).
-
-**After that PR merges, Part I is complete, and so is the owner's original "complete H and I" instruction.** The next message to the owner should be the "what is left to complete the goal" summary they explicitly asked for — at minimum:
-
-- **Catching the staging droplet up to current `main`** — a real deploy action, needs the owner's credentials and current-turn approval; the exact steps are now documented in `docs/context/RELEASE_CHECKLIST.md`'s new Deployment Checklist section.
-- **Three concrete monitoring decisions** named in `docs/context/MONITORING.md` (external uptime checker, log-aggregation destination, disk-space alerting) — none configured yet.
-- **The real customer-data deletion feature** described but not built in `docs/context/DATA_RETENTION.md` — needs the owner's answer to the three policy questions posed there.
-- **Report scheduling/delivery** — explicitly deferred out of Phase 6 Part G from its very first slice, never picked up.
-- **Diagnostic/inspection findings' report already shipped** (Part G Slice 5) but the broader "Diagnostic/Inspection" module itself has never had an `optimus-security-reviewer` pass, per the carried-over item below — worth flagging given Part H's own diff touched auth/rate-limiting directly this session.
-- The **owner-only pilot → controlled customer pilot** step named at the top of `docs/context/PLANS.md`'s Phase 6 section, which sits after Parts A-J and has not been started.
+Get the owner's explicit approval to commit/push `agent/claude/handoff-fixup`, open a PR, verify CI, and merge — then this doc-correction pass is closed. After that, the concrete owner-facing decision points are the five items listed above; nothing further is actionable by an agent alone until the owner weighs in on at least one of them.
 
 ## Carried over from prior sessions — not touched by this session
 
@@ -82,5 +65,5 @@ Launch an independent review of this diff (docs-only, but still due one per this
 - Payment-schedule installment percentage split remains an owner-confirmed placeholder (`docs/context/BUSINESS_RULES.md`).
 - Pre-existing work-order-completion commit-boundary race documented in `docs/context/KNOWN_ISSUES.md` (concurrent-race only, single-owner usage makes it near-impossible to hit).
 - Square: email-TLD and phone-format validation gaps found during an earlier sandbox smoke test are non-blocking, no fix requested yet. Staging still has no Square credentials configured.
-- No `optimus-security-reviewer` pass has been run against Phase 5.6 sub-phases 3, 4, 6, 7 (Vendors+Parts, Service Desk, Diagnostics+Inspections, Reports), or against Phase 6 Parts D/E/F/G/H — only sub-phases 1, 2, and 5 (Scheduling) have had one.
+- No `optimus-security-reviewer` pass has been run against Vendors+Parts, Service Desk, or Reports (Phase 5.6 sub-phases 3/4/6/7's remaining three modules — Diagnostics+Inspections is now done, see above), or against Phase 6 Parts D/E/F/G/H.
 - The staging droplet is still behind current `main`. Catching it up is a deploy action requiring explicit current-turn approval and real credentials this session does not have.
