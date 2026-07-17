@@ -75,25 +75,49 @@ seed() {
   compose exec -T postgres psql -U "${POSTGRES_USER:-optimus}" -d "${POSTGRES_DB:-optimus_os}" -v ON_ERROR_STOP=1 < "$ROOT/ops/db/002_seed_demo_data.sql"
 }
 
-IMAGE_PREFIX="optimus-server"
+# Resolved lazily (only when tag_current_as_previous/rollback actually run,
+# not at script load) from the actual Compose project via `docker compose
+# config --images`, which returns "<project>-backend"/"<project>-worker"
+# for services with no explicit `image:` field -- not hardcoded. A
+# hardcoded "optimus-server" here would silently operate on the wrong
+# images in any checkout whose directory name (Compose's default
+# project-name source) isn't literally "optimus-server", e.g. a worktree
+# or a CI runner. Found via a real CI rehearsal of backup/restore/rollback
+# building under a differently-named directory, not a hypothetical. Lazy
+# resolution matters because eagerly requiring `.env` (which `compose()`
+# needs) at script load would break bare `--help`/usage invocation, which
+# previously worked without a `.env` file.
+image_prefix() {
+  local prefix
+  prefix="$(compose config --images | grep -m1 -- '-backend$' | sed 's/-backend$//')"
+  if [[ -z "$prefix" ]]; then
+    echo "Could not determine the image prefix from 'docker compose config --images' -- is docker-compose.yml valid?" >&2
+    exit 1
+  fi
+  echo "$prefix"
+}
 
 tag_current_as_previous() {
+  local prefix
+  prefix="$(image_prefix)"
   for svc in backend worker; do
-    if "${DOCKER[@]}" image inspect "${IMAGE_PREFIX}-${svc}:latest" >/dev/null 2>&1; then
-      "${DOCKER[@]}" tag "${IMAGE_PREFIX}-${svc}:latest" "${IMAGE_PREFIX}-${svc}:previous"
+    if "${DOCKER[@]}" image inspect "${prefix}-${svc}:latest" >/dev/null 2>&1; then
+      "${DOCKER[@]}" tag "${prefix}-${svc}:latest" "${prefix}-${svc}:previous"
     fi
   done
 }
 
 rollback() {
+  local prefix
+  prefix="$(image_prefix)"
   for svc in backend worker; do
-    if ! "${DOCKER[@]}" image inspect "${IMAGE_PREFIX}-${svc}:previous" >/dev/null 2>&1; then
-      echo "No ${IMAGE_PREFIX}-${svc}:previous image tag found -- nothing to roll back to."
+    if ! "${DOCKER[@]}" image inspect "${prefix}-${svc}:previous" >/dev/null 2>&1; then
+      echo "No ${prefix}-${svc}:previous image tag found -- nothing to roll back to."
       exit 1
     fi
   done
   for svc in backend worker; do
-    "${DOCKER[@]}" tag "${IMAGE_PREFIX}-${svc}:previous" "${IMAGE_PREFIX}-${svc}:latest"
+    "${DOCKER[@]}" tag "${prefix}-${svc}:previous" "${prefix}-${svc}:latest"
   done
   compose up -d --no-build backend worker
   echo "Rolled back backend/worker to the :previous image tag and restarted."
