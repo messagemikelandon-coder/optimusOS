@@ -3789,6 +3789,55 @@ function initializeReports() {
   $("reports-refresh").addEventListener("click", () => {
     void loadReports();
   });
+  $("reports-content").addEventListener("click", (event) => {
+    const button = event.target.closest("[data-export-csv]");
+    if (!button) return;
+    exportReportTableAsCsv(button.dataset.exportCsv, button.dataset.exportFilename);
+  });
+}
+
+function csvEscapeCell(value) {
+  let text = String(value ?? "");
+  // Defense-in-depth against CSV/formula injection: a cell starting with
+  // =, +, -, or @ can be interpreted as a formula by Excel/Sheets on open,
+  // regardless of quoting. RFC 4180 quoting alone doesn't prevent this.
+  if (/^[=+\-@]/.test(text)) text = `'${text}`;
+  return /[",\r\n]/.test(text) ? `"${text.replace(/"/g, "\"\"")}"` : text;
+}
+
+function reportTableToCsv(table) {
+  const rows = [];
+  const headerRow = table.querySelector("thead tr");
+  if (headerRow) rows.push([...headerRow.children].map((cell) => cell.textContent.trim()));
+  table.querySelectorAll("tbody tr").forEach((tr) => {
+    rows.push([...tr.children].map((cell) => cell.textContent.trim()));
+  });
+  return rows.map((row) => row.map(csvEscapeCell).join(",")).join("\r\n");
+}
+
+function exportReportTableAsCsv(tableBodyId, filenamePrefix) {
+  if (!reportsExportReady) {
+    showToast("Reports are still loading -- try again in a moment.", "error");
+    return;
+  }
+  const tbody = $(tableBodyId);
+  const table = tbody && tbody.closest("table");
+  if (!table) return;
+  const csv = reportTableToCsv(table);
+  if (!csv) {
+    showToast("Nothing to export yet.", "error");
+    return;
+  }
+  const dateStamp = new Date().toISOString().slice(0, 10);
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `${filenamePrefix || tableBodyId}-${dateStamp}.csv`;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
 }
 
 async function loadVehicleOptionsInto(selectId, placeholder) {
@@ -6174,13 +6223,17 @@ async function loadDashboardSummary() {
   }
 }
 
+let reportsExportReady = false;
+
 async function loadReports() {
   if (!(await requireAuthenticated("login"))) return;
+  reportsExportReady = false;
   const revenueTable = $("reports-revenue-table");
   const workOrderTable = $("reports-work-order-table");
   const invoiceStatusTable = $("reports-invoice-status-table");
   const balancesTable = $("reports-balances-table");
-  const paymentActivityTable = $("reports-payment-activity-table");
+  const paymentActivityByTypeTable = $("reports-payment-activity-by-type-table");
+  const paymentActivityByMethodTable = $("reports-payment-activity-by-method-table");
   const technicianTimeTable = $("reports-technician-time-table");
   const inventoryValuationTable = $("reports-inventory-valuation-table");
   const lowStockTable = $("reports-low-stock-table");
@@ -6191,7 +6244,8 @@ async function loadReports() {
   [revenueTable, workOrderTable, invoiceStatusTable, balancesTable].forEach((el) => {
     el.innerHTML = "<tr><td colspan=\"2\">Loading…</td></tr>";
   });
-  paymentActivityTable.innerHTML = "<tr><td colspan=\"2\">Loading…</td></tr>";
+  paymentActivityByTypeTable.innerHTML = "<tr><td colspan=\"2\">Loading…</td></tr>";
+  paymentActivityByMethodTable.innerHTML = "<tr><td colspan=\"2\">Loading…</td></tr>";
   technicianTimeTable.innerHTML = "<tr><td colspan=\"3\">Loading…</td></tr>";
   inventoryValuationTable.innerHTML = "<tr><td colspan=\"2\">Loading…</td></tr>";
   lowStockTable.innerHTML = "<tr><td colspan=\"3\">Loading…</td></tr>";
@@ -6264,8 +6318,18 @@ async function loadReports() {
     });
     invoiceStatusTable.innerHTML = statusCounts.size
       ? [...statusCounts.entries()].map(([status, count]) => `<tr><td>${escapeHtml(invoiceStatusLabel(status))}</td><td>${count}</td></tr>`).join("")
-        + (invoicesData.total > invoicesData.items.length ? `<tr><td colspan="2" class="report-card-note">Showing ${invoicesData.items.length} of ${invoicesData.total} invoices.</td></tr>` : "")
       : "<tr><td colspan=\"2\">No invoices recorded yet.</td></tr>";
+    // Kept out of the table body itself (rather than an extra row) so the
+    // exported CSV isn't polluted with a ragged, non-data row -- the status
+    // counts above only reflect the first page fetched, so this caveat
+    // still needs to be visible somewhere.
+    const invoiceStatusNote = $("reports-invoice-status-note");
+    if (invoicesData.total > invoicesData.items.length) {
+      invoiceStatusNote.textContent = `Showing ${invoicesData.items.length} of ${invoicesData.total} invoices.`;
+      invoiceStatusNote.hidden = false;
+    } else {
+      invoiceStatusNote.hidden = true;
+    }
 
     const obligations = summary.financial_obligations;
     balancesTable.innerHTML = [
@@ -6279,12 +6343,16 @@ async function loadReports() {
     const appliesToLabels = { deposit: "Deposit", installment: "Installment", balance: "Balance payment", full: "Full payment", other: "Other" };
     const appliesToRows = paymentActivity.by_applies_to.map((item) => `<tr><td>${escapeHtml(appliesToLabels[item.label] || item.label)}</td><td>${money(item.total)} (${item.count})</td></tr>`);
     const methodRows = paymentActivity.by_method.map((item) => `<tr><td>${escapeHtml(item.label)}</td><td>${money(item.total)} (${item.count})</td></tr>`);
-    paymentActivityTable.innerHTML = (appliesToRows.length || methodRows.length)
-      // These are two independent breakdowns of the SAME payments, not
-      // additive line items -- a subhead row per group keeps that clear
-      // rather than reading as one flat, summable list.
-      ? `<tr><td colspan="2" class="report-table-subhead">By type</td></tr>${appliesToRows.join("")}`
-        + `<tr><td colspan="2" class="report-table-subhead">By payment method</td></tr>${methodRows.join("")}`
+    // These are two independent breakdowns of the SAME payments, not
+    // additive line items -- rendered as two separate tables (rather than
+    // one table with subhead rows) so a CSV export of either one is a
+    // clean, unambiguous data grid instead of ragged rows that invite
+    // double-counting collected revenue.
+    paymentActivityByTypeTable.innerHTML = appliesToRows.length
+      ? appliesToRows.join("")
+      : "<tr><td colspan=\"2\">No payments recorded in this period.</td></tr>";
+    paymentActivityByMethodTable.innerHTML = methodRows.length
+      ? methodRows.join("")
       : "<tr><td colspan=\"2\">No payments recorded in this period.</td></tr>";
 
     const missingCostNote = technicianTime.technicians_missing_hourly_cost > 0
@@ -6350,11 +6418,13 @@ async function loadReports() {
           ["Items failed", String(diagnosticInspection.items_fail)],
         ].map(([label, value]) => `<tr><td>${escapeHtml(label)}</td><td>${escapeHtml(value)}</td></tr>`).join("")
       : "<tr><td colspan=\"2\">No diagnostic findings or inspections logged in this period.</td></tr>";
+    reportsExportReady = true;
   } catch (error) {
     [revenueTable, workOrderTable, invoiceStatusTable, balancesTable].forEach((el) => {
       el.innerHTML = `<tr><td colspan="2">Failed to load: ${escapeHtml(error.message)}</td></tr>`;
     });
-    paymentActivityTable.innerHTML = `<tr><td colspan="2">Failed to load: ${escapeHtml(error.message)}</td></tr>`;
+    paymentActivityByTypeTable.innerHTML = `<tr><td colspan="2">Failed to load: ${escapeHtml(error.message)}</td></tr>`;
+    paymentActivityByMethodTable.innerHTML = `<tr><td colspan="2">Failed to load: ${escapeHtml(error.message)}</td></tr>`;
     technicianTimeTable.innerHTML = `<tr><td colspan="3">Failed to load: ${escapeHtml(error.message)}</td></tr>`;
     inventoryValuationTable.innerHTML = `<tr><td colspan="2">Failed to load: ${escapeHtml(error.message)}</td></tr>`;
     lowStockTable.innerHTML = `<tr><td colspan="3">Failed to load: ${escapeHtml(error.message)}</td></tr>`;
