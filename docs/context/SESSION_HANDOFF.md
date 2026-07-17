@@ -5,51 +5,50 @@ Information owner: the active session author.
 Read when: starting or resuming work.
 Update when: a substantial task completes or context needs to be handed forward.
 Last verified date: 2026-07-17.
-Relevant sources: `docs/context/CURRENT_STATE.md`, `docs/context/PLANS.md`, `git log`/`git status`, a full local gate run plus a live proof against a throwaway Postgres container, an independent `optimus-reviewer` pass.
+Relevant sources: `docs/context/CURRENT_STATE.md`, `docs/context/PLANS.md`, `git log`/`git status`, a full local gate run plus real-browser Playwright e2e verification, an independent `optimus-reviewer` pass.
 
 ## Identity
 
 - Updated UTC: 2026-07-17.
 - Agent: Claude.
-- `main` HEAD: `d9817201` (merge of PR #41, Phase 6 Part G Slice 4 — Work Order Cycle Time + Comebacks). Verified via `git fetch origin main` at session start.
-- Worktree used this session: `.claude/worktrees/release-process`, branch `agent/claude/cost-inventory-reports`. **Note the git-history lesson from Slice 3/4 this session**: this branch name has been reused across multiple squash-merged PRs; after each merge, local work must be rebased onto fresh `origin/main` before pushing the next slice (a plain local commit on top of the branch's pre-squash-merge tip causes a spurious GitHub merge conflict). Confirmed clean ancestry (`git merge-base HEAD origin/main` equals `origin/main`'s tip) before this slice's work.
+- `main` HEAD: `4ccced77` (merge of PR #42, Phase 6 Part G Slice 5 — Diagnostic Findings + Inspections). Verified via `git fetch origin main` at session start.
+- Worktree used this session: `.claude/worktrees/release-process`, branch `agent/claude/reports-csv-export`, branched fresh from `origin/main` (a NEW branch name, not the reused `agent/claude/cost-inventory-reports` from prior slices — the repeated squash-merge ancestry issue this session made a fresh branch simpler than continuing to rebase the old one). Not yet committed, pushed, or opened as a PR.
 
 ## Active task
 
-Phase 6 Part G, Slice 5 (Diagnostic Findings + Inspections report) — the fifth and likely final Part G reporting slice this session. **Implemented, independently reviewed (no blocking findings; two should-fix findings and one nice-to-have all fixed before merge), and live-verified; not yet committed, pushed, or merged.**
+Phase 6 Part G's final item: CSV export for the Reports view. **Implemented, independently reviewed (no blocking findings; four should-fix findings and one nice-to-have all fixed before merge), and live-verified in a real browser; not yet committed, pushed, or merged.**
 
-- New `app/report_store.py::get_diagnostic_inspection_report`: counts `DiagnosticFinding` and `Inspection` rows created in the window. `findings_missing_conclusion` discloses diagnostic findings with no conclusion recorded yet (the only structured signal available — diagnostic findings have no status/severity column at all). `items_ok`/`items_attention`/`items_fail` breaks down inspection items by their app-enforced `InspectionItem.status` (`ok`/`attention`/`fail`), read via `InspectionItem.model_validate(item)` rather than a raw dict key (matches `inspection_store.py`'s established pattern; a corrupted status value now raises loudly instead of being silently miscounted).
-- **This closes Phase 6 Part G's reporting-content scope** — every report identified as buildable from existing schema is now shipped. Only CSV export (a cross-cutting UI feature, not a new report) and report scheduling/delivery (explicitly deferred to a future phase from the start) remain open under Part G.
-- New owner-only route: `GET /api/reports/diagnostic-inspection`.
-- New Pydantic model: `DiagnosticInspectionReportResponse`.
-- Frontend: one new report card ("Diagnostics & inspections") wired into `loadReports()`.
-- Full detail in `docs/context/PLANS.md`'s Part G Slice 5 entry.
+- Pure frontend feature — no backend changes at all (no new routes, no new Pydantic models, no new `report_store.py` functions). Every report card in the Reports view (12 tables across 11 cards) gained a small "Export CSV" button that converts the currently-rendered table into a downloadable CSV file client-side (`Blob` + `URL.createObjectURL` + a temporary `<a download>`), with no server round-trip.
+- **This closes Phase 6 Part G entirely.** Every report and the CSV export capability are now shipped; only report scheduling/delivery remains, and that was explicitly scoped as a separate future phase from the very first Part G slice.
+- Full detail in `docs/context/PLANS.md`'s "Part G CSV export" entry.
 
 ## Verified baseline
 
-- `env UV_CACHE_DIR=/tmp/uv-cache uv run ruff format .` → clean.
+- `env UV_CACHE_DIR=/tmp/uv-cache uv run ruff format .` → clean (no Python touched by this diff, trivially clean).
 - `env UV_CACHE_DIR=/tmp/uv-cache uv run ruff check .` → all checks passed.
 - `env UV_CACHE_DIR=/tmp/uv-cache uv run pyright` → 0 errors, 0 warnings.
-- `env UV_CACHE_DIR=/tmp/uv-cache uv run pytest -q -rA` → 379 passed, 2 skipped (pre-existing, unrelated — `tests/test_rate_limit.py` needs a real local Redis), 0 failed. Includes 8 new tests in `tests/test_reports_api.py`.
+- `env UV_CACHE_DIR=/tmp/uv-cache uv run pytest -q -rA` → 379 passed (unchanged — no new backend tests needed since no Python changed), 2 skipped (pre-existing, unrelated — `tests/test_rate_limit.py` needs a real local Redis), 0 failed.
 - `node --check app/static/app.js` → OK.
-- `tests/test_role_isolation.py::test_every_business_route_is_role_gated_as_expected` → passes; the new route correctly defaulted to owner-only with zero manual list maintenance.
+- `tests/test_official_ui.py`'s CSP checks (`test_index_html_has_no_inline_scripts`, `test_index_html_has_no_inline_style_attributes`) → pass, no inline script/style introduced.
+- `env UV_CACHE_DIR=/tmp/uv-cache uv run pytest tests/e2e -v` → 3 passed (the pre-existing full-workflow e2e test plus two new CSV-export e2e tests), real browser + real throwaway Postgres 16 container + real uvicorn server, container torn down cleanly.
 
 ## Evidence
 
-- **Live-proven against a real, freshly-migrated throwaway Postgres 16 container** (not SQLite, not mocked): spun up a fresh container, ran `alembic upgrade head` (single linear head, `021_part_allocations`), then via a standalone script created 2 real diagnostic findings (one with a conclusion, then archived; one still open) and 2 real inspections (a 3-item inspection covering all three statuses, plus a 1-item inspection), plus a second owner. Confirmed exact expected counts: 2 findings / 1 missing-conclusion (the archived one still correctly included); 2 inspections / 4 items / 2 ok / 1 attention / 1 fail — all matched precisely; the second owner correctly saw a fully-zeroed report. Container torn down after.
-- **Independent review (`optimus-reviewer`) findings, both fixed before merge**:
-  1. The frontend note text omitted the "counts activity regardless of later archiving" disclosure that every other report card's note in the same function includes for its own non-obvious methodology choice (Inventory Valuation discloses it's a snapshot not a range; Cycle Time discloses it's elapsed time not wrench time and that comeback is owner-flagged). Fixed by appending "including any since archived" to the note.
-  2. The inspection-item status read originally used raw `item.get("status")`, silently bucketing anything not exactly `"attention"`/`"fail"` as `"ok"`. While today's write path is fully guarded (no route writes `Inspection.items` without Pydantic validation), this diverged from `inspection_store.py`'s own established pattern for reading this exact field and would have silently laundered a hypothetical future data-quality problem into the safest-looking bucket. Fixed to revalidate via `InspectionItem.model_validate(item)`, matching the existing precedent.
-- **Independent review nice-to-have, fixed as a hardening item**: no test covered an inspection with an empty `items` list (a realistic shape — a technician starting an inspection before filling in items). Added `test_diagnostic_inspection_report_counts_inspection_with_no_items_yet`.
-- **Independent review, confirmed correct with no changes needed**: `findings_missing_conclusion`'s SQL/Python boundary (verified consistent with `DiagnosticFindingBase`'s validator, which already converts empty/whitespace strings to `None` before persistence, so there's no live empty-string-vs-NULL ambiguity); the "count regardless of archived" choice applied consistently on both queries with no accidental `is_archived` filter leaking in; cross-user isolation on both new queries; the frontend's two-independent-counts empty-state condition; route/response wiring consistency with sibling report routes.
+- **Live-verified in a real browser** (Playwright, not a static/unit check — matches CLAUDE.md's requirement to actually exercise UI changes): two new tests in `tests/e2e/test_reports_csv_export.py`. The first logs in as a real synthetic owner, clicks the Work Order Status Summary card's export button, and asserts the downloaded file's *exact* CSV lines (including that the "Completed, not yet invoiced" row — whose label contains a literal comma — comes back correctly RFC-4180-quoted). The second seeds a real technician + a real closed time entry directly against the live server's own Postgres database, then asserts the exported file's header row and data row are exactly correct — exercising the `<thead>`-detection code path the first test's headerless table never touches.
+- **Independent review (`optimus-reviewer`) findings, all fixed before merge**:
+  1. Payment Activity's original combined single-table-with-subhead-rows rendering meant its CSV export interleaved a 1-column section-header row between 2-column data rows — a real financial-reporting risk (summing the exported amount column would double-count revenue across the two independent by-type/by-method breakdowns of the *same* payments). Fixed by splitting into two real, separately-exportable tables, mirroring Inventory Valuation's existing two-table pattern.
+  2. Invoice Status Summary's "Showing N of M invoices" pagination caveat was appended as a ragged extra row inside the same tbody as the real 2-column data rows. Fixed by moving it into a proper `<p class="report-card-note">`, matching every other card's own caveat pattern.
+  3. The export buttons had no guard against being clicked while a report was still loading or after a fetch failed, so a user could download a "CSV" containing only the literal text "Loading…" with no indication in the filename that it wasn't real data. Fixed with a new `reportsExportReady` flag that gates the export function.
+  4. The original e2e test only covered a headerless stat table with weak substring assertions that would still pass under real bugs like swapped columns or reordered rows. Fixed by strengthening to exact-line assertions and adding the second `<thead>`-coverage test described above.
+- **Independent review nice-to-have, fixed as a hardening item**: `csvEscapeCell` didn't defend against CSV/formula injection (a cell starting with `=`/`+`/`-`/`@` can be interpreted as a formula by Excel/Sheets regardless of RFC 4180 quoting). Low severity today given the single-owner trust model, but cheap to close given this app's stated trajectory toward broader staff/role accounts — fixed with a leading `'` prefix on such cells.
+- **Independent review, confirmed correct with no changes needed**: the core RFC 4180 escaping logic (hand-traced through lone-comma, leading/trailing/mid-string-quote, and LF-vs-CRLF cases); DOM traversal robustness across all 12 button↔table id pairs; the client-side-only design's safety boundary (no new endpoint, bounded to whatever the current session's own DOM already renders, inherits the existing owner-only gating on `#view-reports` and its underlying API endpoints for free); no CSP concern with the `Blob`/`URL.createObjectURL` pattern.
 
 ## Unverified
 
-- No live/billable OpenAI calls were made (the live-proof script used direct store/route function calls, no research orchestrator involved in this slice at all).
+- No live/billable OpenAI calls were made (this feature has no backend, so no research orchestrator involvement at all).
 - Not committed, pushed, opened as a PR, or merged — awaiting the next step in this same task.
-- No dedicated `optimus-security-reviewer` pass was run on this change (read-only, owner-scoped reporting — lower risk profile than prior write-path slices, but not independently security-reviewed).
+- No dedicated `optimus-security-reviewer` pass was run on this change (pure client-side rendering of already-fetched, already-authorized data — very low risk profile, but not independently security-reviewed).
 - CI has not yet run against this branch (no PR opened yet).
-- No live Playwright/browser check of the new report card — verified via `node --check` (syntax only) and code reading, not a rendered DOM.
 
 ## Unrelated preexisting changes
 
@@ -61,15 +60,14 @@ Phase 6 Part G, Slice 5 (Diagnostic Findings + Inspections report) — the fifth
 
 ## Exact next task
 
-Get explicit current-turn owner approval, then commit the Slice 5 changes. **Before pushing, verify `git merge-base HEAD origin/main` equals `origin/main`'s current tip** (rebase first if not — see the git-history lesson under Identity above), push `agent/claude/cost-inventory-reports`, open a PR, verify all CI checks pass (`gh pr checks`), and merge with explicit current-turn owner approval (same no-human-review pattern used for prior PRs this session).
+Get explicit current-turn owner approval, then commit the CSV export changes. **This is a fresh branch from `origin/main`, so no rebase-before-push is needed this time** (the ancestry-mismatch issue earlier in this session was specific to reusing an already-squash-merged branch name — verify `git merge-base HEAD origin/main` equals `origin/main`'s tip before pushing regardless, as a habit). Push `agent/claude/reports-csv-export`, open a PR, verify all CI checks pass (`gh pr checks` — note one CI run earlier this session hit a transient Postgres-service-not-ready race unrelated to any code change; if that recurs, retry the job before assuming a real failure), and merge with explicit current-turn owner approval (same no-human-review pattern used for prior PRs this session).
 
-After that, per the owner's approved roadmap (`docs/context/PLANS.md` Phase 6), the remaining open items are:
+After that, **Phase 6 Part G will be fully complete**. Per the owner's approved roadmap (`docs/context/PLANS.md` Phase 6), the remaining open items are:
 
-- **Part G remainder** — CSV export only (a cross-cutting UI feature: exporting a report table's data client-side, not a new backend report). Report scheduling/delivery is explicitly deferred to a separate future phase. Everything else in Part G's reporting scope is now DONE.
-- **Part H remainder** — threat model, full security-event taxonomy, OpenAI usage/cost logging, customer-data retention/export/deletion policy, monitoring/alerting.
+- **Part H** — threat model, full security-event taxonomy, OpenAI usage/cost logging, customer-data retention/export/deletion policy, monitoring/alerting. (Approval-token revocation, multi-instance rate limiting, and structured logging were already done in an earlier session.)
 - **Part I** — staging verification + deployment checklist, including catching the staging droplet up to current `main` (still behind).
 
-None of these are started. Pick one with the owner before beginning — Part G is close enough to fully closed that switching focus to Part H or Part I is a reasonable next checkpoint to raise with the owner.
+Neither is started. This is a natural point to check in with the owner about which to pick up next, given Part G (the largest single scope this session worked through) is now closed.
 
 ## Carried over from prior sessions — not touched by this session
 

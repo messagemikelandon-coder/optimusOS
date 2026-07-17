@@ -2049,7 +2049,7 @@
 
             <div id="reports-content" class="reports-grid" aria-live="polite">
               <section class="report-card">
-                <h3>Revenue &amp; sales summary</h3>
+                <div class="report-card-heading"><h3>Revenue &amp; sales summary</h3><button class="text-button" type="button" data-export-csv="reports-revenue-table" data-export-filename="revenue-sales-summary">Export CSV</button></div>
                 <p class="report-card-note" id="reports-period-note">Loading current period…</p>
                 <table class="report-table">
                   <tbody id="reports-revenue-table"><tr><td colspan="2">Loading…</td></tr></tbody>
@@ -2057,21 +2057,22 @@
               </section>
 
               <section class="report-card">
-                <h3>Work order status summary</h3>
+                <div class="report-card-heading"><h3>Work order status summary</h3><button class="text-button" type="button" data-export-csv="reports-work-order-table" data-export-filename="work-order-status-summary">Export CSV</button></div>
                 <table class="report-table">
                   <tbody id="reports-work-order-table"><tr><td colspan="2">Loading…</td></tr></tbody>
                 </table>
               </section>
 
               <section class="report-card">
-                <h3>Invoice status summary</h3>
+                <div class="report-card-heading"><h3>Invoice status summary</h3><button class="text-button" type="button" data-export-csv="reports-invoice-status-table" data-export-filename="invoice-status-summary">Export CSV</button></div>
+                <p class="report-card-note" id="reports-invoice-status-note" hidden></p>
                 <table class="report-table">
                   <tbody id="reports-invoice-status-table"><tr><td colspan="2">Loading…</td></tr></tbody>
                 </table>
               </section>
 
               <section class="report-card">
-                <h3>Outstanding balances</h3>
+                <div class="report-card-heading"><h3>Outstanding balances</h3><button class="text-button" type="button" data-export-csv="reports-balances-table" data-export-filename="outstanding-balances">Export CSV</button></div>
                 <table class="report-table">
                   <tbody id="reports-balances-table"><tr><td colspan="2">Loading…</td></tr></tbody>
                 </table>
@@ -2080,13 +2081,18 @@
               <section class="report-card">
                 <h3>Payment activity</h3>
                 <p class="report-card-note" id="reports-payment-activity-note">Loading…</p>
+                <div class="report-card-heading"><p class="report-card-note report-table-subhead">By type</p><button class="text-button" type="button" data-export-csv="reports-payment-activity-by-type-table" data-export-filename="payment-activity-by-type">Export CSV</button></div>
                 <table class="report-table">
-                  <tbody id="reports-payment-activity-table"><tr><td colspan="2">Loading…</td></tr></tbody>
+                  <tbody id="reports-payment-activity-by-type-table"><tr><td colspan="2">Loading…</td></tr></tbody>
+                </table>
+                <div class="report-card-heading"><p class="report-card-note report-table-subhead">By payment method</p><button class="text-button" type="button" data-export-csv="reports-payment-activity-by-method-table" data-export-filename="payment-activity-by-method">Export CSV</button></div>
+                <table class="report-table">
+                  <tbody id="reports-payment-activity-by-method-table"><tr><td colspan="2">Loading…</td></tr></tbody>
                 </table>
               </section>
 
               <section class="report-card">
-                <h3>Technician time &amp; labor cost</h3>
+                <div class="report-card-heading"><h3>Technician time &amp; labor cost</h3><button class="text-button" type="button" data-export-csv="reports-technician-time-table" data-export-filename="technician-time">Export CSV</button></div>
                 <p class="report-card-note" id="reports-technician-time-note">Loading…</p>
                 <table class="report-table">
                   <thead><tr><th>Technician</th><th>Clocked hours</th><th>Labor cost</th></tr></thead>
@@ -2095,12 +2101,12 @@
               </section>
 
               <section class="report-card">
-                <h3>Inventory valuation</h3>
+                <div class="report-card-heading"><h3>Inventory valuation</h3><button class="text-button" type="button" data-export-csv="reports-inventory-valuation-table" data-export-filename="inventory-valuation">Export CSV</button></div>
                 <p class="report-card-note" id="reports-inventory-valuation-note">Loading… (current stock on hand, not date-ranged)</p>
                 <table class="report-table">
                   <tbody id="reports-inventory-valuation-table"><tr><td colspan="2">Loading…</td></tr></tbody>
                 </table>
-                <p class="report-card-note report-table-subhead">Low stock (at or below reorder threshold)</p>
+                <div class="report-card-heading"><p class="report-card-note report-table-subhead">Low stock (at or below reorder threshold)</p><button class="text-button" type="button" data-export-csv="reports-low-stock-table" data-export-filename="low-stock-parts">Export CSV</button></div>
                 <table class="report-table">
                   <thead><tr><th>Part</th><th>On hand / threshold</th><th>Vendor</th></tr></thead>
                   <tbody id="reports-low-stock-table"><tr><td colspan="3">Loading…</td></tr></tbody>
@@ -2108,7 +2114,7 @@
               </section>
 
               <section class="report-card">
-                <h3>Parts usage</h3>
+                <div class="report-card-heading"><h3>Parts usage</h3><button class="text-button" type="button" data-export-csv="reports-parts-usage-table" data-export-filename="parts-usage">Export CSV</button></div>
                 <p class="report-card-note" id="reports-parts-usage-note">Loading…</p>
                 <table class="report-table">
                   <thead><tr><th>Part</th><th>Qty used</th><th>Cost</th></tr></thead>
@@ -2117,7 +2123,7 @@
               </section>
 
               <section class="report-card">
-                <h3>Vendor purchasing</h3>
+                <div class="report-card-heading"><h3>Vendor purchasing</h3><button class="text-button" type="button" data-export-csv="reports-vendor-purchasing-table" data-export-filename="vendor-purchasing">Export CSV</button></div>
                 <p class="report-card-note" id="reports-vendor-purchasing-note">Loading…</p>
                 <table class="report-table">
                   <thead><tr><th>Vendor</th><th>Orders</th><th>Spend</th></tr></thead>
@@ -2126,7 +2132,7 @@
               </section>
 
               <section class="report-card">
-                <h3>Work order cycle time &amp; comebacks</h3>
+                <div class="report-card-heading"><h3>Work order cycle time &amp; comebacks</h3><button class="text-button" type="button" data-export-csv="reports-cycle-time-table" data-export-filename="cycle-time-comebacks">Export CSV</button></div>
                 <p class="report-card-note" id="reports-cycle-time-note">Loading…</p>
                 <table class="report-table">
                   <tbody id="reports-cycle-time-table"><tr><td colspan="2">Loading…</td></tr></tbody>
@@ -2134,7 +2140,7 @@
               </section>
 
               <section class="report-card">
-                <h3>Diagnostics &amp; inspections</h3>
+                <div class="report-card-heading"><h3>Diagnostics &amp; inspections</h3><button class="text-button" type="button" data-export-csv="reports-diagnostic-inspection-table" data-export-filename="diagnostics-inspections">Export CSV</button></div>
                 <p class="report-card-note" id="reports-diagnostic-inspection-note">Loading…</p>
                 <table class="report-table">
                   <tbody id="reports-diagnostic-inspection-table"><tr><td colspan="2">Loading…</td></tr></tbody>
