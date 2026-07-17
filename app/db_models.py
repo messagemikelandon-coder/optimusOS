@@ -1773,3 +1773,223 @@ class Appointment(Base):
     )
     canceled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     cancellation_reason: Mapped[str | None] = mapped_column(Text)
+
+
+class Shop(Base):
+    """The tenant boundary (/goal Phase 3). Business tables will migrate to
+    `shop_id` in a later, separate slice -- this table's own creation and
+    the initial Landon Motor Works row/membership backfill is deliberately
+    scoped on its own first, per the staged migration plan in
+    docs/context/PLANS.md, so this diff stays small and reviewable rather
+    than touching every business table at once.
+
+    Identity fields only here; operational configuration (tax, labor rate,
+    terms, hours, etc.) lives in the separate 1:1 `ShopSettings` table,
+    since those change far more often than a shop's identity and the
+    /goal spec explicitly asks for both as distinct models.
+    """
+
+    __tablename__ = "shops"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('pilot', 'active', 'suspended', 'cancelled')",
+            name="ck_shops_status",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    # Deliberately nullable -- a shop's formal legal entity name is real
+    # business information this codebase must not fabricate (see
+    # docs/context/DATA_RETENTION.md's established pattern of leaving
+    # unknown fields unset rather than guessing). `display_name` is the
+    # one identity field always required, since every shop needs *some*
+    # name to display in the product regardless of legal-entity detail.
+    legal_business_name: Mapped[str | None] = mapped_column(String(200))
+    display_name: Mapped[str] = mapped_column(String(200), nullable=False)
+    address_line_1: Mapped[str | None] = mapped_column(String(200))
+    address_line_2: Mapped[str | None] = mapped_column(String(200))
+    city: Mapped[str | None] = mapped_column(String(120))
+    state: Mapped[str | None] = mapped_column(String(80))
+    postal_code: Mapped[str | None] = mapped_column(String(20))
+    country: Mapped[str | None] = mapped_column(String(80))
+    phone: Mapped[str | None] = mapped_column(String(40))
+    email: Mapped[str | None] = mapped_column(String(180))
+    # "America/Chicago" is not a fabricated default -- it is the exact
+    # timezone app/scheduling_store.py::SHOP_TIMEZONE already hardcodes
+    # for the one shop this app has ever served, so it is a real known
+    # value being carried into this table, not invented for it.
+    timezone: Mapped[str] = mapped_column(
+        String(80), nullable=False, default="America/Chicago", server_default="America/Chicago"
+    )
+    # This app is explicitly scoped to US-based shops today (see
+    # docs/context/DATA_RETENTION.md's "Scope and jurisdiction" section) --
+    # USD is a defensible default for that scope, not a guess about a
+    # specific shop's real currency.
+    currency: Mapped[str] = mapped_column(
+        String(10), nullable=False, default="USD", server_default="USD"
+    )
+    status: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="pilot", server_default="pilot"
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+
+    settings: Mapped[ShopSettings | None] = relationship(
+        back_populates="shop", cascade="all, delete-orphan", uselist=False
+    )
+    memberships: Mapped[list[ShopMembership]] = relationship(
+        back_populates="shop", cascade="all, delete-orphan"
+    )
+    invitations: Mapped[list[ShopInvitation]] = relationship(
+        back_populates="shop", cascade="all, delete-orphan"
+    )
+    events: Mapped[list[ShopEvent]] = relationship(
+        back_populates="shop", cascade="all, delete-orphan"
+    )
+
+
+class ShopSettings(Base):
+    """Operational configuration, separate from `Shop`'s identity fields.
+    One row per shop. Every field the /goal spec asks for that this
+    codebase does not yet have a real, known value for (operating hours,
+    service area, estimate/invoice terms text, payment-plan settings,
+    branding reference) is left nullable and unset here rather than
+    fabricated -- see each field's comment for where its value, if any,
+    is sourced from."""
+
+    __tablename__ = "shop_settings"
+
+    shop_id: Mapped[int] = mapped_column(
+        ForeignKey("shops.id", ondelete="CASCADE"), primary_key=True
+    )
+    # The four fields below have real, already-configured values in
+    # app/config.py::Settings (business_name/labor_rate/mobile_service_fee/
+    # parts_tax_rate/shop_supplies_percent) -- the migration backfill copies
+    # those real values in, it does not invent them.
+    labor_rate: Mapped[Decimal | None] = mapped_column(Numeric(10, 2))
+    mobile_service_fee: Mapped[Decimal | None] = mapped_column(Numeric(10, 2))
+    shop_supplies_percent: Mapped[Decimal | None] = mapped_column(Numeric(5, 2))
+    parts_tax_rate: Mapped[Decimal | None] = mapped_column(Numeric(5, 2))
+    # Unknown/unset for the migrated shop -- no real value exists anywhere
+    # in this codebase for any of these today.
+    operating_hours: Mapped[dict | None] = mapped_column(JSON)
+    service_area: Mapped[dict | None] = mapped_column(JSON)
+    estimate_terms_text: Mapped[str | None] = mapped_column(Text)
+    invoice_terms_text: Mapped[str | None] = mapped_column(Text)
+    payment_plan_settings: Mapped[dict | None] = mapped_column(JSON)
+    branding_reference: Mapped[str | None] = mapped_column(String(300))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+
+    shop: Mapped[Shop] = relationship(back_populates="settings")
+
+
+class ShopMembership(Base):
+    """Links a `UserAccount` to a `Shop` with a role. This is the real
+    membership model the /goal spec calls for -- it does not yet replace
+    `UserAccount.shop_owner_id` as the tenant-scoping mechanism used by
+    business-data queries (that migration is a later, separate slice per
+    the staged plan), but it is the source of truth this app will migrate
+    those queries onto."""
+
+    __tablename__ = "shop_memberships"
+    __table_args__ = (
+        UniqueConstraint("shop_id", "user_account_id", name="uq_shop_memberships_shop_user"),
+        CheckConstraint(
+            "role IN ('owner', 'manager', 'technician')", name="ck_shop_memberships_role"
+        ),
+        Index("ix_shop_memberships_shop_id", "shop_id"),
+        Index("ix_shop_memberships_user_account_id", "user_account_id"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    shop_id: Mapped[int] = mapped_column(ForeignKey("shops.id", ondelete="CASCADE"), nullable=False)
+    user_account_id: Mapped[int] = mapped_column(
+        ForeignKey("user_accounts.id", ondelete="CASCADE"), nullable=False
+    )
+    role: Mapped[str] = mapped_column(String(20), nullable=False)
+    is_active: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default="true"
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+
+    shop: Mapped[Shop] = relationship(back_populates="memberships")
+    user: Mapped[UserAccount] = relationship()
+
+
+class ShopInvitation(Base):
+    """Owner/manager-initiated invitation for a new user to join a shop
+    with a given role. Token requirements (/goal Phase 5): random, hashed
+    at rest, expiring, single use, revocable, audited -- this table stores
+    only `token_hash`, never a raw token; the raw token is generated and
+    shown to the inviter exactly once by the store layer that will be
+    built in the Phase 5 slice, matching the existing
+    `EstimateApprovalRequest` token pattern already proven in this
+    codebase."""
+
+    __tablename__ = "shop_invitations"
+    __table_args__ = (
+        CheckConstraint(
+            "role IN ('owner', 'manager', 'technician')", name="ck_shop_invitations_role"
+        ),
+        Index("ix_shop_invitations_shop_id", "shop_id"),
+        Index("ix_shop_invitations_token_hash", "token_hash", unique=True),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    shop_id: Mapped[int] = mapped_column(ForeignKey("shops.id", ondelete="CASCADE"), nullable=False)
+    email: Mapped[str] = mapped_column(String(180), nullable=False)
+    role: Mapped[str] = mapped_column(String(20), nullable=False)
+    invited_by_user_account_id: Mapped[int] = mapped_column(
+        ForeignKey("user_accounts.id", ondelete="CASCADE"), nullable=False
+    )
+    token_hash: Mapped[str] = mapped_column(String(128), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    accepted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+
+    shop: Mapped[Shop] = relationship(back_populates="invitations")
+
+
+class ShopEvent(Base):
+    """Append-only audit trail for shop-level administrative actions
+    (membership changes, status changes, settings changes, invitations) --
+    the "supporting audit-event models" the /goal spec calls for,
+    mirroring the existing append-only event-log pattern already used by
+    `WorkOrderStatusEvent`/`DiagnosticFindingEvent`/`InspectionEvent`."""
+
+    __tablename__ = "shop_events"
+    __table_args__ = (Index("ix_shop_events_shop_id_created_at", "shop_id", "created_at"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    shop_id: Mapped[int] = mapped_column(ForeignKey("shops.id", ondelete="CASCADE"), nullable=False)
+    event_type: Mapped[str] = mapped_column(String(60), nullable=False)
+    actor_user_account_id: Mapped[int | None] = mapped_column(
+        ForeignKey("user_accounts.id", ondelete="SET NULL")
+    )
+    actor_name: Mapped[str | None] = mapped_column(String(200))
+    event_metadata: Mapped[dict | None] = mapped_column(JSON)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    shop: Mapped[Shop] = relationship(back_populates="events")
