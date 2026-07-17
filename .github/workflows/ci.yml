@@ -196,6 +196,128 @@ jobs:
         if: always()
         run: rm -f .env
 
+  backup-restore-rollback-rehearsal:
+    name: Backup, restore, and rollback rehearsal
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Python dependencies (for the log-scan script only)
+        run: uv sync --extra dev
+
+      # Placeholder values only, taken from .env.example -- never a real
+      # secret. scripts/optimusctl.sh requires a real .env file to exist
+      # (require_env) since it's the same script used against a real
+      # deployment; here it only ever points at this job's own throwaway
+      # Postgres container.
+      - name: Create placeholder env file
+        run: cp .env.example .env
+
+      - name: Start the stack via optimusctl.sh (same script real deploys use)
+        run: ./scripts/optimusctl.sh start
+
+      - name: Wait for backend health
+        run: |
+          for i in $(seq 1 30); do
+            if curl -sf http://127.0.0.1:8000/health >/dev/null; then
+              echo "backend healthy"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "backend did not become healthy in time" >&2
+          docker compose logs backend
+          exit 1
+
+      - name: Apply migrations
+        run: ./scripts/optimusctl.sh migrate
+
+      - name: Seed synthetic demo data (so backup/restore has real rows to compare)
+        run: ./scripts/optimusctl.sh seed
+
+      - name: Backup -- write a real pg_dump
+        run: ./scripts/optimusctl.sh backup
+
+      - name: Restore -- rehearse into a scratch database, never the live one
+        run: |
+          dump_file="$(ls -t backups/*.sql | head -1)"
+          echo "Restoring $dump_file"
+          ./scripts/optimusctl.sh restore "$dump_file" optimus_os_restore_check
+
+      - name: Confirm restored row counts match the live database
+        run: |
+          # scripts/optimusctl.sh seed populates demo_service_requests, not
+          # any real business table (customers etc. start empty until a real
+          # owner session creates data) -- this must match what seed
+          # actually writes, not an assumed table.
+          live_count=$(docker compose exec -T postgres psql -U optimus -d optimus_os -tAc "SELECT count(*) FROM demo_service_requests")
+          restored_count=$(docker compose exec -T postgres psql -U optimus -d optimus_os_restore_check -tAc "SELECT count(*) FROM demo_service_requests")
+          echo "live=$live_count restored=$restored_count"
+          test "$live_count" = "$restored_count"
+          test "$live_count" -gt 0
+
+      - name: Tag current backend/worker images as :previous (simulates a prior good release)
+        run: |
+          # Derived from the actual Compose project via `docker compose
+          # config --images` (returns "<project>-backend"/"<project>-worker"
+          # for services with no explicit `image:` field) -- never hardcode
+          # an assumed prefix like "optimus-server", since the real value
+          # depends on the checkout directory name and will not match that
+          # in CI. Same lookup scripts/optimusctl.sh's own tag_current_as_previous
+          # uses, kept in sync deliberately.
+          backend_image="$(docker compose config --images | grep -m1 -- '-backend$')"
+          worker_image="$(docker compose config --images | grep -m1 -- '-worker$')"
+          echo "backend_image=$backend_image worker_image=$worker_image"
+          docker tag "${backend_image}:latest" "${backend_image}:previous"
+          docker tag "${worker_image}:latest" "${worker_image}:previous"
+
+      - name: Deliberately break the running backend (simulates a bad deploy)
+        run: |
+          backend_image="$(docker compose config --images | grep -m1 -- '-backend$')"
+          docker tag postgres:16-alpine "${backend_image}:latest"
+          docker compose up -d --no-build backend
+
+      - name: Confirm the broken deploy actually fails health
+        run: |
+          sleep 3
+          if curl -sf --max-time 3 http://127.0.0.1:8000/health >/dev/null; then
+            echo "Backend unexpectedly still healthy after being deliberately broken" >&2
+            exit 1
+          fi
+          echo "Confirmed broken deploy is unhealthy, as expected"
+
+      - name: Rollback -- restore the :previous image tag and confirm recovery
+        run: ./scripts/optimusctl.sh rollback
+
+      - name: Confirm health recovered after rollback
+        run: |
+          for i in $(seq 1 30); do
+            if curl -sf http://127.0.0.1:8000/health >/dev/null; then
+              echo "backend healthy again after rollback"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "backend did not recover after rollback" >&2
+          docker compose logs backend
+          exit 1
+
+      - name: Tear down
+        if: always()
+        run: docker compose down -v
+
+      - name: Remove placeholder env file and backup dump
+        if: always()
+        run: rm -f .env backups/*.sql
+
   e2e-core-workflow:
     name: Authenticated E2E (real browser, real Postgres, real sessions)
     runs-on: ubuntu-latest
