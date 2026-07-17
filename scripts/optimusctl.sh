@@ -12,7 +12,18 @@ fi
 
 require_env() {
   if [[ ! -f "$ROOT/.env" ]]; then
-    echo ".env is missing. Create it from .env.example and fill required secrets."
+    # Must go to stderr, not stdout: an independent review found that
+    # image_prefix() below calls compose() (which calls this) inside a
+    # `$(...)` command substitution, and stdout there is captured and
+    # discarded (by a grep filtering for an image name, in that specific
+    # case) rather than shown to the operator -- so a real "no .env
+    # found" error was silently replaced by a misleading "is
+    # docker-compose.yml valid?" message instead. Error text always
+    # belongs on stderr regardless of caller context; this was a
+    # latent issue even before image_prefix() existed, just never
+    # triggered since nothing previously called compose() from inside a
+    # command substitution.
+    echo ".env is missing. Create it from .env.example and fill required secrets." >&2
     exit 1
   fi
 }
@@ -88,8 +99,23 @@ seed() {
 # needs) at script load would break bare `--help`/usage invocation, which
 # previously worked without a `.env` file.
 image_prefix() {
-  local prefix
-  prefix="$(compose config --images | grep -m1 -- '-backend$' | sed 's/-backend$//')"
+  local images matches count prefix
+  images="$(compose config --images)"
+  # `grep -m1` alone would silently and nondeterministically pick one of
+  # several matches if a future service with no explicit `image:` were
+  # ever added whose name also ends in "-backend" (docker compose config
+  # --images does not guarantee a stable service order across invocations,
+  # confirmed by running it twice back to back) -- asserting exactly one
+  # match turns that into a loud, immediate failure instead of an
+  # occasional wrong-image mistake during a real rollback.
+  matches="$(echo "$images" | grep -- '-backend$')"
+  count="$(echo "$matches" | grep -c .)"
+  if [[ "$count" -ne 1 ]]; then
+    echo "Expected exactly one image ending in -backend from 'docker compose config --images', found ${count}:" >&2
+    echo "$images" >&2
+    exit 1
+  fi
+  prefix="$(echo "$matches" | sed 's/-backend$//')"
   if [[ -z "$prefix" ]]; then
     echo "Could not determine the image prefix from 'docker compose config --images' -- is docker-compose.yml valid?" >&2
     exit 1
