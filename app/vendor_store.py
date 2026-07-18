@@ -15,6 +15,7 @@ from app.models import (
     VendorRead,
     VendorUpdate,
 )
+from app.shop_store import resolve_shop_id
 
 _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
@@ -116,7 +117,9 @@ def _to_read(db: Session, vendor: Vendor) -> VendorRead:
 
 def create_vendor(*, db: Session, auth: AuthContext, payload: VendorCreate) -> VendorRead:
     normalized = normalize_vendor_fields(payload)
-    vendor = Vendor(owner_user_id=effective_owner_id(auth), **normalized)
+    vendor = Vendor(
+        owner_user_id=effective_owner_id(auth), shop_id=resolve_shop_id(db, auth), **normalized
+    )
     db.add(vendor)
     db.commit()
     db.refresh(vendor)

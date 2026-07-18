@@ -25,6 +25,7 @@ from app.models import (
     PaymentAppliesTo,
 )
 from app.notification_store import record_notification
+from app.shop_store import resolve_shop_id
 from app.work_order_store import PAYMENT_PLAN_OPTIONS
 
 __all__ = [
@@ -78,6 +79,7 @@ def record_payment(
     recorded_at = ensure_utc(payload.recorded_at) if payload.recorded_at else now
     payment = InvoicePayment(
         owner_user_id=effective_owner_id(auth),
+        shop_id=resolve_shop_id(db, auth),
         invoice_id=invoice.id,
         amount=amount,
         applies_to=payload.applies_to.value,
@@ -120,6 +122,7 @@ def record_payment(
     record_notification(
         db=db,
         owner_user_id=invoice.owner_user_id,
+        shop_id=invoice.shop_id,
         entity_type=NotificationEntityType.INVOICE,
         entity_id=invoice.id,
         event=NotificationEvent.PAYMENT_RECORDED,
@@ -155,6 +158,7 @@ def void_payment(
     reversal_amount = -_money(payment.amount)
     reversal = InvoicePayment(
         owner_user_id=effective_owner_id(auth),
+        shop_id=resolve_shop_id(db, auth),
         invoice_id=invoice.id,
         amount=reversal_amount,
         applies_to=payment.applies_to,
@@ -181,6 +185,7 @@ def void_payment(
     record_notification(
         db=db,
         owner_user_id=invoice.owner_user_id,
+        shop_id=invoice.shop_id,
         entity_type=NotificationEntityType.INVOICE,
         entity_id=invoice.id,
         event=NotificationEvent.PAYMENT_VOIDED,

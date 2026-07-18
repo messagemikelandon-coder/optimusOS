@@ -16,6 +16,7 @@ from app.models import (
     PartAllocationTechnicianRead,
     PartAllocationUseRequest,
 )
+from app.shop_store import resolve_shop_id
 from app.technician_store import get_technician_for_user
 
 
@@ -129,6 +130,7 @@ def _record_event(
         PartAllocationEvent(
             allocation_id=allocation.id,
             owner_user_id=allocation.owner_user_id,
+            shop_id=allocation.shop_id,
             event_type=event_type,
             quantity_delta=quantity_delta,
             actor_type=auth.user.role,
@@ -151,6 +153,7 @@ def create_part_allocation(
         )
     allocation = PartAllocation(
         owner_user_id=effective_owner_id(auth),
+        shop_id=resolve_shop_id(db, auth),
         work_order_id=work_order_id,
         part_id=payload.part_id,
         quantity_required=payload.quantity_required,

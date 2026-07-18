@@ -31,6 +31,7 @@ from app.models import (
     WorkOrderUpdate,
 )
 from app.notification_store import record_notification
+from app.shop_store import resolve_shop_id
 from app.technician_store import display_name as technician_display_name
 from app.technician_store import get_technician_for_user
 from app.vehicle_store import vehicle_display_name
@@ -234,6 +235,7 @@ def _append_status_event(
         WorkOrderStatusEvent(
             work_order_id=work_order.id,
             owner_user_id=effective_owner_id(auth),
+            shop_id=work_order.shop_id,
             from_status=from_status.value if from_status else None,
             to_status=to_status.value,
             reason=reason,
@@ -268,6 +270,7 @@ def create_work_order_from_estimate(
     )
     work_order = WorkOrder(
         owner_user_id=effective_owner_id(auth),
+        shop_id=resolve_shop_id(db, auth),
         estimate_id=estimate.id,
         estimate_revision_id=revision.id,
         customer_id=estimate.customer_id,
@@ -460,6 +463,7 @@ def transition_work_order_status(
     record_notification(
         db=db,
         owner_user_id=work_order.owner_user_id,
+        shop_id=work_order.shop_id,
         entity_type=NotificationEntityType.WORK_ORDER,
         entity_id=work_order.id,
         event=NotificationEvent.WORK_ORDER_STATUS_CHANGED,
@@ -494,6 +498,7 @@ def add_work_order_note(
         WorkOrderNote(
             work_order_id=work_order.id,
             owner_user_id=effective_owner_id(auth),
+            shop_id=work_order.shop_id,
             visibility=payload.visibility.value,
             note=payload.note,
             created_by_user_id=auth.user.id,

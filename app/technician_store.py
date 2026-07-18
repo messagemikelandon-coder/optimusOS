@@ -26,6 +26,7 @@ from app.models import (
     TechnicianTimeEntryRead,
     TechnicianUpdate,
 )
+from app.shop_store import resolve_shop_id
 
 _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
@@ -245,7 +246,9 @@ def create_technician(
     payload: TechnicianCreate,
 ) -> TechnicianRead:
     normalized = normalize_technician_fields(payload)
-    technician = Technician(owner_user_id=effective_owner_id(auth), **normalized)
+    technician = Technician(
+        owner_user_id=effective_owner_id(auth), shop_id=resolve_shop_id(db, auth), **normalized
+    )
     db.add(technician)
     db.commit()
     db.refresh(technician)
@@ -433,6 +436,7 @@ def clock_in(*, db: Session, auth: AuthContext) -> TechnicianClockResponse:
     entry = TechnicianTimeEntry(
         technician_id=technician.id,
         owner_user_id=technician.owner_user_id,
+        shop_id=technician.shop_id,
         clock_in_at=datetime.now(UTC),
     )
     db.add(entry)

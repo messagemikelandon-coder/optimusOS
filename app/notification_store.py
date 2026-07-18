@@ -42,6 +42,7 @@ def record_notification(
     *,
     db: Session,
     owner_user_id: int,
+    shop_id: int | None,
     entity_type: NotificationEntityType,
     entity_id: int,
     event: NotificationEvent,
@@ -50,10 +51,18 @@ def record_notification(
 ) -> None:
     """Stage a notification row on the caller's transaction. Deliberately no
     commit/flush here -- the row lands (or rolls back) together with the
-    business mutation that produced it, mirroring _append_status_event."""
+    business mutation that produced it, mirroring _append_status_event.
+
+    `shop_id` is a required kwarg (not resolved internally) because every
+    caller already has the triggering row's own `shop_id` in scope --
+    passing it through avoids a redundant `shop_memberships` query on this
+    especially high-frequency path, and requiring it (rather than
+    defaulting) forces each call site to be updated deliberately instead
+    of silently falling back to a slower, previously-used lookup."""
     db.add(
         Notification(
             owner_user_id=owner_user_id,
+            shop_id=shop_id,
             entity_type=entity_type.value,
             entity_id=entity_id,
             event=event.value,

@@ -45,6 +45,7 @@ from app.models import (
     WorkingHoursRead,
     WorkingHoursUpdate,
 )
+from app.shop_store import resolve_shop_id
 from app.technician_store import display_name as technician_display_name
 from app.vehicle_store import vehicle_display_name
 
@@ -177,7 +178,12 @@ def _bay_to_read(bay: Bay) -> BayRead:
 
 
 def create_bay(*, db: Session, auth: AuthContext, payload: BayCreate) -> BayRead:
-    bay = Bay(owner_user_id=effective_owner_id(auth), name=payload.name, notes=payload.notes)
+    bay = Bay(
+        owner_user_id=effective_owner_id(auth),
+        shop_id=resolve_shop_id(db, auth),
+        name=payload.name,
+        notes=payload.notes,
+    )
     db.add(bay)
     db.commit()
     db.refresh(bay)
@@ -274,6 +280,7 @@ def create_working_hours(
     _validate_technician(db, auth, payload.technician_id)
     row = WorkingHours(
         owner_user_id=effective_owner_id(auth),
+        shop_id=resolve_shop_id(db, auth),
         technician_id=payload.technician_id,
         day_of_week=payload.day_of_week,
         start_minute=payload.start_minute,
@@ -392,6 +399,7 @@ def create_schedule_block(
         _validate_bay(db, auth, payload.bay_id)
     block = ScheduleBlock(
         owner_user_id=effective_owner_id(auth),
+        shop_id=resolve_shop_id(db, auth),
         technician_id=payload.technician_id,
         bay_id=payload.bay_id,
         start_time=payload.start_time,
@@ -800,6 +808,7 @@ def create_appointment(
 
     appointment = Appointment(
         owner_user_id=effective_owner_id(auth),
+        shop_id=resolve_shop_id(db, auth),
         customer_id=payload.customer_id,
         vehicle_id=payload.vehicle_id,
         work_order_id=payload.work_order_id,

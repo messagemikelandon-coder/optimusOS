@@ -9,6 +9,7 @@ from app.auth import AuthContext, effective_owner_id, ensure_utc
 from app.config import Settings
 from app.db_models import Part, Vendor
 from app.models import PartArchiveResponse, PartCreate, PartListResponse, PartRead, PartUpdate
+from app.shop_store import resolve_shop_id
 
 
 class PartStoreError(ValueError):
@@ -103,7 +104,9 @@ def _to_read(db: Session, auth: AuthContext, part: Part) -> PartRead:
 def create_part(*, db: Session, auth: AuthContext, payload: PartCreate) -> PartRead:
     _validate_vendor(db, auth, payload.vendor_id)
     normalized = normalize_part_fields(payload)
-    part = Part(owner_user_id=effective_owner_id(auth), **normalized)
+    part = Part(
+        owner_user_id=effective_owner_id(auth), shop_id=resolve_shop_id(db, auth), **normalized
+    )
     db.add(part)
     db.commit()
     db.refresh(part)

@@ -16,6 +16,7 @@ from app.models import (
     CustomerRead,
     CustomerUpdate,
 )
+from app.shop_store import resolve_shop_id
 
 _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
@@ -156,7 +157,9 @@ def create_customer(
         last_name=normalized["last_name"],  # type: ignore[arg-type]
         company_name=normalized["company_name"],  # type: ignore[arg-type]
     )
-    customer = Customer(owner_user_id=effective_owner_id(auth), **normalized)
+    customer = Customer(
+        owner_user_id=effective_owner_id(auth), shop_id=resolve_shop_id(db, auth), **normalized
+    )
     db.add(customer)
     db.commit()
     db.refresh(customer)

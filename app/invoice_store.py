@@ -36,6 +36,7 @@ from app.models import (
     WorkOrderStatus,
 )
 from app.notification_store import record_notification
+from app.shop_store import resolve_shop_id
 
 # Money columns for payments/schedule are Decimal(10, 2), deliberately distinct
 # from the Phase 2 Float invoice/line-item columns. This local `_money` helper
@@ -302,6 +303,7 @@ def ensure_draft_invoice_for_work_order(
     vehicle = revision_view.vehicle
     invoice = Invoice(
         owner_user_id=effective_owner_id(auth),
+        shop_id=resolve_shop_id(db, auth),
         work_order_id=work_order.id,
         estimate_id=work_order.estimate_id,
         estimate_revision_id=work_order.estimate_revision_id,
@@ -436,6 +438,7 @@ def _generate_schedule_rows(
     return [
         PaymentSchedule(
             owner_user_id=invoice.owner_user_id,
+            shop_id=invoice.shop_id,
             invoice_id=invoice.id,
             sort_order=sort_order,
             label=label,
@@ -482,6 +485,7 @@ def issue_invoice(
     record_notification(
         db=db,
         owner_user_id=invoice.owner_user_id,
+        shop_id=invoice.shop_id,
         entity_type=NotificationEntityType.INVOICE,
         entity_id=invoice.id,
         event=NotificationEvent.INVOICE_ISSUED,
