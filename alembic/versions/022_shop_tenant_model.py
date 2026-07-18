@@ -87,6 +87,17 @@ def upgrade() -> None:
     )
     op.create_index("ix_shop_memberships_shop_id", "shop_memberships", ["shop_id"])
     op.create_index("ix_shop_memberships_user_account_id", "shop_memberships", ["user_account_id"])
+    # A user must resolve to exactly one shop as an active owner -- security
+    # review found that without this, a future bug creating a second active
+    # owner-role membership for the same user would make shop resolution
+    # ambiguous rather than a loud, immediate constraint violation.
+    op.create_index(
+        "uq_shop_memberships_one_active_owner_per_user",
+        "shop_memberships",
+        ["user_account_id"],
+        unique=True,
+        postgresql_where=sa.text("role = 'owner' AND is_active = true"),
+    )
 
     op.create_table(
         "shop_invitations",
@@ -162,7 +173,7 @@ def _backfill_existing_owners_as_shops() -> None:
 
     owners = connection.execute(
         sa.text(
-            "SELECT id, username, display_name FROM user_accounts "
+            "SELECT id, username FROM user_accounts "
             "WHERE role = 'owner' AND is_synthetic_test_account = false "
             "ORDER BY id"
         )
@@ -246,6 +257,7 @@ def downgrade() -> None:
     op.drop_index("ix_shop_invitations_shop_id", table_name="shop_invitations")
     op.drop_table("shop_invitations")
 
+    op.drop_index("uq_shop_memberships_one_active_owner_per_user", table_name="shop_memberships")
     op.drop_index("ix_shop_memberships_user_account_id", table_name="shop_memberships")
     op.drop_index("ix_shop_memberships_shop_id", table_name="shop_memberships")
     op.drop_table("shop_memberships")

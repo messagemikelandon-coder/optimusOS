@@ -143,6 +143,49 @@ def test_account_with_no_shop_membership_raises_not_found(
         get_current_shop(db_session, auth)
 
 
+def test_deactivated_membership_does_not_grant_shop_access(
+    settings: Settings, db_session: Session
+) -> None:
+    # Security review finding: is_active exists on ShopMembership but was
+    # not enforced anywhere -- latent until a future deactivation/removal
+    # flow exists. This proves _shop_for_owner actually respects it now.
+    owner = _real_owner(db_session)
+    membership = db_session.scalar(
+        select(ShopMembership).where(ShopMembership.user_account_id == owner.id)
+    )
+    assert membership is not None
+    membership.is_active = False
+    db_session.commit()
+
+    auth = _auth_for(db_session, owner)
+    with pytest.raises(ShopNotFoundError):
+        get_current_shop(db_session, auth)
+
+
+def test_shop_membership_forbids_a_second_active_owner_membership_for_the_same_user(
+    settings: Settings, db_session: Session
+) -> None:
+    owner = _real_owner(db_session)
+    other_owner_seed = UserAccount(
+        username="other.owner.seed",
+        display_name="Other Owner Seed",
+        role="owner",
+        password_hash=hash_password("other-owner-seed-password-123"),
+        is_active=True,
+    )
+    db_session.add(other_owner_seed)
+    db_session.commit()
+    db_session.refresh(other_owner_seed)
+
+    other_shop = create_shop_for_new_owner(db_session, settings, other_owner_seed)
+    db_session.commit()
+
+    db_session.add(ShopMembership(shop_id=other_shop.id, user_account_id=owner.id, role="owner"))
+    with pytest.raises(IntegrityError):
+        db_session.commit()
+    db_session.rollback()
+
+
 def test_create_shop_for_new_owner_is_not_fabricated_beyond_known_config(
     settings: Settings, db_session: Session
 ) -> None:

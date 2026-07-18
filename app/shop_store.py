@@ -39,8 +39,10 @@ def _shop_for_owner(db: Session, auth: AuthContext) -> Shop:
         .join(ShopMembership, ShopMembership.shop_id == Shop.id)
         .where(
             ShopMembership.user_account_id == owner_id,
-            ShopMembership.role == "owner",
+            ShopMembership.role == ShopRole.OWNER.value,
+            ShopMembership.is_active.is_(True),
         )
+        .order_by(Shop.id)
     )
     if shop is None:
         raise ShopNotFoundError("No shop is associated with this account.")
