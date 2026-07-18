@@ -182,9 +182,7 @@ class Customer(Base):
         ForeignKey("user_accounts.id", ondelete="CASCADE"),
         nullable=False,
     )
-    shop_id: Mapped[int | None] = mapped_column(
-        ForeignKey("shops.id", ondelete="CASCADE"), nullable=True
-    )
+    shop_id: Mapped[int] = mapped_column(ForeignKey("shops.id", ondelete="CASCADE"), nullable=False)
     first_name: Mapped[str | None] = mapped_column(String(120))
     last_name: Mapped[str | None] = mapped_column(String(120))
     company_name: Mapped[str | None] = mapped_column(String(180))
@@ -254,9 +252,7 @@ class Vehicle(Base):
         ForeignKey("user_accounts.id", ondelete="CASCADE"),
         nullable=False,
     )
-    shop_id: Mapped[int | None] = mapped_column(
-        ForeignKey("shops.id", ondelete="CASCADE"), nullable=True
-    )
+    shop_id: Mapped[int] = mapped_column(ForeignKey("shops.id", ondelete="CASCADE"), nullable=False)
     customer_id: Mapped[int] = mapped_column(
         ForeignKey("customers.id", ondelete="RESTRICT"),
         nullable=False,
@@ -331,9 +327,7 @@ class Estimate(Base):
         ForeignKey("user_accounts.id", ondelete="CASCADE"),
         nullable=False,
     )
-    shop_id: Mapped[int | None] = mapped_column(
-        ForeignKey("shops.id", ondelete="CASCADE"), nullable=True
-    )
+    shop_id: Mapped[int] = mapped_column(ForeignKey("shops.id", ondelete="CASCADE"), nullable=False)
     customer_id: Mapped[int] = mapped_column(
         ForeignKey("customers.id", ondelete="RESTRICT"),
         nullable=False,
@@ -423,9 +417,7 @@ class EstimateRevision(Base):
         ForeignKey("user_accounts.id", ondelete="CASCADE"),
         nullable=False,
     )
-    shop_id: Mapped[int | None] = mapped_column(
-        ForeignKey("shops.id", ondelete="CASCADE"), nullable=True
-    )
+    shop_id: Mapped[int] = mapped_column(ForeignKey("shops.id", ondelete="CASCADE"), nullable=False)
     revision_number: Mapped[int] = mapped_column(nullable=False)
     status: Mapped[str] = mapped_column(String(40), nullable=False)
     customer_snapshot: Mapped[dict[str, object]] = mapped_column(JSON, nullable=False)
@@ -477,9 +469,7 @@ class EstimateApprovalRequest(Base):
         ForeignKey("user_accounts.id", ondelete="CASCADE"),
         nullable=False,
     )
-    shop_id: Mapped[int | None] = mapped_column(
-        ForeignKey("shops.id", ondelete="CASCADE"), nullable=True
-    )
+    shop_id: Mapped[int] = mapped_column(ForeignKey("shops.id", ondelete="CASCADE"), nullable=False)
     token_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="active")
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
@@ -540,9 +530,7 @@ class EstimateApprovalEvent(Base):
         ForeignKey("user_accounts.id", ondelete="CASCADE"),
         nullable=False,
     )
-    shop_id: Mapped[int | None] = mapped_column(
-        ForeignKey("shops.id", ondelete="CASCADE"), nullable=True
-    )
+    shop_id: Mapped[int] = mapped_column(ForeignKey("shops.id", ondelete="CASCADE"), nullable=False)
     approval_request_id: Mapped[int | None] = mapped_column(
         ForeignKey("estimate_approval_requests.id", ondelete="SET NULL"),
         nullable=True,
@@ -589,9 +577,7 @@ class Technician(Base):
         ForeignKey("user_accounts.id", ondelete="CASCADE"),
         nullable=False,
     )
-    shop_id: Mapped[int | None] = mapped_column(
-        ForeignKey("shops.id", ondelete="CASCADE"), nullable=True
-    )
+    shop_id: Mapped[int] = mapped_column(ForeignKey("shops.id", ondelete="CASCADE"), nullable=False)
     user_account_id: Mapped[int | None] = mapped_column(
         ForeignKey("user_accounts.id", ondelete="SET NULL"),
         nullable=True,
@@ -665,9 +651,7 @@ class TechnicianTimeEntry(Base):
         ForeignKey("user_accounts.id", ondelete="CASCADE"),
         nullable=False,
     )
-    shop_id: Mapped[int | None] = mapped_column(
-        ForeignKey("shops.id", ondelete="CASCADE"), nullable=True
-    )
+    shop_id: Mapped[int] = mapped_column(ForeignKey("shops.id", ondelete="CASCADE"), nullable=False)
     clock_in_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     clock_out_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(
@@ -716,9 +700,7 @@ class WorkOrder(Base):
         ForeignKey("user_accounts.id", ondelete="CASCADE"),
         nullable=False,
     )
-    shop_id: Mapped[int | None] = mapped_column(
-        ForeignKey("shops.id", ondelete="CASCADE"), nullable=True
-    )
+    shop_id: Mapped[int] = mapped_column(ForeignKey("shops.id", ondelete="CASCADE"), nullable=False)
     estimate_id: Mapped[int] = mapped_column(
         ForeignKey("estimates.id", ondelete="CASCADE"),
         nullable=False,
@@ -835,9 +817,7 @@ class WorkOrderStatusEvent(Base):
         ForeignKey("user_accounts.id", ondelete="CASCADE"),
         nullable=False,
     )
-    shop_id: Mapped[int | None] = mapped_column(
-        ForeignKey("shops.id", ondelete="CASCADE"), nullable=True
-    )
+    shop_id: Mapped[int] = mapped_column(ForeignKey("shops.id", ondelete="CASCADE"), nullable=False)
     from_status: Mapped[str | None] = mapped_column(String(40))
     to_status: Mapped[str] = mapped_column(String(40), nullable=False)
     reason: Mapped[str | None] = mapped_column(Text)
@@ -874,9 +854,7 @@ class WorkOrderNote(Base):
         ForeignKey("user_accounts.id", ondelete="CASCADE"),
         nullable=False,
     )
-    shop_id: Mapped[int | None] = mapped_column(
-        ForeignKey("shops.id", ondelete="CASCADE"), nullable=True
-    )
+    shop_id: Mapped[int] = mapped_column(ForeignKey("shops.id", ondelete="CASCADE"), nullable=False)
     visibility: Mapped[str] = mapped_column(String(20), nullable=False)
     note: Mapped[str] = mapped_column(Text, nullable=False)
     created_by_user_id: Mapped[int | None] = mapped_column(
@@ -912,9 +890,7 @@ class Invoice(Base):
         ForeignKey("user_accounts.id", ondelete="CASCADE"),
         nullable=False,
     )
-    shop_id: Mapped[int | None] = mapped_column(
-        ForeignKey("shops.id", ondelete="CASCADE"), nullable=True
-    )
+    shop_id: Mapped[int] = mapped_column(ForeignKey("shops.id", ondelete="CASCADE"), nullable=False)
     work_order_id: Mapped[int] = mapped_column(
         ForeignKey("work_orders.id", ondelete="CASCADE"),
         nullable=False,
@@ -1048,9 +1024,7 @@ class InvoicePayment(Base):
         ForeignKey("user_accounts.id", ondelete="CASCADE"),
         nullable=False,
     )
-    shop_id: Mapped[int | None] = mapped_column(
-        ForeignKey("shops.id", ondelete="CASCADE"), nullable=True
-    )
+    shop_id: Mapped[int] = mapped_column(ForeignKey("shops.id", ondelete="CASCADE"), nullable=False)
     invoice_id: Mapped[int] = mapped_column(
         ForeignKey("invoices.id", ondelete="CASCADE"),
         nullable=False,
@@ -1106,9 +1080,7 @@ class PaymentSchedule(Base):
         ForeignKey("user_accounts.id", ondelete="CASCADE"),
         nullable=False,
     )
-    shop_id: Mapped[int | None] = mapped_column(
-        ForeignKey("shops.id", ondelete="CASCADE"), nullable=True
-    )
+    shop_id: Mapped[int] = mapped_column(ForeignKey("shops.id", ondelete="CASCADE"), nullable=False)
     invoice_id: Mapped[int] = mapped_column(
         ForeignKey("invoices.id", ondelete="CASCADE"),
         nullable=False,
@@ -1151,9 +1123,7 @@ class Notification(Base):
         ForeignKey("user_accounts.id", ondelete="CASCADE"),
         nullable=False,
     )
-    shop_id: Mapped[int | None] = mapped_column(
-        ForeignKey("shops.id", ondelete="CASCADE"), nullable=True
-    )
+    shop_id: Mapped[int] = mapped_column(ForeignKey("shops.id", ondelete="CASCADE"), nullable=False)
     # Polymorphic pointer; deliberately no FK so notifications outlive their
     # entity type's lifecycle rules and never block entity deletion.
     entity_type: Mapped[str] = mapped_column(String(20), nullable=False)
@@ -1184,9 +1154,7 @@ class Vendor(Base):
         ForeignKey("user_accounts.id", ondelete="CASCADE"),
         nullable=False,
     )
-    shop_id: Mapped[int | None] = mapped_column(
-        ForeignKey("shops.id", ondelete="CASCADE"), nullable=True
-    )
+    shop_id: Mapped[int] = mapped_column(ForeignKey("shops.id", ondelete="CASCADE"), nullable=False)
     name: Mapped[str] = mapped_column(String(180), nullable=False)
     contact_name: Mapped[str | None] = mapped_column(String(180))
     phone: Mapped[str | None] = mapped_column(String(40))
@@ -1227,9 +1195,7 @@ class Part(Base):
         ForeignKey("user_accounts.id", ondelete="CASCADE"),
         nullable=False,
     )
-    shop_id: Mapped[int | None] = mapped_column(
-        ForeignKey("shops.id", ondelete="CASCADE"), nullable=True
-    )
+    shop_id: Mapped[int] = mapped_column(ForeignKey("shops.id", ondelete="CASCADE"), nullable=False)
     vendor_id: Mapped[int | None] = mapped_column(
         ForeignKey("vendors.id", ondelete="SET NULL"),
         nullable=True,
@@ -1278,9 +1244,7 @@ class PurchaseOrder(Base):
     owner_user_id: Mapped[int] = mapped_column(
         ForeignKey("user_accounts.id", ondelete="CASCADE"), nullable=False
     )
-    shop_id: Mapped[int | None] = mapped_column(
-        ForeignKey("shops.id", ondelete="CASCADE"), nullable=True
-    )
+    shop_id: Mapped[int] = mapped_column(ForeignKey("shops.id", ondelete="CASCADE"), nullable=False)
     vendor_id: Mapped[int] = mapped_column(
         ForeignKey("vendors.id", ondelete="RESTRICT"), nullable=False
     )
@@ -1364,9 +1328,7 @@ class PurchaseOrderReceipt(Base):
     owner_user_id: Mapped[int] = mapped_column(
         ForeignKey("user_accounts.id", ondelete="CASCADE"), nullable=False
     )
-    shop_id: Mapped[int | None] = mapped_column(
-        ForeignKey("shops.id", ondelete="CASCADE"), nullable=True
-    )
+    shop_id: Mapped[int] = mapped_column(ForeignKey("shops.id", ondelete="CASCADE"), nullable=False)
     quantity_received: Mapped[int] = mapped_column(nullable=False)
     received_by_user_id: Mapped[int | None] = mapped_column(
         ForeignKey("user_accounts.id", ondelete="SET NULL"), nullable=True
@@ -1402,9 +1364,7 @@ class PartAllocation(Base):
     owner_user_id: Mapped[int] = mapped_column(
         ForeignKey("user_accounts.id", ondelete="CASCADE"), nullable=False
     )
-    shop_id: Mapped[int | None] = mapped_column(
-        ForeignKey("shops.id", ondelete="CASCADE"), nullable=True
-    )
+    shop_id: Mapped[int] = mapped_column(ForeignKey("shops.id", ondelete="CASCADE"), nullable=False)
     work_order_id: Mapped[int] = mapped_column(
         ForeignKey("work_orders.id", ondelete="CASCADE"), nullable=False
     )
@@ -1451,9 +1411,7 @@ class PartAllocationEvent(Base):
     owner_user_id: Mapped[int] = mapped_column(
         ForeignKey("user_accounts.id", ondelete="CASCADE"), nullable=False
     )
-    shop_id: Mapped[int | None] = mapped_column(
-        ForeignKey("shops.id", ondelete="CASCADE"), nullable=True
-    )
+    shop_id: Mapped[int] = mapped_column(ForeignKey("shops.id", ondelete="CASCADE"), nullable=False)
     event_type: Mapped[str] = mapped_column(String(20), nullable=False)
     quantity_delta: Mapped[int] = mapped_column(nullable=False)
     actor_type: Mapped[str] = mapped_column(String(20), nullable=False)
@@ -1487,9 +1445,7 @@ class IntakeRequest(Base):
         ForeignKey("user_accounts.id", ondelete="CASCADE"),
         nullable=False,
     )
-    shop_id: Mapped[int | None] = mapped_column(
-        ForeignKey("shops.id", ondelete="CASCADE"), nullable=True
-    )
+    shop_id: Mapped[int] = mapped_column(ForeignKey("shops.id", ondelete="CASCADE"), nullable=False)
     customer_name: Mapped[str] = mapped_column(String(200), nullable=False)
     phone: Mapped[str | None] = mapped_column(String(40))
     phone_normalized: Mapped[str | None] = mapped_column(String(32))
@@ -1539,9 +1495,7 @@ class DiagnosticFinding(Base):
     owner_user_id: Mapped[int] = mapped_column(
         ForeignKey("user_accounts.id", ondelete="CASCADE"), nullable=False
     )
-    shop_id: Mapped[int | None] = mapped_column(
-        ForeignKey("shops.id", ondelete="CASCADE"), nullable=True
-    )
+    shop_id: Mapped[int] = mapped_column(ForeignKey("shops.id", ondelete="CASCADE"), nullable=False)
     vehicle_id: Mapped[int] = mapped_column(
         ForeignKey("vehicles.id", ondelete="CASCADE"), nullable=False
     )
@@ -1598,9 +1552,7 @@ class DiagnosticFindingEvent(Base):
     owner_user_id: Mapped[int] = mapped_column(
         ForeignKey("user_accounts.id", ondelete="CASCADE"), nullable=False
     )
-    shop_id: Mapped[int | None] = mapped_column(
-        ForeignKey("shops.id", ondelete="CASCADE"), nullable=True
-    )
+    shop_id: Mapped[int] = mapped_column(ForeignKey("shops.id", ondelete="CASCADE"), nullable=False)
     event_type: Mapped[str] = mapped_column(String(20), nullable=False)
     actor_type: Mapped[str] = mapped_column(String(20), nullable=False)
     actor_user_id: Mapped[int | None] = mapped_column(
@@ -1630,9 +1582,7 @@ class Inspection(Base):
     owner_user_id: Mapped[int] = mapped_column(
         ForeignKey("user_accounts.id", ondelete="CASCADE"), nullable=False
     )
-    shop_id: Mapped[int | None] = mapped_column(
-        ForeignKey("shops.id", ondelete="CASCADE"), nullable=True
-    )
+    shop_id: Mapped[int] = mapped_column(ForeignKey("shops.id", ondelete="CASCADE"), nullable=False)
     vehicle_id: Mapped[int] = mapped_column(
         ForeignKey("vehicles.id", ondelete="CASCADE"), nullable=False
     )
@@ -1688,9 +1638,7 @@ class InspectionEvent(Base):
     owner_user_id: Mapped[int] = mapped_column(
         ForeignKey("user_accounts.id", ondelete="CASCADE"), nullable=False
     )
-    shop_id: Mapped[int | None] = mapped_column(
-        ForeignKey("shops.id", ondelete="CASCADE"), nullable=True
-    )
+    shop_id: Mapped[int] = mapped_column(ForeignKey("shops.id", ondelete="CASCADE"), nullable=False)
     event_type: Mapped[str] = mapped_column(String(20), nullable=False)
     actor_type: Mapped[str] = mapped_column(String(20), nullable=False)
     actor_user_id: Mapped[int | None] = mapped_column(
@@ -1713,9 +1661,7 @@ class Bay(Base):
     owner_user_id: Mapped[int] = mapped_column(
         ForeignKey("user_accounts.id", ondelete="CASCADE"), nullable=False
     )
-    shop_id: Mapped[int | None] = mapped_column(
-        ForeignKey("shops.id", ondelete="CASCADE"), nullable=True
-    )
+    shop_id: Mapped[int] = mapped_column(ForeignKey("shops.id", ondelete="CASCADE"), nullable=False)
     name: Mapped[str] = mapped_column(String(120), nullable=False)
     notes: Mapped[str | None] = mapped_column(Text)
     is_archived: Mapped[bool] = mapped_column(
@@ -1753,9 +1699,7 @@ class WorkingHours(Base):
     owner_user_id: Mapped[int] = mapped_column(
         ForeignKey("user_accounts.id", ondelete="CASCADE"), nullable=False
     )
-    shop_id: Mapped[int | None] = mapped_column(
-        ForeignKey("shops.id", ondelete="CASCADE"), nullable=True
-    )
+    shop_id: Mapped[int] = mapped_column(ForeignKey("shops.id", ondelete="CASCADE"), nullable=False)
     technician_id: Mapped[int] = mapped_column(
         ForeignKey("technicians.id", ondelete="CASCADE"), nullable=False
     )
@@ -1798,9 +1742,7 @@ class ScheduleBlock(Base):
     owner_user_id: Mapped[int] = mapped_column(
         ForeignKey("user_accounts.id", ondelete="CASCADE"), nullable=False
     )
-    shop_id: Mapped[int | None] = mapped_column(
-        ForeignKey("shops.id", ondelete="CASCADE"), nullable=True
-    )
+    shop_id: Mapped[int] = mapped_column(ForeignKey("shops.id", ondelete="CASCADE"), nullable=False)
     # Both null = shop-wide block (holiday/closure). Technician-only or
     # bay-only blocks apply regardless of the other dimension -- see
     # app/scheduling_store.py's _schedule_block_applies for exact semantics.
@@ -1855,9 +1797,7 @@ class Appointment(Base):
     owner_user_id: Mapped[int] = mapped_column(
         ForeignKey("user_accounts.id", ondelete="CASCADE"), nullable=False
     )
-    shop_id: Mapped[int | None] = mapped_column(
-        ForeignKey("shops.id", ondelete="CASCADE"), nullable=True
-    )
+    shop_id: Mapped[int] = mapped_column(ForeignKey("shops.id", ondelete="CASCADE"), nullable=False)
     customer_id: Mapped[int] = mapped_column(
         ForeignKey("customers.id", ondelete="RESTRICT"), nullable=False
     )

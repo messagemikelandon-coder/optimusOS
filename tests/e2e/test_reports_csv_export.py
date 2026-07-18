@@ -8,6 +8,7 @@ from sqlalchemy.orm import sessionmaker
 
 from app.db import build_engine
 from app.db_models import Technician, TechnicianTimeEntry
+from app.shop_store import resolve_shop_id_for_owner
 from tests.e2e.conftest import LiveServer, SyntheticCredentials
 from tests.e2e.test_core_workflow import _login
 
@@ -73,8 +74,10 @@ def test_reports_export_csv_includes_header_row_when_table_has_thead(
     engine = build_engine(live_server.database_url)
     session_factory = sessionmaker(bind=engine)
     with session_factory() as seed_session:
+        shop_id = resolve_shop_id_for_owner(seed_session, synthetic_owner.user_id)
         technician = Technician(
             owner_user_id=synthetic_owner.user_id,
+            shop_id=shop_id,
             first_name="Riley",
             last_name="Chen",
             employment_status="Full-time",
@@ -87,6 +90,7 @@ def test_reports_export_csv_includes_header_row_when_table_has_thead(
             TechnicianTimeEntry(
                 technician_id=technician.id,
                 owner_user_id=synthetic_owner.user_id,
+                shop_id=shop_id,
                 clock_in_at=now - timedelta(hours=2),
                 clock_out_at=now,
             )

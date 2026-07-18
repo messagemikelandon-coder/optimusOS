@@ -68,6 +68,7 @@ docker compose build backend worker
 Plus, against a real (throwaway) Postgres + Redis:
 
 - Alembic upgrade from a fresh database reaches a single linear head.
+- `scripts/check_shop_id_orphans.py` reports zero orphan `shop_id` rows before running migration `025_shop_id_not_null` against any database with pre-existing data (`/goal` Phase 3 slice 6) — the migration itself also refuses to proceed if any are found, but running the script first gives an actionable report ahead of a deploy rather than discovering it mid-migration.
 - `/health` reports the expected `version`/`git_commit`/`migration_head`.
 - `/ready` reports `status: "ready"` and `schema_compatibility: "matched"` once migrations are applied.
 - `scripts/scan_logs_for_secrets.py` against the stack's logs finds nothing (`python -m scripts.scan_logs_for_secrets --project <compose-project-name> --services backend worker`).
