@@ -2629,3 +2629,81 @@ class SyntheticCleanupResponse(BaseModel):
 
 class ConcurrencyProbeResponse(BaseModel):
     max_observed_in_flight: int
+
+
+class ShopRole(StrEnum):
+    OWNER = "owner"
+    MANAGER = "manager"
+    TECHNICIAN = "technician"
+
+
+class ShopStatus(StrEnum):
+    PILOT = "pilot"
+    ACTIVE = "active"
+    SUSPENDED = "suspended"
+    CANCELLED = "cancelled"
+
+
+class ShopRead(BaseModel):
+    id: int
+    legal_business_name: str | None = None
+    display_name: str
+    address_line_1: str | None = None
+    address_line_2: str | None = None
+    city: str | None = None
+    state: str | None = None
+    postal_code: str | None = None
+    country: str | None = None
+    phone: str | None = None
+    email: str | None = None
+    timezone: str
+    currency: str
+    status: ShopStatus
+    created_at: datetime
+    updated_at: datetime
+
+
+class ShopSettingsRead(BaseModel):
+    shop_id: int
+    labor_rate: float | None = None
+    mobile_service_fee: float | None = None
+    shop_supplies_percent: float | None = None
+    parts_tax_rate: float | None = None
+    operating_hours: dict | None = None
+    service_area: dict | None = None
+    estimate_terms_text: str | None = None
+    invoice_terms_text: str | None = None
+    payment_plan_settings: dict | None = None
+    branding_reference: str | None = None
+
+
+class ShopMembershipRead(BaseModel):
+    id: int
+    shop_id: int
+    user_account_id: int
+    role: ShopRole
+    is_active: bool
+    created_at: datetime
+    updated_at: datetime
+
+
+class ShopInvitationRead(BaseModel):
+    id: int
+    shop_id: int
+    email: str
+    role: ShopRole
+    invited_by_user_account_id: int
+    expires_at: datetime
+    accepted_at: datetime | None = None
+    revoked_at: datetime | None = None
+    created_at: datetime
+
+
+class ShopEventRead(BaseModel):
+    id: int
+    shop_id: int
+    event_type: str
+    actor_user_account_id: int | None = None
+    actor_name: str | None = None
+    event_metadata: dict | None = None
+    created_at: datetime

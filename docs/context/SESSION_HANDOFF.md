@@ -4,53 +4,50 @@ Purpose: replaceable handoff template for the next substantial Codex/Claude sess
 Information owner: the active session author.
 Read when: starting or resuming work.
 Update when: a substantial task completes or context needs to be handed forward.
-Last verified date: 2026-07-17.
-Relevant sources: `docs/context/CURRENT_STATE.md`, `docs/context/KNOWN_ISSUES.md`, `docs/context/PLANS.md`, `git log`/`git status`, `gh pr view`, `pytest -q` (fast suite) and `pytest -q tests/e2e/` (real-Postgres suite).
+Last verified date: 2026-07-18.
+Relevant sources: `docs/context/CURRENT_STATE.md`, `docs/context/KNOWN_ISSUES.md`, `docs/context/GOAL_EVIDENCE_MATRIX.md`, `git log`/`git status`, `gh pr view`, `pytest -q`.
 
 ## Identity
 
-- Updated UTC: 2026-07-17.
+- Updated UTC: 2026-07-18.
 - Agent: Claude.
-- `main` HEAD: `f3d8f0c` (squash-merge of PR #47 — closed the remaining security-review debt across the whole codebase, fixed 3 real findings).
-- Current worktree/branch: `agent/claude/handoff-fixup`, now sitting on `main`'s tip plus one new uncommitted diff (this session's Scheduling-concurrency work, below) — not yet committed/pushed/PR'd as of this doc being written.
+- `main` HEAD: `8114a15` (PR #51, Phase 2 — CI backup/restore/rollback rehearsal). This session's work is still on its own branch, not yet merged.
+- Current worktree/branch: `agent/claude/goal-phase3-shop-slice1-models`, branched from `origin/main` at `8114a15`. Pushed; PR #52 open (https://github.com/messagemikelandon-coder/optimusOS/pull/52). One commit (`ef5a63e`) pushed; a follow-up commit with review-driven fixes described below is staged locally, not yet committed as of this doc being written.
 
 ## Active task
 
-Owner instruction this session: "complete all necessary tasks... continue to all other phases... continue." Concretely, this session:
+This session is executing the `/goal` multi-shop-pilot roadmap (17 phases; see `docs/context/GOAL_EVIDENCE_MATRIX.md`). Phases 0-2 are merged to `main`. This increment is **Phase 3 slice 1: Shop/tenant model — create the tables and backfill only** (business tables still scope by `owner_user_id`, not `shop_id` — that's a later, separate slice).
 
-1. Merged PR #45 (Phase 6 Part I) and PR #46 (Diagnostics/Inspections security review) — both were already covered by the prior handoff.
-2. Ran the `optimus-security-reviewer` pass on every module that had never had one (Vendors/Parts/Purchase-Orders/Part-Allocation, Service Desk, Reports, Phase 6 Part H's own hardening code). **Every module in the codebase now has had a dedicated security review at least once.** Three real findings surfaced and were fixed, each independently re-reviewed and re-verified: a technician-visible cost leak in Part Allocation, a TOCTOU race in intake conversion, and an inconsistent plaintext-vs-hashed username in login security-event logging. Merged as PR #47.
-3. Discovered the roadmap doc (`PLANS.md`) itself was stale — several PRs it called "not yet merged" had, in fact, already merged. Corrected it; **every Phase 6 Part A-J is confirmed merged into `main`.**
-4. Picked up the one remaining genuinely-open, non-owner-blocked engineering item named in `PLANS.md`'s Part C: no permanent concurrency proof existed for the Scheduling module's `SELECT ... FOR UPDATE` row lock (SQLite, used by the fast suite, ignores `FOR UPDATE`). Added `tests/e2e/test_scheduling_concurrency.py`. **Not yet committed/pushed/PR'd** — see Unverified below.
+Work on this branch, across the initial commit and the pending follow-up:
 
-## What this last increment found (not just built)
-
-Writing a real concurrency test is what surfaced both of these — neither was known before this session:
-
-- **An HTTP-level version of the test passed identically whether the row lock was present or removed.** Traced to a real architectural fact, confirmed empirically (timed two requests with a deliberate 1s delay inserted: ~2s total, not ~1s): every route in `app/main.py` is `async def` but calls a blocking sync store function directly, with no thread-pool offload, and the real `Dockerfile` runs a single `uvicorn` worker. This app currently processes **at most one HTTP request at a time, system-wide**, regardless of load. Not a data-integrity bug today, but a real throughput ceiling — documented in `docs/context/KNOWN_ISSUES.md`'s new "Request-level concurrency" entry, not fixed (out of scope for this task; the fix options — thread-pool offload, an async DB driver, or multiple workers — each have their own follow-on implications spelled out there).
-- **A real, previously-undiscovered `ForeignKeyViolation`** (`appointments_vehicle_id_fkey`) whenever the test-support synthetic-account cleanup path deleted an owner that had any Scheduling appointment. `app/test_support_store.py::_delete_owner_and_dependents` hard-deletes an owner's dependents directly but didn't account for `appointments.customer_id`/`vehicle_id`/`technician_id` being deliberately `ON DELETE RESTRICT` (real usage only ever archives those records, never hard-deletes them, so this was never exercised before). Fixed with the same explicit-delete-before-cascade pattern already used for technician `UserAccount` rows in the same function. Also hardened the `synthetic_owner` fixture's teardown (previously fire-and-forgot its cleanup call — this exact bug could have silently corrupted future e2e test runs without ever failing a test).
+1. `app/db_models.py` — new `Shop`, `ShopSettings`, `ShopMembership`, `ShopInvitation`, `ShopEvent` models. `ShopMembership` now also has a partial unique index (`uq_shop_memberships_one_active_owner_per_user`, `postgresql_where`/`sqlite_where` on `role='owner' AND is_active`) added after security review.
+2. `app/models.py` — `ShopRole`/`ShopStatus` `StrEnum`s and `ShopRead`/`ShopSettingsRead`/`ShopMembershipRead`/`ShopInvitationRead`/`ShopEventRead` Pydantic models.
+3. `alembic/versions/022_shop_tenant_model.py` — creates the 5 tables (now including the partial unique index above) and backfills one real "Landon Motor Works" shop per pre-existing non-synthetic owner (from `app/config.py::Settings`, nothing fabricated; unknown fields stay NULL), an owner `ShopMembership`, and a `ShopMembership` per non-synthetic technician.
+4. `app/shop_store.py` — `get_current_shop`/`get_current_shop_settings`/`list_current_shop_memberships` (read-only, no routes wired yet) plus `create_shop_for_new_owner`. `_shop_for_owner` now also filters `ShopMembership.is_active.is_(True)` and orders by `Shop.id` for determinism (both added after review).
+5. `app/auth.py::bootstrap_owner_account` — calls `create_shop_for_new_owner` so a fresh install (migrate before any owner exists) still gets a Shop. Deferred (in-function) import avoids a circular import with `app.shop_store`.
+6. `tests/test_shop_store.py` — 13 tests (11 original + 2 added after review: a deactivated membership must not grant access, and a second active owner-role membership for the same user must be rejected). Both new tests were confirmed to actually fail against the pre-fix code before the fix was restored.
+7. `tests/e2e/test_shop_tenant_migration_backfill.py` (new) — added after independent review found the migration's own raw-SQL backfill had no permanent, repeatable test (CI's migration checks only ever run against an empty database, so the backfill loop body was never executed by any committed check). Boots its own isolated Postgres container, migrates to 021, seeds owner/technician/synthetic-technician rows, migrates to head, and asserts the exact resulting rows — plus a no-owners-yet case and a downgrade case.
+8. `docs/context/KNOWN_ISSUES.md`, `docs/context/GOAL_EVIDENCE_MATRIX.md`, `docs/context/CURRENT_STATE.md` — updated with the slice's scope, the deliberately-deferred gap (technicians added via the normal flow after this migration don't get a `ShopMembership` row yet — planned for Phase 5), and the review-fix outcomes.
 
 ## Verified baseline
 
 - `env UV_CACHE_DIR=/tmp/uv-cache uv run ruff format --check .` / `ruff check .` → clean.
 - `env UV_CACHE_DIR=/tmp/uv-cache uv run pyright` → 0 errors, 0 warnings.
-- `env UV_CACHE_DIR=/tmp/uv-cache uv run pytest -q` (fast suite) → all green, 2 pre-existing unrelated Redis-skips.
-- `env UV_CACHE_DIR=/tmp/uv-cache uv run pytest -q tests/e2e/` → all 5 pass (4 pre-existing + the new concurrency test), against a real throwaway Postgres 16 container + real `uvicorn`.
-- `env UV_CACHE_DIR=/tmp/uv-cache uv run python scripts/check_ai_handoff.py` → OK.
-- `node --check app/static/app.js` → OK.
-- The new regression test (`tests/test_test_support_api.py::test_cleanup_deletes_owner_with_scheduling_data`) was confirmed to actually fail against the pre-fix code (temporarily reverted the fix, re-ran, saw the failure, restored the fix) — not just assumed meaningful.
+- `env UV_CACHE_DIR=/tmp/uv-cache uv run pytest -q` → **401 passed**, 2 pre-existing unrelated skips.
+- `env UV_CACHE_DIR=/tmp/uv-cache uv run pytest -q tests/e2e/` → **9 passed** (6 pre-existing + 3 new migration-backfill tests), no leftover containers afterward.
+- Migration rehearsed live against a real, isolated scratch Postgres 16 container in an earlier pass (upgrade for both an existing-deployment and a fresh-install scenario, plus downgrade) — now additionally covered by the permanent e2e test above, so this no longer depends on a one-time manual rehearsal.
+- Both new regression tests (`test_deactivated_membership_does_not_grant_shop_access`, `test_shop_membership_forbids_a_second_active_owner_membership_for_the_same_user`) were confirmed to fail when their corresponding fix was temporarily reverted, then passed again once restored.
 
 ## Evidence
 
-- PR #45, #46, #47 all merged — confirmed via `gh pr list --state merged` and `git log origin/main`.
-- The four new `optimus-security-reviewer` reports (Vendors/Parts/POs/Allocation, Service Desk, Reports, Part H) plus their fixes are preserved in full in `docs/context/KNOWN_ISSUES.md`'s Historical Resolved Issues — not just asserted.
-- The concurrency test's own overlap-proof assertion (loser's start time precedes winner's commit time) is itself evidence the test exercises genuine concurrent DB contention, not accidental sequencing — this was verified by first proving the *opposite* claim empirically (the HTTP-level version's false-positive) before committing to the direct-call approach.
-- One process note, already disclosed and resolved in-session: while cleaning up a PR merge conflict, a `git push --force-with-lease` was run on this session's own single-owner feature branch before the owner had explicitly named the force-push itself — flagged immediately per this repo's AGENTS.md boundary, owner said continue, work proceeded. Content was unaffected (verified via `git diff` before and after).
+- PR #52 opened; independent review (`optimus-reviewer`) and security review (`optimus-security-reviewer`) both completed and returned findings (see below) — all real findings were fixed, none dismissed.
+- Independent review findings and disposition: (1) `is_active` not enforced — fixed; (2) migration backfill had no permanent test — fixed (new e2e test); (3) `"owner"` string literal vs. `ShopRole.OWNER.value` inconsistency — fixed; (4) unused `display_name` column in the migration's owners `SELECT` — fixed (removed).
+- Security review findings and disposition: (1) `is_active` not enforced — fixed (same as above); (2) no constraint against a user holding two active owner-role memberships — fixed (partial unique index, model + migration); (3) `ShopInvitation.token_hash` design reminder for the future Phase 5 write path — informational only, no code exists yet to fix; (4) migration trusts pre-existing `shop_owner_id` values without cross-validation — assessed as inherited, not introduced, no fix required; (5) migration-window concurrency (accounts created mid-migration) — standard migration-time caveat, no fix required.
 
 ## Unverified
 
-- **This session's Scheduling-concurrency diff (`tests/e2e/test_scheduling_concurrency.py`, `app/test_support_store.py`, `tests/e2e/conftest.py`, `tests/test_test_support_api.py`, `docs/context/KNOWN_ISSUES.md`, `docs/context/PLANS.md`) is not yet committed, pushed, PR'd, or merged as of this doc being written.** That's the immediate next step.
-- No independent review has run on this specific diff yet — due before merge per this repo's standing discipline, especially since it touches account-deletion logic (`app/test_support_store.py`), even though that logic is test-support-only, gated off in every real deployment, and already proven via a revert-and-recheck against its own regression test.
+- The follow-up commit with the review fixes above is staged but not yet committed/pushed as of this doc being written — that's the immediate next step, followed by re-requesting review confirmation on the delta (or at minimum a final self-check) before merge.
+- PR #52 has not yet been merged.
 
 ## Unrelated preexisting changes
 
@@ -58,24 +55,15 @@ Writing a real concurrency test is what surfaced both of these — neither was k
 
 ## Blockers and risks
 
-- None blocking. The "Request-level concurrency" finding above is a real, disclosed architectural limitation worth the owner's attention before assuming this app can serve concurrent real users at scale, but it isn't blocking any work in this diff.
+- None blocking. No real credentials, billing, or production/staging deployment were touched this increment.
 
 ## Exact next task
 
-Get independent review on the Scheduling-concurrency diff, then commit/push/PR/merge it (same pattern as PRs #45-#47 this session). After that, the concrete owner-facing decision points are unchanged from before this session and still need the owner directly, not an agent:
-
-- Catching the staging droplet up to current `main` — needs real deploy credentials.
-- Three monitoring decisions (uptime checker, log destination, disk-space alerting) — needs a vendor choice and likely money.
-- The customer-data deletion feature — needs answers to three policy questions in `docs/context/DATA_RETENTION.md`.
-- Report scheduling/delivery — deferred from the start, likely needs a delivery-vendor decision too.
-- The owner-only pilot → controlled customer pilot — a business rollout decision.
-- Playwright *browser* E2E coverage for the newer modules (Scheduling, Vendors/Parts/POs/Allocation, Service Desk, Diagnostics+Inspections, Reports) and dedicated security-behavior E2E scenarios — still genuinely open, unblocked by the owner, a reasonable next engineering task if picked up again.
-- The "Request-level concurrency" finding above — worth a dedicated, deliberately-scoped task of its own if real concurrent-user load ever becomes a requirement; not attempted here since it was out of scope for what this session set out to do.
+Commit and push the review-driven fixes described above onto the existing `agent/claude/goal-phase3-shop-slice1-models` branch (PR #52 already open), then merge once green per the standing `/goal` authorization (own feature branch, non-force push, merge when reviewed and green). After that, continue Phase 3 with the next staged slice: wiring `shop_id` (nullable first) onto business tables is explicitly **not** part of slice 1 and should be its own separate, reviewable PR. Also queue, for Phase 5 (not this slice): folding `ShopMembership` create/deactivate into the technician creation/deletion lifecycle so `list_current_shop_memberships` stays accurate over time (see `docs/context/KNOWN_ISSUES.md`).
 
 ## Carried over from prior sessions — not touched by this session
 
 - Ask the owner to re-test the three staging bugs reported after the Phase 5.5 deploy (notifications reachable via mobile nav + desktop sidebar; estimate "Refresh status" button; Square tab visible in both nav surfaces) — still the oldest open follow-up, not yet re-confirmed.
 - Payment-schedule installment percentage split remains an owner-confirmed placeholder (`docs/context/BUSINESS_RULES.md`).
-- Pre-existing work-order-completion commit-boundary race documented in `docs/context/KNOWN_ISSUES.md` (concurrent-race only, single-owner usage makes it near-impossible to hit).
-- Square: email-TLD and phone-format validation gaps found during an earlier sandbox smoke test are non-blocking, no fix requested yet. Staging still has no Square credentials configured.
 - The staging droplet is still behind current `main`. Catching it up is a deploy action requiring explicit current-turn approval and real credentials this session does not have.
+- Square: email-TLD and phone-format validation gaps found during an earlier sandbox smoke test are non-blocking, no fix requested yet. Staging still has no Square credentials configured.

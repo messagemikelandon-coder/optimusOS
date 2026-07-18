@@ -99,6 +99,16 @@ def bootstrap_owner_account(settings: Settings | None = None, db: Session | None
             is_active=True,
         )
         session.add(owner)
+        session.flush()
+
+        # Deferred import: app.shop_store imports AuthContext/effective_owner_id
+        # from this module, so importing it at module load time would be a
+        # circular import. A fresh install runs migrations before any owner
+        # exists, so the migration's own Shop backfill never covers this
+        # owner -- this is the only code path that creates their Shop.
+        from app.shop_store import create_shop_for_new_owner
+
+        create_shop_for_new_owner(session, resolved_settings, owner)
         session.commit()
         print("Owner account created.")
         return 0
