@@ -485,6 +485,7 @@ def issue_invoice(
     record_notification(
         db=db,
         owner_user_id=invoice.owner_user_id,
+        shop_id=invoice.shop_id,
         entity_type=NotificationEntityType.INVOICE,
         entity_id=invoice.id,
         event=NotificationEvent.INVOICE_ISSUED,
