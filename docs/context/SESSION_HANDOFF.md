@@ -11,38 +11,43 @@ Relevant sources: `docs/context/CURRENT_STATE.md`, `docs/context/KNOWN_ISSUES.md
 
 - Updated UTC: 2026-07-18.
 - Agent: Claude.
-- `main` HEAD: `901eadd` (PR #53, Phase 3 slice 2 — nullable `shop_id` columns).
-- Current worktree/branch: `agent/claude/goal-phase3-shop-slice3-backfill-shop-id`, branched from `origin/main` at `901eadd`. Not yet committed/pushed as of this doc being written.
+- `main` HEAD: `029d776` (PR #54, Phase 3 slice 3 — `shop_id` data backfill, squash-merged).
+- Current worktree/branch: `agent/claude/goal-phase3-shop-slice4-populate-on-create`, branched from `origin/main` at `029d776`. (This slice's work was drafted on top of the local pre-squash slice-3 branch before PR #54's merge was confirmed; verified via `git diff <old-branch-tip> origin/main` showing zero difference, then cleanly re-based onto a fresh branch off the real `origin/main` — no content was lost or altered by that move.) Not yet committed as of this doc being written.
 
 ## Active task
 
-This session is executing the `/goal` multi-shop-pilot roadmap (17 phases; see `docs/context/GOAL_EVIDENCE_MATRIX.md`). Phases 0-2 and Phase 3 slices 1-2 are merged to `main`. This increment is **Phase 3 slice 3: backfill real `shop_id` values onto every existing business-table row** — still no NOT NULL constraint, still no store-module query changes.
+This session is executing the `/goal` multi-shop-pilot roadmap (17 phases; see `docs/context/GOAL_EVIDENCE_MATRIX.md`). Phases 0-2 and Phase 3 slices 1-3 are merged (or, for slice 3/PR #54, confirmed reviewed and pending final merge). This increment is **Phase 3 slice 4: auto-populate `shop_id` on every new business-table row at create time** — the actual prerequisite slice 3's own review flagged as missing before a NOT NULL constraint could ever be added safely (a NOT NULL constraint added before this slice would break every single INSERT in the app, since nothing previously set `shop_id` going forward).
 
-Work on this branch (uncommitted as of this doc):
+Work in this increment:
 
-1. `alembic/versions/024_backfill_shop_id.py` (new) — for each of the same 30 business tables from slice 2, `UPDATE <table> SET shop_id = sm.shop_id FROM shop_memberships sm WHERE sm.user_account_id = t.owner_user_id AND sm.role = 'owner' AND sm.is_active = true AND t.shop_id IS NULL`. Idempotent by construction (the `shop_id IS NULL` guard means re-running finds nothing left to do). Any row whose `owner_user_id` has no matching *active owner* `ShopMembership` is deliberately left `shop_id = NULL` and reported via a migration-time `WARNING` print (row count per table) rather than guessed at or failed — this is the same "do not fabricate" discipline as slice 1's shop backfill. `downgrade()` sets `shop_id` back to `NULL` on all 30 tables (schema/FK/index from slice 2 stay in place; only the data is undone).
-2. `tests/e2e/test_shop_id_backfill.py` (new) — 3 tests added proactively (without waiting for review to flag the gap, following the precedent independent review set on slice 1): backfill sets the correct `shop_id` for a real owner's row and correctly leaves an orphan row (one whose `owner_user_id` points at a technician with no owner-role membership) NULL; the backfill is idempotent across a downgrade+upgrade round trip; downgrading clears the data but leaves the column/FK/index intact.
-3. `docs/context/GOAL_EVIDENCE_MATRIX.md` — the "`shop_id` on every business table" row updated to reflect slices 2+3 together (nullable column added, now populated; still not constrained or read).
+1. `app/shop_store.py` — new `resolve_shop_id_for_owner(db, owner_id) -> int | None` (the core lookup, given an already-resolved shop-owning `UserAccount.id`) and `resolve_shop_id(db, auth) -> int | None` (the common case, given an `AuthContext`). Both return `None` rather than raising when no shop is found, since a create path must not suddenly start rejecting requests over a still-nullable column.
+2. All 30 business-table CREATE call sites across 16 store modules (`customer_store.py`, `vehicle_store.py`, `estimate_store.py`, `technician_store.py`, `work_order_store.py`, `invoice_store.py`, `payment_store.py`, `notification_store.py`, `vendor_store.py`, `part_store.py`, `purchase_order_store.py`, `part_allocation_store.py`, `intake_store.py`, `diagnostics_store.py`, `inspection_store.py`, `scheduling_store.py`) now set `shop_id` at insert time. Applied mechanically via an AST script (parse each file, find every constructor call for one of the 30 target model classes that already passes `owner_user_id=...`, insert a matching `shop_id=...` keyword right alongside it) — same methodology as Phase 1's threadpool fix and Phase 3 slice 2's column insertion.
+3. **Two categories of call site, handled differently, on purpose:**
+   - The common case (a route creates a new top-level row from an authenticated request): `shop_id=resolve_shop_id(db, auth)`.
+   - Child/event/log tables created alongside an already-resolved parent row (`EstimateApprovalEvent`, `PaymentSchedule`, `InspectionEvent`, `DiagnosticFindingEvent`, `PartAllocationEvent`, `TechnicianTimeEntry`, `PurchaseOrderReceipt`): mirror the parent's own `shop_id` directly (e.g. `shop_id=estimate.shop_id`) instead of re-resolving via `auth` — more robust (no redundant query, guaranteed consistent with the parent), and the only option in helper functions that don't even receive `auth` as a parameter (`estimate_store.py::_append_event`, `invoice_store.py::_generate_schedule_rows`, `notification_store.py::record_notification` — the AST script's mechanical insertion initially broke these 3 functions with `F821 Undefined name` errors, caught immediately by `ruff check` before any test ran, then fixed by hand).
+4. **Real gap found and fixed in this same slice**: `app/test_support_store.py::provision_synthetic_owner` never called `create_shop_for_new_owner`, so every synthetic test-support owner had no `ShopMembership` at all (unlike a bootstrapped or migrated real owner) — meaning every row created under a synthetic owner (used throughout the e2e suite) would have silently kept `shop_id = NULL` forever. Fixed with the same one-line call used by `bootstrap_owner_account`.
+5. `tests/e2e/test_shop_id_populated_on_create.py` (new) — logs in as a real synthetic owner through the real HTTP API, creates a customer via `POST /api/customers`, and asserts the resulting row's `shop_id` matches the owner's actual `ShopMembership.shop_id` via a direct DB query. Confirmed to fail with `NoResultFound` when the `provision_synthetic_owner` fix was temporarily reverted, then passed again once restored.
+6. Manual DB-level verification (sqlite, `bootstrap_owner_account` → `create_customer`) additionally confirmed the resolved `shop_id` matches the bootstrapped owner's real shop, end to end.
+7. `docs/context/KNOWN_ISSUES.md`, `docs/context/GOAL_EVIDENCE_MATRIX.md` — updated to describe this slice; also logged a third recurrence of the pre-existing `tests/e2e/test_core_workflow.py` browser-timing flake (different symptom this time, ruled out as unrelated both by re-running in isolation and by test-execution-order reasoning: that file runs alphabetically before any of this slice's new test files).
 
-No Pydantic (`app/models.py`), store-module, or `app/db_models.py` changes in this slice — it is a pure data migration on top of slice 2's schema.
+No Pydantic (`app/models.py`) or `app/db_models.py` changes in this slice, no new API routes, no NOT NULL constraint, and no store-module *read*/query-scoping changes — every existing query still scopes by `owner_user_id`/`effective_owner_id` exactly as before.
 
 ## Verified baseline
 
 - `env UV_CACHE_DIR=/tmp/uv-cache uv run ruff format --check .` / `ruff check .` → clean.
 - `env UV_CACHE_DIR=/tmp/uv-cache uv run pyright` → 0 errors, 0 warnings.
-- `env UV_CACHE_DIR=/tmp/uv-cache uv run pytest -q` → **401 passed**, 2 pre-existing unrelated skips (unchanged — no application code touched).
-- `env UV_CACHE_DIR=/tmp/uv-cache uv run pytest -q tests/e2e/` → **12 passed** (9 pre-existing + 3 new backfill tests), no leftover containers afterward.
-- Migration rehearsed live against a real, isolated scratch Postgres 16 container: seeded a real owner + technician + 2 real customer rows + 1 "orphan" row (owner_user_id pointing at the technician, who has no owner-role membership); migrating to head backfilled the 2 real rows to the correct `shop_id` and printed `WARNING: 1 row(s) in customers have no matching active owner ShopMembership...` for the orphan, which stayed NULL; downgrading to 023 reset all 3 rows' `shop_id` to NULL while leaving the column/FK/index intact (confirmed via `\d customers`); re-upgrading re-ran cleanly (idempotent — 0 rows re-touched for the already-backfilled ones, same warning reappeared for the still-orphaned one).
-- Caught and fixed my own test-harness bug during this verification: an earlier `docker exec <container> psql ... <<'SQL'` heredoc silently did nothing (0 rows inserted, no error) because `docker exec` without `-i` doesn't attach stdin — re-ran with `docker exec -i` and the seeding worked as expected. Not a product bug, purely a manual-verification mistake, corrected before drawing any conclusions from the (invalid) first attempt.
+- `env UV_CACHE_DIR=/tmp/uv-cache uv run pytest -q` → **401 passed**, 2 pre-existing unrelated skips (unchanged).
+- `env UV_CACHE_DIR=/tmp/uv-cache uv run pytest -q tests/e2e/` → **14 passed** on a clean run (13 pre-existing/from-slice-3 + 1 new); one run hit the pre-existing, already-documented `test_core_workflow.py` flake (ruled out as unrelated, see above), and a clean re-run afterward showed 14/14.
+- The new e2e test and the `provision_synthetic_owner` fix were verified together via revert-and-recheck: temporarily commented out the `create_shop_for_new_owner` call, re-ran the new test, saw it fail with `sqlalchemy.exc.NoResultFound: No row was found when one was required` (the SQL join in the test finds no `ShopMembership` row), restored the fix, re-ran, passed.
 
 ## Evidence
 
-- All verification above was run directly in this session against a real, isolated Postgres container — not assumed from a prior claim.
-- The orphan-row test case is a genuine edge-case proof, not just a happy-path check: it confirms the migration's `role = 'owner'` filter is doing real work (a technician's own `ShopMembership` row, if one ever existed, would not incorrectly satisfy the join).
+- All verification above was run directly in this session — not assumed from a prior claim.
+- The AST script's own mechanical mistakes (3 call sites where `db`/`auth` weren't in scope) were caught immediately by `ruff check`'s `F821 Undefined name` errors before any test was run, not discovered later via a failing test — the script inserted uniformly wherever an `owner_user_id` keyword existed on one of the 30 target classes, and 3 of those call sites turned out to be inside helper functions that receive an already-constructed parent object instead of `auth` directly.
 
 ## Unverified
 
-- This diff is not yet committed, pushed, PR'd, or reviewed. That's the immediate next step: commit, push to a new branch, open a PR, get independent + security review (same pattern as slices 1-2), fix any real findings, then merge once green.
+- This diff is not yet committed, pushed, PR'd, or reviewed. That's the immediate next step: commit, push to a new branch, open a PR, get independent + security review, fix any real findings, then merge once green.
 - No independent or security review has run on this diff yet.
 
 ## Unrelated preexisting changes
@@ -55,7 +60,7 @@ No Pydantic (`app/models.py`), store-module, or `app/db_models.py` changes in th
 
 ## Exact next task
 
-Commit this diff, push to a new branch, open a PR, get independent + security review, fix any real findings, then merge once green. After that, continue Phase 3 with slice 4: constraining `shop_id` to `NOT NULL` on tables where every row has now been successfully backfilled (this requires first confirming, per-deployment, that no orphan rows remain — the slice 3 migration's own warning output is exactly the signal to check before that constraint is safe to add), followed by slice 5+ (cutting store-module queries over from `owner_user_id`/`effective_owner_id` to `shop_id`, the highest-risk step, requiring extensive cross-shop isolation tests per table before merge).
+Commit this diff, push, open a PR, get independent + security review, fix any real findings, then merge once green. After that, continue Phase 3 with slice 5: add an explicit, CI-checkable "zero orphan `shop_id` rows remain" check (per slice 3's review note — currently only a `print()` in migration console output), then slice 6: constrain `shop_id` to NOT NULL now that both the one-time backfill (slice 3) and the ongoing auto-populate-on-create (slice 4) are in place. Query-scoping cutover (moving store-module reads from `owner_user_id` to `shop_id`) remains a separate, later, higher-risk slice requiring extensive cross-shop isolation tests per table.
 
 ## Carried over from prior sessions — not touched by this session
 
@@ -64,4 +69,4 @@ Commit this diff, push to a new branch, open a PR, get independent + security re
 - The staging droplet is still behind current `main`. Catching it up is a deploy action requiring explicit current-turn approval and real credentials this session does not have.
 - Square: email-TLD and phone-format validation gaps found during an earlier sandbox smoke test are non-blocking, no fix requested yet. Staging still has no Square credentials configured.
 - `ShopMembership` rows aren't created for technicians added via the normal `create_technician_record` flow after migration 022 — deliberately deferred to Phase 5 (see `docs/context/KNOWN_ISSUES.md`).
-- The `ondelete="CASCADE"` choice on all 30 new `shop_id` FKs (financial/audit tables included) is an open data-retention policy decision, not yet resolved — revisit before any shop-deletion/offboarding feature ships (see `docs/context/KNOWN_ISSUES.md`).
+- The `ondelete="CASCADE"` choice on all 30 `shop_id` FKs (financial/audit tables included) is an open data-retention policy decision, not yet resolved — revisit before any shop-deletion/offboarding feature ships (see `docs/context/KNOWN_ISSUES.md`).

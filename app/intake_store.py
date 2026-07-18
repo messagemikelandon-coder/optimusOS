@@ -19,6 +19,7 @@ from app.models import (
     IntakeRequestUpdate,
     VehicleCreate,
 )
+from app.shop_store import resolve_shop_id
 from app.vehicle_store import create_vehicle
 
 _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
@@ -101,6 +102,7 @@ def create_intake_request(
     phone = normalize_phone(payload.phone)
     intake_request = IntakeRequest(
         owner_user_id=effective_owner_id(auth),
+        shop_id=resolve_shop_id(db, auth),
         customer_name=payload.customer_name,
         phone=phone[0] if phone else None,
         phone_normalized=phone[1] if phone else None,

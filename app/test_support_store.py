@@ -14,6 +14,7 @@ from app.auth import AuthContext, hash_password, normalize_username
 from app.config import Settings
 from app.db_models import Appointment, AuthSession, UserAccount
 from app.models import TechnicianCreate, TechnicianProvisionLoginRequest
+from app.shop_store import create_shop_for_new_owner
 from app.technician_store import create_technician, provision_login
 
 _USERNAME_PREFIX = "e2e-"
@@ -128,6 +129,14 @@ def provision_synthetic_owner(*, db: Session, settings: Settings) -> SyntheticAc
         is_synthetic_test_account=True,
     )
     db.add(owner)
+    db.flush()
+    # Without this, every synthetic owner would have no ShopMembership at
+    # all (unlike a bootstrapped or migrated real owner), so every
+    # business-table row a synthetic owner or their technicians create
+    # would silently keep shop_id = NULL -- closing that gap here rather
+    # than leaving synthetic accounts as a permanent, undocumented
+    # exception to the rest of this phase's guarantees.
+    create_shop_for_new_owner(db, settings, owner)
     db.commit()
     db.refresh(owner)
     return SyntheticAccount(

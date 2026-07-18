@@ -49,6 +49,37 @@ def _shop_for_owner(db: Session, auth: AuthContext) -> Shop:
     return shop
 
 
+def resolve_shop_id_for_owner(db: Session, owner_id: int) -> int | None:
+    """Best-effort `shop_id` lookup for populating new business-table rows
+    at create time (/goal Phase 3 slice 4), given an already-resolved
+    shop-owning `UserAccount.id` (i.e. the same value `effective_owner_id`
+    would return).
+
+    Returns `None` rather than raising when no shop is found -- unlike
+    `_shop_for_owner`/`get_current_shop`, which are used for routes that
+    should hard-fail without a shop, a create path should not suddenly
+    start rejecting requests over a still-nullable column. In practice
+    this only returns `None` for an account created by a path this repo
+    hasn't wired to `create_shop_for_new_owner` yet -- every real owner
+    (bootstrapped, migrated, or synthetic-provisioned) always has a shop.
+    """
+    return db.scalar(
+        select(ShopMembership.shop_id)
+        .where(
+            ShopMembership.user_account_id == owner_id,
+            ShopMembership.role == ShopRole.OWNER.value,
+            ShopMembership.is_active.is_(True),
+        )
+        .order_by(ShopMembership.shop_id)
+    )
+
+
+def resolve_shop_id(db: Session, auth: AuthContext) -> int | None:
+    """`resolve_shop_id_for_owner` for the common case where an `AuthContext`
+    (rather than an already-resolved owner id) is what the caller has."""
+    return resolve_shop_id_for_owner(db, effective_owner_id(auth))
+
+
 def _to_read(shop: Shop) -> ShopRead:
     return ShopRead(
         id=shop.id,

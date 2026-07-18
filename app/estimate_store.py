@@ -52,6 +52,7 @@ from app.models import (
 )
 from app.notification_store import record_notification
 from app.orchestrator import OptimusResearchOrchestrator
+from app.shop_store import resolve_shop_id
 from app.vehicle_store import get_vehicle_model, vehicle_display_name
 
 DEFAULT_ESTIMATE_TERMS = (
@@ -502,6 +503,7 @@ def _append_event(
             estimate_id=estimate.id,
             estimate_revision_id=revision.id,
             owner_user_id=estimate.owner_user_id,
+            shop_id=estimate.shop_id,
             approval_request_id=approval_request_id,
             event_type=event_type,
             actor_type=actor_type,
@@ -552,6 +554,7 @@ async def create_estimate(
     )
     estimate = Estimate(
         owner_user_id=effective_owner_id(auth),
+        shop_id=resolve_shop_id(db, auth),
         customer_id=payload.customer_id,
         vehicle_id=payload.vehicle_id,
         estimate_number=_next_estimate_number(db, auth),
@@ -566,6 +569,7 @@ async def create_estimate(
     revision = EstimateRevision(
         estimate_id=estimate.id,
         owner_user_id=effective_owner_id(auth),
+        shop_id=resolve_shop_id(db, auth),
         revision_number=1,
         status=EstimateStatus.DRAFT.value,
         customer_snapshot=customer_summary.model_dump(mode="json"),
@@ -728,6 +732,7 @@ async def create_estimate_revision(
     revision = EstimateRevision(
         estimate_id=estimate.id,
         owner_user_id=effective_owner_id(auth),
+        shop_id=resolve_shop_id(db, auth),
         revision_number=next_revision_number,
         status=EstimateStatus.READY.value,
         customer_snapshot=customer_summary.model_dump(mode="json"),
@@ -770,6 +775,7 @@ def send_estimate_for_approval(
         estimate_id=estimate.id,
         estimate_revision_id=revision.id,
         owner_user_id=effective_owner_id(auth),
+        shop_id=resolve_shop_id(db, auth),
         token_hash=_hash_token(token),
         status="active",
         expires_at=datetime.now(UTC) + timedelta(hours=payload.expires_in_hours),

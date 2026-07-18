@@ -17,6 +17,7 @@ from app.models import (
     VehicleRead,
     VehicleUpdate,
 )
+from app.shop_store import resolve_shop_id
 
 _VIN_RE = re.compile(r"^[A-HJ-NPR-Z0-9]{17}$")
 
@@ -165,6 +166,7 @@ def create_vehicle(
     _ensure_unique_active_vin(db, auth, vin)
     vehicle = Vehicle(
         owner_user_id=effective_owner_id(auth),
+        shop_id=resolve_shop_id(db, auth),
         customer_id=customer.id,
         **normalized,
     )

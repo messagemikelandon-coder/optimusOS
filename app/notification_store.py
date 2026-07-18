@@ -15,6 +15,7 @@ from app.models import (
     NotificationMarkReadResponse,
     NotificationRead,
 )
+from app.shop_store import resolve_shop_id_for_owner
 
 __all__ = [
     "NotificationNotFoundError",
@@ -54,6 +55,7 @@ def record_notification(
     db.add(
         Notification(
             owner_user_id=owner_user_id,
+            shop_id=resolve_shop_id_for_owner(db, owner_user_id),
             entity_type=entity_type.value,
             entity_id=entity_id,
             event=event.value,

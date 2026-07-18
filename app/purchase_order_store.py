@@ -20,6 +20,7 @@ from app.models import (
     PurchaseOrderReceiveRequest,
     PurchaseOrderStatus,
 )
+from app.shop_store import resolve_shop_id
 
 MONEY = Decimal("0.01")
 
@@ -187,6 +188,7 @@ def create_purchase_order(
         ]
         purchase_order = PurchaseOrder(
             owner_user_id=effective_owner_id(auth),
+            shop_id=resolve_shop_id(db, auth),
             vendor_id=payload.vendor_id,
             po_number=_next_po_number(db, auth),
             status=PurchaseOrderStatus.DRAFT.value,
@@ -364,6 +366,7 @@ def receive_purchase_order_line_item(
             purchase_order_id=purchase_order.id,
             line_item_id=line_item.id,
             owner_user_id=purchase_order.owner_user_id,
+            shop_id=purchase_order.shop_id,
             quantity_received=payload.quantity,
             received_by_user_id=auth.user.id,
             received_by_name=auth.user.display_name,

@@ -17,6 +17,7 @@ from app.models import (
     DiagnosticFindingRead,
     DiagnosticFindingUpdate,
 )
+from app.shop_store import resolve_shop_id
 from app.technician_store import display_name as technician_display_name
 from app.technician_store import get_technician_for_user
 from app.vehicle_store import vehicle_display_name
@@ -138,6 +139,7 @@ def _record_event(
         DiagnosticFindingEvent(
             finding_id=finding.id,
             owner_user_id=finding.owner_user_id,
+            shop_id=finding.shop_id,
             event_type=event_type,
             actor_type=auth.user.role,
             actor_user_id=auth.user.id,
@@ -154,6 +156,7 @@ def create_diagnostic_finding(
     _validate_work_order(db, auth, payload.work_order_id, vehicle_id=payload.vehicle_id)
     finding = DiagnosticFinding(
         owner_user_id=effective_owner_id(auth),
+        shop_id=resolve_shop_id(db, auth),
         vehicle_id=payload.vehicle_id,
         work_order_id=payload.work_order_id,
         technician_id=payload.technician_id,
