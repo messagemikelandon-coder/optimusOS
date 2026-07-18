@@ -169,6 +169,110 @@ def test_backfill_sets_shop_id_from_owner_membership_and_leaves_orphans_null(
     engine.dispose()
 
 
+def test_backfill_never_mixes_rows_across_two_shops_in_the_same_database(
+    pre_024_database: MigratedDatabase,
+) -> None:
+    """The single most direct proof for a multi-tenant data migration: with
+    two real owners/shops present in the same database, every row must
+    resolve to its *own* owner's shop, never the other one. The
+    `uq_shop_memberships_one_active_owner_per_user` partial unique index
+    (migration 022) makes cross-mixing structurally impossible at the
+    schema level, but this test proves it end-to-end rather than relying
+    on that alone -- also exercises a second table (`vehicles`) beyond
+    `customers`, since the migration is a mechanically-generated loop over
+    all 30 tables and a typo in any one of them would only be caught by
+    exercising more than a single table.
+    """
+    engine = create_engine(pre_024_database.database_url)
+    with engine.begin() as connection:
+        first_owner_id = connection.execute(
+            text(
+                "INSERT INTO user_accounts "
+                "(username, display_name, role, password_hash, is_active, is_synthetic_test_account) "
+                "VALUES ('owner.one', 'Owner One', 'owner', 'fake-hash', true, false) RETURNING id"
+            )
+        ).scalar_one()
+        second_owner_id = connection.execute(
+            text(
+                "INSERT INTO user_accounts "
+                "(username, display_name, role, password_hash, is_active, is_synthetic_test_account) "
+                "VALUES ('owner.two', 'Owner Two', 'owner', 'fake-hash', true, false) RETURNING id"
+            )
+        ).scalar_one()
+
+        first_shop_id = connection.execute(
+            text(
+                "INSERT INTO shops (display_name, status) VALUES ('First Shop', 'active') RETURNING id"
+            )
+        ).scalar_one()
+        second_shop_id = connection.execute(
+            text(
+                "INSERT INTO shops (display_name, status) VALUES ('Second Shop', 'active') RETURNING id"
+            )
+        ).scalar_one()
+        connection.execute(
+            text(
+                "INSERT INTO shop_memberships (shop_id, user_account_id, role) "
+                "VALUES (:shop_id, :owner_id, 'owner')"
+            ),
+            {"shop_id": first_shop_id, "owner_id": first_owner_id},
+        )
+        connection.execute(
+            text(
+                "INSERT INTO shop_memberships (shop_id, user_account_id, role) "
+                "VALUES (:shop_id, :owner_id, 'owner')"
+            ),
+            {"shop_id": second_shop_id, "owner_id": second_owner_id},
+        )
+
+        first_customer_id = connection.execute(
+            text(
+                "INSERT INTO customers (owner_user_id, first_name, last_name) "
+                "VALUES (:owner_id, 'Alice', 'First') RETURNING id"
+            ),
+            {"owner_id": first_owner_id},
+        ).scalar_one()
+        second_customer_id = connection.execute(
+            text(
+                "INSERT INTO customers (owner_user_id, first_name, last_name) "
+                "VALUES (:owner_id, 'Bob', 'Second') RETURNING id"
+            ),
+            {"owner_id": second_owner_id},
+        ).scalar_one()
+        first_vehicle_id = connection.execute(
+            text(
+                "INSERT INTO vehicles (owner_user_id, customer_id, make, model) "
+                "VALUES (:owner_id, :customer_id, 'Honda', 'Civic') RETURNING id"
+            ),
+            {"owner_id": first_owner_id, "customer_id": first_customer_id},
+        ).scalar_one()
+        second_vehicle_id = connection.execute(
+            text(
+                "INSERT INTO vehicles (owner_user_id, customer_id, make, model) "
+                "VALUES (:owner_id, :customer_id, 'Ford', 'Focus') RETURNING id"
+            ),
+            {"owner_id": second_owner_id, "customer_id": second_customer_id},
+        ).scalar_one()
+
+    _run_migration_to_head(pre_024_database.env)
+
+    with engine.begin() as connection:
+        customer_shops = {
+            row.id: row.shop_id
+            for row in connection.execute(text("SELECT id, shop_id FROM customers ORDER BY id"))
+        }
+        vehicle_shops = {
+            row.id: row.shop_id
+            for row in connection.execute(text("SELECT id, shop_id FROM vehicles ORDER BY id"))
+        }
+        assert customer_shops[first_customer_id] == first_shop_id
+        assert customer_shops[second_customer_id] == second_shop_id
+        assert vehicle_shops[first_vehicle_id] == first_shop_id
+        assert vehicle_shops[second_vehicle_id] == second_shop_id
+        assert customer_shops[first_customer_id] != customer_shops[second_customer_id]
+    engine.dispose()
+
+
 def test_backfill_is_idempotent_across_repeated_runs(pre_024_database: MigratedDatabase) -> None:
     engine = create_engine(pre_024_database.database_url)
     with engine.begin() as connection:
