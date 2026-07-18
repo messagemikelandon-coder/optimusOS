@@ -20,6 +20,10 @@ pytestmark = pytest.mark.anyio
 _NOT_ROLE_GATED_ROUTES = {
     ("POST", "/api/auth/login"),
     ("POST", "/api/auth/logout"),
+    # Self-service shop signup (/goal Phase 4) is, by definition, reachable
+    # before any session/role exists at all -- own rate limiter
+    # (enforce_signup_rate_limit) is the equivalent guard.
+    ("POST", "/api/signup"),
     ("GET", "/api/auth/me"),
     ("GET", "/api/context/{project_key}"),
     ("PUT", "/api/context/{project_key}/{context_key}"),

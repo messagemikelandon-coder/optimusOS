@@ -11,50 +11,48 @@ Relevant sources: `docs/context/CURRENT_STATE.md`, `docs/context/KNOWN_ISSUES.md
 
 - Updated UTC: 2026-07-18.
 - Agent: Claude.
-- `main` HEAD: `d2103fc` (PR #55, Phase 3 slice 4 — auto-populate `shop_id` on create).
-- Current worktree/branch: `agent/claude/goal-phase3-shop-slice5-not-null`, branched from `origin/main` at `d2103fc`. Not yet committed/pushed as of this doc being written.
+- `main` HEAD: `62b48a4` (PR #56, Phase 3 slices 5+6 — `shop_id` NOT NULL constraint).
+- Current worktree/branch: `agent/claude/goal-phase4-shop-signup`, branched from `origin/main` at `62b48a4`. Not yet committed/pushed as of this doc being written.
 
 ## Active task
 
-This session is executing the `/goal` multi-shop-pilot roadmap (17 phases; see `docs/context/GOAL_EVIDENCE_MATRIX.md`). Phases 0-2 and Phase 3 slices 1-4 are merged. This increment combines **Phase 3 slices 5+6: a pre-flight orphan-check + the NOT NULL constraint on `shop_id`** — these were done as one PR since the entire purpose of the orphan check is to gate the NOT NULL migration; splitting them would have been an artificial separation.
+This session is executing the `/goal` multi-shop-pilot roadmap (17 phases; see `docs/context/GOAL_EVIDENCE_MATRIX.md`). Phases 0-3 are merged (Phase 3's `shop_id` schema/data work is complete: nullable → backfilled → auto-populated on create → NOT NULL; business-table *read*/query-scoping onto `shop_id` remains a separate, later, higher-risk slice, deferred since it only matters once a shop can have multiple owners — which this Phase 4 work introduces the *possibility* of, but doesn't yet exploit). This increment is **Phase 4 slice 1: self-service shop signup (backend only)**.
 
 Work in this increment:
 
-1. `scripts/check_shop_id_orphans.py` (new) — standalone operational script: connects via `DATABASE_URL`, reports any `shop_id IS NULL` rows per table, exits non-zero if any found. Meant to be run by an operator against a real staging/production database before attempting migration 025, giving an actionable report ahead of time rather than discovering the problem mid-migration.
-2. `alembic/versions/025_shop_id_not_null.py` (new) — constrains `shop_id` to `NOT NULL` on all 30 business tables. The migration's own `upgrade()` runs the same orphan check first and **raises a clear, itemized `RuntimeError`** (not a generic constraint-violation error) if any orphan row is found anywhere, refusing to proceed — self-defending even if the operator skipped running the script first. `downgrade()` reverts to nullable.
-3. `app/db_models.py` — all 30 `shop_id` columns changed from `Mapped[int | None]`/`nullable=True` to `Mapped[int]`/`nullable=False`, matching the new DB constraint.
-4. `.github/workflows/ci.yml` — added a step to the existing migration-integrity job running `scripts/check_shop_id_orphans.py` against the freshly-migrated CI database (always 0 orphans there, but this proves the script itself works on every CI run).
-5. **This slice is what actually proved slices 2-4 complete, not just nominally**: turning the column NOT NULL surfaced 5 real, previously-invisible gaps that no prior test had caught, since none of them exercise a genuinely-populated database with cross-owner test scenarios or direct ORM construction:
-   - `tests/test_context_api.py::create_user` — a cross-owner-isolation test helper used at ~56 call sites across ~20 test files — created a bare owner account with no `ShopMembership`. Fixed: now optionally accepts `settings` and calls `create_shop_for_new_owner`, defaulting to a fresh `Settings()` so existing call sites don't need updating.
-   - `tests/test_reports_api.py::_add_time_entry` — constructed `TechnicianTimeEntry` directly via the ORM (needed for report tests requiring specific historical clock-in/out times, unreachable through the real clock-in route). Fixed to resolve `shop_id` via `resolve_shop_id_for_owner`.
-   - `scripts/seed_estimate_approval_fixture.py` — used by real e2e tests to avoid a billable OpenAI research call, directly constructs `Customer`/`Vehicle`/`Estimate`/`EstimateRevision`. Fixed to resolve `shop_id` once and pass it through all four.
-   - `tests/e2e/test_reports_csv_export.py` — directly constructs `Technician`/`TechnicianTimeEntry` to seed report data. Fixed.
-   - `tests/e2e/seed.py` — directly constructs `Estimate`/`EstimateRevision` (the same "avoid a billable OpenAI call" pattern). Fixed by mirroring the already-loaded `Customer`'s `shop_id`.
-   - A repo-wide AST sweep (same methodology as Phase 1's threadpool fix) confirmed **zero remaining direct constructions** of any of the 30 target model classes anywhere in `app/`, `tests/`, or `scripts/` missing `shop_id`, after these fixes.
-6. `tests/e2e/test_shop_id_not_null.py` (new) — 2 tests against real Postgres: the migration succeeds and sets NOT NULL when no orphans exist; the migration refuses to proceed (exact error message asserted, DB left at the prior revision, column still nullable) when an orphan row exists.
-7. `tests/e2e/test_shop_id_backfill.py` — one existing test (`test_backfill_sets_shop_id_from_owner_membership_and_leaves_orphans_null`) updated to migrate only to `024_backfill_shop_id` instead of `head`, since it deliberately creates an orphan row to prove migration 024's own "leave unmatched NULL" behavior — migrating further to 025 would just reproduce that migration's (correct, expected) refusal rather than testing anything new.
-8. `docs/context/KNOWN_ISSUES.md`, `docs/context/GOAL_EVIDENCE_MATRIX.md`, `docs/context/RELEASE_CHECKLIST.md` — updated with this slice's scope and findings.
+1. `alembic/versions/026_user_account_email.py` (new) — adds nullable `email`/`email_normalized` to `user_accounts`, with a partial unique index (`WHERE email_normalized IS NOT NULL`) so pre-existing accounts with no email never collide with each other, but any two real emails must be distinct platform-wide.
+2. `app/db_models.py` — `UserAccount` gets the matching `email`/`email_normalized` columns + the partial unique index.
+3. `app/models.py` — new `ShopSignupRequest` (business_name, owner_display_name, username, email, password).
+4. `app/shop_store.py` — `signup_shop_owner(db, settings, payload) -> UserAccount`: validates username/email uniqueness explicitly (not left to a raw `IntegrityError`), hashes the password, creates the owner account, then calls `create_shop_for_new_owner` (now extended with optional `display_name`/`created_via` parameters so a new shop gets the *signup's own* business name, never the hardcoded `settings.business_name` "Landon Motor Works" default).
+5. `app/main.py` — `POST /api/signup`: rate-limited via a new dedicated `enforce_signup_rate_limit`/`get_signup_rate_limiter` (own `max_signup_attempts_per_minute` setting, mirroring the existing login-limiter pattern exactly), creates a real session and sets the cookie on success (auto-login, matching `/api/auth/login`'s exact flow), logs a new `SIGNUP_SUCCEEDED`/`SIGNUP_FAILED` security event pair.
+6. `tests/test_role_isolation.py` — added `("POST", "/api/signup")` to the not-role-gated allowlist (it's public by definition, same category as `/api/auth/login`).
+7. `tests/conftest.py` — the autouse rate-limiter-reset fixture now also resets the new `main._signup_rate_limiter`/`_signup_rate_limiter_redis_url` globals (otherwise the very first test using the default `max_signup_attempts_per_minute=5` would exhaust it against later, unrelated tests in the same process).
+8. `tests/test_signup_api.py` (new) — 8 tests: successful signup + shop creation + auto-login, case-insensitive email normalization, duplicate username/email rejection (case-insensitive), invalid email format, weak password rejection, rate limiting, and full cross-shop isolation between two signed-up shops (customers, list, and direct-object-access all correctly isolated).
+9. `tests/e2e/test_signup_e2e.py` (new) — one test hitting the real live API (no browser/Playwright, since there's no frontend signup form yet) proving the full chain: signup → real session cookie → authenticated `/api/auth/me` → authenticated `/api/customers` create, all against real Postgres.
 
-Business-table *read*/query-scoping is still untouched — no store module filters by `shop_id` for authorization anywhere. That cutover remains a separate, later, higher-risk slice.
+**Real, previously-undiscovered bug found and fixed in this same slice** (found while writing the weak-password test, verified before assuming it was real): `NonBlank = Field(min_length=8, ...)` — the exact pattern already used for `AuthLoginRequest.password` and `TechnicianProvisionLoginRequest.password` — never actually enforced an 8-character minimum anywhere in this app. Pydantic merges `Field()`'s constraints with `NonBlank`'s own baked-in `StringConstraints(min_length=1)` into one metadata list, and the later item silently wins, so only `min_length=1` was ever enforced. Confirmed directly: `AuthLoginRequest(username="owner", password="short")` validated with no error before the fix. Fixed with a new `Password = Annotated[str, StringConstraints(strip_whitespace=True, min_length=8, max_length=256)]` type (no separate `Field()` call, so no second conflicting constraint source), applied to all 3 affected fields. `strip_whitespace=True` was deliberately preserved exactly as before (confirmed via a direct test), so this does not change what any existing account's password hash was computed from — it only starts correctly rejecting genuinely-too-short passwords at request validation, which was always the documented intent (`.env.example`'s `OPTIMUS_OWNER_PASSWORD=replace_with_a_long_owner_password`).
+
+Not in this slice (explicitly deferred): frontend signup form/UI, "resumable setup guidance" checklist (Phase 12's own item), email verification (Phase 5/6), password reset (Phase 5/6).
 
 ## Verified baseline
 
 - `env UV_CACHE_DIR=/tmp/uv-cache uv run ruff format --check .` / `ruff check .` → clean.
 - `env UV_CACHE_DIR=/tmp/uv-cache uv run pyright` → 0 errors, 0 warnings.
-- `env UV_CACHE_DIR=/tmp/uv-cache uv run pytest -q` → **402 passed**, 2 pre-existing unrelated skips.
-- `env UV_CACHE_DIR=/tmp/uv-cache uv run pytest -q tests/e2e/` → **16 passed** (14 pre-existing + 2 new), no leftover containers.
-- Migration 025 rehearsed live against a real, isolated scratch Postgres 16 container: succeeded cleanly on a clean/backfilled DB (confirmed 34 tables NOT NULL: 30 new + 4 pre-existing `shop_*`); downgrade reverted exactly 30 tables back to nullable (the 4 `shop_*` tables' own `shop_id` stayed NOT NULL, unaffected); re-seeded an orphan row and confirmed the migration refused with the exact expected error message, left `alembic_version` at 024 (not partially advanced), and left the column nullable — genuinely atomic, not a partial-failure risk.
-- `scripts/check_shop_id_orphans.py` verified directly: reports "safe to proceed" (exit 0) on a clean DB, correctly detects and reports a seeded orphan row (exit 1) with the exact expected message.
+- `env UV_CACHE_DIR=/tmp/uv-cache uv run pytest -q` → **410 passed** (402 + 8 new), 2 pre-existing unrelated skips.
+- `env UV_CACHE_DIR=/tmp/uv-cache uv run pytest -q tests/e2e/` → **17 passed** (16 pre-existing + 1 new), no leftover containers.
+- Migration 026 rehearsed live against a real, isolated scratch Postgres 16 container: upgrade succeeds, columns/partial-unique-index confirmed present; downgrade cleanly drops both columns and the index; re-upgrade succeeds.
+- The `NonBlank`/`Password` bug fix was verified both ways directly: confirmed the bug existed (`AuthLoginRequest(password="short")` validated with no error) before touching any code, then confirmed the fix (same call now raises `ValidationError`) and confirmed whitespace-stripping behavior is unchanged (a padded password still strips to the same value it always did).
 
 ## Evidence
 
-- All verification above was run directly in this session against a real, isolated Postgres container — not assumed from a prior claim.
-- The 5 gaps this slice found are not hypothetical: each was a real `sqlalchemy.exc.IntegrityError`/`NotNullViolation` that appeared when the fast and e2e suites were run after adding the NOT NULL constraint, not a finding from static inspection — the test suite going from 10 failures → 0 failures after each fix, tracked one at a time, is itself the evidence.
+- All verification above was run directly in this session — not assumed from a prior claim.
+- Grepped the entire test suite for any password shorter than 8 characters used in an actual login attempt (not just a `Settings(...)` construction that bypasses Pydantic validation entirely, like `bootstrap_owner_account` does) — found none, so the `Password` fix broke nothing in this repo's own test suite.
 
 ## Unverified
 
-- This diff is not yet committed, pushed, PR'd, or reviewed. That's the immediate next step: commit, push to a new branch, open a PR, get independent + security review, fix any real findings, then merge once green.
+- This diff is not yet committed, pushed, PR'd, or reviewed. That's the immediate next step: commit, push to a new branch, open a PR, get independent + security review (the password-validation fix in particular warrants close security-review attention, given its cross-cutting nature), fix any real findings, then merge once green.
 - No independent or security review has run on this diff yet.
+- Whether any *real* deployment's actual owner or technician password is shorter than 8 characters is unknown and unknowable from this session (no access to real credentials) — flagged in `docs/context/KNOWN_ISSUES.md` as a disclosed risk of the fix, not verified against real production data.
 
 ## Unrelated preexisting changes
 
@@ -62,11 +60,11 @@ Business-table *read*/query-scoping is still untouched — no store module filte
 
 ## Blockers and risks
 
-- None blocking. No real credentials, billing, or production/staging deployment were touched this increment.
+- None blocking. No real credentials, billing, or production/staging deployment were touched this increment. The one disclosed risk (a real account with a <8-character password would newly be rejected at login) is a correctness fix, not a new vulnerability, but worth the owner's awareness before this reaches any real deployment with real accounts.
 
 ## Exact next task
 
-Commit this diff, push, open a PR, get independent + security review, fix any real findings, then merge once green. After that, Phase 3's schema/data work is essentially complete for `shop_id` — the next slice is the higher-risk one: cutting store-module *read* queries over from `owner_user_id`/`effective_owner_id` to `shop_id`, table by table, each with its own cross-shop isolation tests before merge, per `/goal`'s explicit "every shop query needs isolation tests" rule and its "any cross-shop leak blocks release" stop condition. This is a good point to consider whether that cutover should be one slice per table (very small, very safe, very slow) or grouped by domain (customers+vehicles together, work-order-adjacent tables together, etc.) — recommend grouping by domain to keep the slice count manageable while still keeping each PR reviewable.
+Commit this diff, push, open a PR, get independent + security review (flag the password-validation fix specifically for extra scrutiny), fix any real findings, then merge once green. After that, continue Phase 4 with a frontend signup form (reusing the existing landing-page/login-page visual style already established), and/or move to the "resumable setup guidance" checklist (Phase 12) or start Phase 5 (account lifecycle/security: email verification, password reset, sessions, invitations) — Phase 5's password-reset work in particular now has a real `email` column to send a reset link to, which didn't exist before this slice.
 
 ## Carried over from prior sessions — not touched by this session
 
@@ -76,3 +74,4 @@ Commit this diff, push, open a PR, get independent + security review, fix any re
 - Square: email-TLD and phone-format validation gaps found during an earlier sandbox smoke test are non-blocking, no fix requested yet. Staging still has no Square credentials configured.
 - `ShopMembership` rows aren't created for technicians added via the normal `create_technician_record` flow after migration 022 — deliberately deferred to Phase 5 (see `docs/context/KNOWN_ISSUES.md`).
 - The `ondelete="CASCADE"` choice on all 30 `shop_id` FKs (financial/audit tables included) is an open data-retention policy decision, not yet resolved — revisit before any shop-deletion/offboarding feature ships (see `docs/context/KNOWN_ISSUES.md`).
+- `app/shop_store.py::resolve_shop_id`/`resolve_shop_id_for_owner` returning `None` could surface as an unhandled `IntegrityError` at ~15 call sites now that `shop_id` is NOT NULL — not currently reachable, tracked as an accepted follow-up (see `docs/context/KNOWN_ISSUES.md`).

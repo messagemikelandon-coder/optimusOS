@@ -216,6 +216,7 @@ from app.models import (
     ScheduleBlockListResponse,
     ScheduleBlockRead,
     ScheduleBlockUpdate,
+    ShopSignupRequest,
     SyntheticAccountResponse,
     SyntheticCleanupResponse,
     SyntheticTechnicianRequest,
@@ -335,6 +336,7 @@ from app.services.http import SafeHttpClient
 from app.services.location import LocationService
 from app.services.optimus_chat import OptimusChatService
 from app.services.square import SquareApiError, SquareInvoiceClient
+from app.shop_store import ShopSignupConflictError, ShopSignupError, signup_shop_owner
 from app.square_store import (
     SquareAlreadyPushedError,
     SquareStoreError,
@@ -501,6 +503,42 @@ async def enforce_login_rate_limit(request: Request, settings: Settings) -> None
         )
         raise HTTPException(
             status_code=429, detail="Too many login attempts. Try again shortly."
+        ) from exc
+
+
+_signup_rate_limiter: RateLimiter | None = None
+_signup_rate_limiter_redis_url: str | None = None
+
+
+def get_signup_rate_limiter(settings: Settings) -> RateLimiter:
+    # Own limiter/limit, same reasoning as get_login_rate_limiter: a public,
+    # unauthenticated signup endpoint is a spam/abuse target distinct from
+    # both login attempts and the estimate-generation limiter.
+    global _signup_rate_limiter, _signup_rate_limiter_redis_url
+    if (
+        _signup_rate_limiter is None
+        or _signup_rate_limiter.limit != settings.max_signup_attempts_per_minute
+        or _signup_rate_limiter_redis_url != settings.redis_url
+    ):
+        _signup_rate_limiter = RedisSlidingWindowRateLimiter(
+            redis_client=Redis.from_url(settings.redis_url),
+            limit=settings.max_signup_attempts_per_minute,
+        )
+        _signup_rate_limiter_redis_url = settings.redis_url
+    return _signup_rate_limiter
+
+
+async def enforce_signup_rate_limit(request: Request, settings: Settings) -> None:
+    client_host = request.client.host if request.client else "unknown"
+    client_key = f"signup:{client_host}"
+    try:
+        await get_signup_rate_limiter(settings).check(client_key)
+    except RateLimitExceeded as exc:
+        log_security_event(
+            logger, SecurityEventType.RATE_LIMIT_EXCEEDED, request=request, limit_key=client_key
+        )
+        raise HTTPException(
+            status_code=429, detail="Too many signup attempts. Try again shortly."
         ) from exc
 
 
@@ -690,6 +728,58 @@ async def login(
     )
     return AuthSessionResponse(
         user=auth_user_response(user),
+        expires_at=auth_session.expires_at,
+        session_expires_in_seconds=settings.session_ttl_hours * 3600,
+    )
+
+
+@app.post("/api/signup", response_model=AuthSessionResponse)
+async def signup(
+    payload: ShopSignupRequest,
+    request: Request,
+    response: Response,
+    db: DbSessionDep,
+    settings: SettingsDep,
+) -> AuthSessionResponse:
+    """Self-service shop signup (/goal Phase 4): creates a brand-new shop
+    and its owner account, then logs the new owner in immediately (same
+    session/cookie flow as `/api/auth/login`) -- no email-verification
+    step yet, which is /goal Phase 5/6's own separate requirement."""
+    await enforce_signup_rate_limit(request, settings)
+    try:
+        owner = await asyncio.to_thread(signup_shop_owner, db, settings, payload)
+    except ShopSignupConflictError as exc:
+        log_security_event(
+            logger,
+            SecurityEventType.SIGNUP_FAILED,
+            request=request,
+            reason="conflict",
+        )
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    except ShopSignupError as exc:
+        log_security_event(
+            logger,
+            SecurityEventType.SIGNUP_FAILED,
+            request=request,
+            reason="invalid",
+        )
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+        ) from exc
+
+    session_token, auth_session = create_auth_session(
+        db=db, settings=settings, user=owner, request=request
+    )
+    set_session_cookie(response, settings, session_token, auth_session.expires_at)
+    log_security_event(
+        logger,
+        SecurityEventType.SIGNUP_SUCCEEDED,
+        request=request,
+        level=logging.INFO,
+        user_id=owner.id,
+    )
+    return AuthSessionResponse(
+        user=auth_user_response(owner),
         expires_at=auth_session.expires_at,
         session_expires_in_seconds=settings.session_ttl_hours * 3600,
     )

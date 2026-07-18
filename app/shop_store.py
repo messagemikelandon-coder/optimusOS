@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import re
+
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.auth import AuthContext, effective_owner_id
+from app.auth import AuthContext, effective_owner_id, hash_password, normalize_username
 from app.config import Settings
 from app.db_models import Shop, ShopEvent, ShopMembership, ShopSettings, UserAccount
 from app.models import (
@@ -11,8 +13,11 @@ from app.models import (
     ShopRead,
     ShopRole,
     ShopSettingsRead,
+    ShopSignupRequest,
     ShopStatus,
 )
+
+_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 
 class ShopStoreError(Exception):
@@ -21,6 +26,71 @@ class ShopStoreError(Exception):
 
 class ShopNotFoundError(ShopStoreError):
     pass
+
+
+class ShopSignupError(ShopStoreError):
+    pass
+
+
+class ShopSignupConflictError(ShopSignupError):
+    pass
+
+
+def _normalize_email(value: str) -> str:
+    normalized = value.strip().lower()
+    if not _EMAIL_RE.fullmatch(normalized):
+        raise ShopSignupError("Email address is invalid.")
+    return normalized
+
+
+def signup_shop_owner(db: Session, settings: Settings, payload: ShopSignupRequest) -> UserAccount:
+    """Self-service shop signup (/goal Phase 4): creates a brand-new owner
+    `UserAccount` plus its own `Shop`/`ShopSettings`/`ShopMembership`/
+    `ShopEvent`, all in one transaction. Deliberately does not log the new
+    owner in itself -- the caller (the `/api/signup` route) does that,
+    matching the same session/cookie flow `/api/auth/login` already uses.
+
+    Real validation only: username and (normalized, case-insensitive)
+    email must each be unique platform-wide, checked here rather than
+    left to the database's own unique-index violation, so a conflict
+    produces a clean, specific error instead of a raw `IntegrityError`.
+    No email-verification step yet (that's /goal Phase 5/6's own
+    requirement) -- the account is usable immediately, matching this
+    app's existing bootstrap/synthetic-owner accounts, which are also
+    unverified.
+    """
+    username = normalize_username(payload.username)
+    email_normalized = _normalize_email(payload.email)
+
+    if db.scalar(select(UserAccount).where(UserAccount.username == username)) is not None:
+        raise ShopSignupConflictError("That username is already taken.")
+    if (
+        db.scalar(select(UserAccount).where(UserAccount.email_normalized == email_normalized))
+        is not None
+    ):
+        raise ShopSignupConflictError("That email address is already registered.")
+
+    owner = UserAccount(
+        username=username,
+        display_name=payload.owner_display_name,
+        role="owner",
+        email=payload.email.strip(),
+        email_normalized=email_normalized,
+        password_hash=hash_password(payload.password),
+        is_active=True,
+    )
+    db.add(owner)
+    db.flush()
+    create_shop_for_new_owner(
+        db,
+        settings,
+        owner,
+        display_name=payload.business_name,
+        created_via="self_service_signup",
+    )
+    db.commit()
+    db.refresh(owner)
+    return owner
 
 
 def _shop_for_owner(db: Session, auth: AuthContext) -> Shop:
@@ -149,7 +219,14 @@ def _membership_to_read(membership: ShopMembership) -> ShopMembershipRead:
     )
 
 
-def create_shop_for_new_owner(db: Session, settings: Settings, owner: UserAccount) -> Shop:
+def create_shop_for_new_owner(
+    db: Session,
+    settings: Settings,
+    owner: UserAccount,
+    *,
+    display_name: str | None = None,
+    created_via: str = "bootstrap_owner_account",
+) -> Shop:
     """Create a Shop + ShopSettings + owner ShopMembership for a brand-new
     owner account.
 
@@ -162,8 +239,16 @@ def create_shop_for_new_owner(db: Session, settings: Settings, owner: UserAccoun
     or a fresh install would end up with an owner but no shop at all.
     Mirrors alembic/versions/022_shop_tenant_model.py's backfill logic:
     real config values only, no fabricated fields.
+
+    `display_name` defaults to `settings.business_name` (the existing
+    single-shop behavior: bootstrap/synthetic-owner paths always create
+    "Landon Motor Works"). Self-service signup (/goal Phase 4) passes an
+    explicit `display_name` instead -- a new shop must never inherit the
+    one hardcoded business name meant for the original pilot shop.
+    `created_via` only affects the audit event's `actor_name`, letting
+    the resulting `ShopEvent` distinguish how the shop came to exist.
     """
-    shop = Shop(display_name=settings.business_name, status=ShopStatus.ACTIVE.value)
+    shop = Shop(display_name=display_name or settings.business_name, status=ShopStatus.ACTIVE.value)
     db.add(shop)
     db.flush()
 
@@ -187,7 +272,7 @@ def create_shop_for_new_owner(db: Session, settings: Settings, owner: UserAccoun
         ShopEvent(
             shop_id=shop.id,
             event_type="shop_created_for_new_owner",
-            actor_name="bootstrap_owner_account",
+            actor_name=created_via,
             event_metadata={"owner_user_account_id": owner.id},
         )
     )

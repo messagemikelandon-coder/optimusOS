@@ -16,6 +16,17 @@ from pydantic import (
 )
 
 NonBlank = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
+# A separate type, not `NonBlank = Field(min_length=8, ...)`: that combination
+# silently never enforced 8 characters anywhere it was used (AuthLoginRequest,
+# TechnicianProvisionLoginRequest) -- Pydantic merges `Field()`'s constraint
+# metadata with `NonBlank`'s own baked-in `StringConstraints(min_length=1)`,
+# and the later item in the merged metadata list wins, so only `min_length=1`
+# ever actually applied. Found while adding /goal Phase 4 signup's own
+# password field and confirmed via a direct validation test before assuming
+# it was real. `strip_whitespace=True` is preserved exactly as `NonBlank` already
+# applied it, so this does not change what an existing account's hashed
+# password was computed from.
+Password = Annotated[str, StringConstraints(strip_whitespace=True, min_length=8, max_length=256)]
 
 
 class Coordinates(BaseModel):
@@ -316,7 +327,15 @@ class ChatResponse(BaseModel):
 
 class AuthLoginRequest(BaseModel):
     username: NonBlank = Field(max_length=120)
-    password: NonBlank = Field(min_length=8, max_length=256)
+    password: Password
+
+
+class ShopSignupRequest(BaseModel):
+    business_name: NonBlank = Field(max_length=200)
+    owner_display_name: NonBlank = Field(max_length=120)
+    username: NonBlank = Field(max_length=120)
+    email: NonBlank = Field(max_length=180)
+    password: Password
 
 
 class AuthUser(BaseModel):
@@ -603,7 +622,7 @@ class TechnicianArchiveResponse(BaseModel):
 
 class TechnicianProvisionLoginRequest(BaseModel):
     username: NonBlank = Field(max_length=120)
-    password: NonBlank = Field(min_length=8, max_length=256)
+    password: Password
 
 
 class TechnicianProvisionLoginResponse(BaseModel):

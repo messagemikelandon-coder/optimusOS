@@ -28,6 +28,8 @@ def _reset_rate_limiter_singletons() -> None:
     main._rate_limiter_redis_url = None
     main._login_rate_limiter = None
     main._login_rate_limiter_redis_url = None
+    main._signup_rate_limiter = None
+    main._signup_rate_limiter_redis_url = None
 
 
 @pytest.fixture

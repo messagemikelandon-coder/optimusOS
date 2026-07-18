@@ -16,6 +16,8 @@ class SecurityEventType(StrEnum):
 
     LOGIN_SUCCEEDED = "auth.login_succeeded"
     LOGIN_FAILED = "auth.login_failed"
+    SIGNUP_SUCCEEDED = "auth.signup_succeeded"
+    SIGNUP_FAILED = "auth.signup_failed"
     RATE_LIMIT_EXCEEDED = "rate_limit.exceeded"
     SQUARE_API_FAILED = "square.api_failed"
 
