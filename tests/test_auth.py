@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import pytest
 from fastapi import Response
+from pydantic import ValidationError
 from sqlalchemy import select
 
 from app.auth import bootstrap_owner_account, hash_session_token
@@ -9,6 +11,18 @@ from app.db_models import AuthSession, UserAccount
 from app.main import login
 from app.models import AuthLoginRequest
 from tests.test_api import request_for
+
+
+def test_login_rejects_a_password_shorter_than_eight_characters() -> None:
+    """Regression test (found while building /goal Phase 4's signup
+    endpoint): `NonBlank = Field(min_length=8, ...)` never actually
+    enforced 8 characters here -- Pydantic merges `Field()`'s constraint
+    metadata with `NonBlank`'s own baked-in `StringConstraints(min_length=1)`,
+    and the later item silently won, so a 1-character password validated
+    with no error. Fixed by introducing a dedicated `Password` type with
+    no separate `Field()` call. This must keep failing."""
+    with pytest.raises(ValidationError):
+        AuthLoginRequest(username="owner", password="short")
 
 
 def test_bootstrap_owner_is_idempotent(settings) -> None:  # type: ignore[no-untyped-def]

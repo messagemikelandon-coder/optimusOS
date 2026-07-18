@@ -11,8 +11,8 @@ Relevant sources: `docs/context/CURRENT_STATE.md`, `docs/context/KNOWN_ISSUES.md
 
 - Updated UTC: 2026-07-18.
 - Agent: Claude.
-- `main` HEAD: `62b48a4` (PR #56, Phase 3 slices 5+6 — `shop_id` NOT NULL constraint).
-- Current worktree/branch: `agent/claude/goal-phase4-shop-signup`, branched from `origin/main` at `62b48a4`. Not yet committed/pushed as of this doc being written.
+- `main` HEAD: `62b48a4` (PR #56, Phase 3 slices 5+6 — `shop_id` NOT NULL constraint) as of this doc being written; PR #57 (Phase 4 slice 1) is reviewed and ready to merge, see below.
+- Current worktree/branch: `agent/claude/goal-phase4-shop-signup`, branched from `origin/main` at `62b48a4`. Commit `fb9cea9` (initial slice) pushed and PR #57 opened; a second commit addressing review findings (see "Active task") is ready to push.
 
 ## Active task
 
@@ -34,24 +34,33 @@ Work in this increment:
 
 Not in this slice (explicitly deferred): frontend signup form/UI, "resumable setup guidance" checklist (Phase 12's own item), email verification (Phase 5/6), password reset (Phase 5/6).
 
+**Independent + security review (PR #57) findings, fixed before merge** (full detail in `docs/context/KNOWN_ISSUES.md`'s Phase 4 slice 1 review entry):
+
+1. High/correctness — `signup_shop_owner`'s uniqueness pre-check was a plain `SELECT` with no protection against the database's own unique-constraint firing at `db.flush()` for a genuine concurrent-signup race (this codebase's own `app/technician_store.py::provision_technician_login` already had the correct `try/except IntegrityError` pattern for the identical race; this slice hadn't mirrored it). Fixed; proven via revert-and-recheck (without the fix, the new regression test fails with a raw unhandled `IntegrityError`) plus `tests/test_signup_api.py::test_signup_converts_flush_time_race_to_a_clean_conflict`.
+2. Medium-High/security — distinct 409 messages for a username conflict vs. an email conflict let an unauthenticated caller enumerate registered accounts on this platform's first public account-creation endpoint. Fixed: both now return one identical generic message; the specific reason is logged to the `SIGNUP_FAILED` security event only, via a new `ShopSignupConflictError.reason` attribute, never in the HTTP response. Regression test: `tests/test_signup_api.py::test_signup_conflict_message_does_not_reveal_which_field_collided`.
+3. Low/correctness coverage gap — added direct weak-password regression tests for the two pre-existing fields the `Password`-type fix (from this same slice) silently repaired (`AuthLoginRequest.password`, `TechnicianProvisionLoginRequest.password`) — previously only the new `ShopSignupRequest.password` field had one.
+
+Accepted as documented follow-ups, not fixed in this slice (per the security reviewer's own recommendation that only finding #2 blocks merge): the signup rate limiter's IP-only keying is weak against IP rotation for a resource-creating public endpoint (revisit alongside Phase 5/6 email verification); `business_name`/`owner_display_name` have no HTML-escaping yet, not currently exploitable since no render path uses `shop.display_name` yet (flag for whichever future slice first does).
+
 ## Verified baseline
 
-- `env UV_CACHE_DIR=/tmp/uv-cache uv run ruff format --check .` / `ruff check .` → clean.
+- `env UV_CACHE_DIR=/tmp/uv-cache uv run ruff format --check .` / `ruff check .` → clean (post-review-fix state).
 - `env UV_CACHE_DIR=/tmp/uv-cache uv run pyright` → 0 errors, 0 warnings.
-- `env UV_CACHE_DIR=/tmp/uv-cache uv run pytest -q` → **410 passed** (402 + 8 new), 2 pre-existing unrelated skips.
-- `env UV_CACHE_DIR=/tmp/uv-cache uv run pytest -q tests/e2e/` → **17 passed** (16 pre-existing + 1 new), no leftover containers.
+- `env UV_CACHE_DIR=/tmp/uv-cache uv run pytest -q` → all passed, exit 0 (410 + 3 new review-fix regression tests = 413; 2 pre-existing unrelated skips).
+- `env UV_CACHE_DIR=/tmp/uv-cache uv run pytest -q tests/e2e/` → **18 passed** (17 prior + no new e2e test this round), no leftover containers.
 - Migration 026 rehearsed live against a real, isolated scratch Postgres 16 container: upgrade succeeds, columns/partial-unique-index confirmed present; downgrade cleanly drops both columns and the index; re-upgrade succeeds.
-- The `NonBlank`/`Password` bug fix was verified both ways directly: confirmed the bug existed (`AuthLoginRequest(password="short")` validated with no error) before touching any code, then confirmed the fix (same call now raises `ValidationError`) and confirmed whitespace-stripping behavior is unchanged (a padded password still strips to the same value it always did).
+- The `NonBlank`/`Password` bug fix was verified both ways directly: confirmed the bug existed (`AuthLoginRequest(password="short")` validated with no error) before touching any code, then confirmed the fix (same call now raises `ValidationError`) and confirmed whitespace-stripping behavior is unchanged (a padded password still strips to the same value it always did). Now also has direct regression tests on both pre-existing affected fields (see review-findings section above).
+- The TOCTOU race fix (finding #1 above) was verified via revert-and-recheck: temporarily removed the `try/except IntegrityError` around `db.flush()`, confirmed `test_signup_converts_flush_time_race_to_a_clean_conflict` then fails with a raw unhandled `sqlalchemy.exc.IntegrityError` (not a clean 409), restored the fix, confirmed the test passes again.
 
 ## Evidence
 
 - All verification above was run directly in this session — not assumed from a prior claim.
 - Grepped the entire test suite for any password shorter than 8 characters used in an actual login attempt (not just a `Settings(...)` construction that bypasses Pydantic validation entirely, like `bootstrap_owner_account` does) — found none, so the `Password` fix broke nothing in this repo's own test suite.
+- Grepped `tests/test_signup_api.py` and confirmed no test asserts the old, distinct conflict-message wording, so making both messages generic broke nothing already committed.
 
 ## Unverified
 
-- This diff is not yet committed, pushed, PR'd, or reviewed. That's the immediate next step: commit, push to a new branch, open a PR, get independent + security review (the password-validation fix in particular warrants close security-review attention, given its cross-cutting nature), fix any real findings, then merge once green.
-- No independent or security review has run on this diff yet.
+- The review-fix commit (on top of `fb9cea9`) is implemented and locally gate-green but not yet pushed/re-reviewed as of this doc being written — see "Exact next task."
 - Whether any *real* deployment's actual owner or technician password is shorter than 8 characters is unknown and unknowable from this session (no access to real credentials) — flagged in `docs/context/KNOWN_ISSUES.md` as a disclosed risk of the fix, not verified against real production data.
 
 ## Unrelated preexisting changes
@@ -64,7 +73,7 @@ Not in this slice (explicitly deferred): frontend signup form/UI, "resumable set
 
 ## Exact next task
 
-Commit this diff, push, open a PR, get independent + security review (flag the password-validation fix specifically for extra scrutiny), fix any real findings, then merge once green. After that, continue Phase 4 with a frontend signup form (reusing the existing landing-page/login-page visual style already established), and/or move to the "resumable setup guidance" checklist (Phase 12) or start Phase 5 (account lifecycle/security: email verification, password reset, sessions, invitations) — Phase 5's password-reset work in particular now has a real `email` column to send a reset link to, which didn't exist before this slice.
+Commit the review-fix changes (fixes for findings #1-#3 above, on branch `agent/claude/goal-phase4-shop-signup`), push, and re-request review only if warranted by finding severity (the High/Medium-High findings were substantial — lean toward at least a light re-review confirming the fixes are sound rather than merging on documentation alone, unlike the Low/Medium PR #56 precedent). Once green, merge PR #57 (`gh pr merge 57 --squash`) and delete the remote branch. After that, continue Phase 4 with a frontend signup form (reusing the existing landing-page/login-page visual style already established), and/or move to the "resumable setup guidance" checklist (Phase 12) or start Phase 5 (account lifecycle/security: email verification, password reset, sessions, invitations) — Phase 5's password-reset work in particular now has a real `email` column to send a reset link to, which didn't exist before this slice.
 
 ## Carried over from prior sessions — not touched by this session
 

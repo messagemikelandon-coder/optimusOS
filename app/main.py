@@ -749,11 +749,15 @@ async def signup(
     try:
         owner = await asyncio.to_thread(signup_shop_owner, db, settings, payload)
     except ShopSignupConflictError as exc:
+        # exc.reason (e.g. "username_taken" vs. "email_taken") is logged
+        # for operators only -- str(exc) (the HTTP response body) is always
+        # the same generic message, so an unauthenticated caller can't use
+        # this endpoint to enumerate which field of a guess already exists.
         log_security_event(
             logger,
             SecurityEventType.SIGNUP_FAILED,
             request=request,
-            reason="conflict",
+            reason=exc.reason,
         )
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     except ShopSignupError as exc:

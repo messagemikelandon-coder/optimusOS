@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.auth import AuthContext, effective_owner_id, hash_password, normalize_username
@@ -33,7 +34,22 @@ class ShopSignupError(ShopStoreError):
 
 
 class ShopSignupConflictError(ShopSignupError):
-    pass
+    """Raised for a username/email that is already registered.
+
+    The public-facing `message` is deliberately the same generic text for
+    every conflict reason (security review finding on PR #57: distinct
+    "username taken" vs. "email taken" messages let an unauthenticated
+    caller enumerate registered accounts by varying one field at a time).
+    `reason` carries the specific cause for the security-event log only --
+    it must never be included in an HTTP response body.
+    """
+
+    def __init__(self, message: str, *, reason: str) -> None:
+        super().__init__(message)
+        self.reason = reason
+
+
+_SIGNUP_CONFLICT_MESSAGE = "Unable to create an account with these details."
 
 
 def _normalize_email(value: str) -> str:
@@ -51,9 +67,14 @@ def signup_shop_owner(db: Session, settings: Settings, payload: ShopSignupReques
     matching the same session/cookie flow `/api/auth/login` already uses.
 
     Real validation only: username and (normalized, case-insensitive)
-    email must each be unique platform-wide, checked here rather than
-    left to the database's own unique-index violation, so a conflict
-    produces a clean, specific error instead of a raw `IntegrityError`.
+    email must each be unique platform-wide. Checked explicitly here first
+    so the common case produces a clean, specific-reason error rather than
+    a raw `IntegrityError` -- but a plain pre-check `SELECT` is inherently
+    racy (two concurrent signups for the same username/email can both pass
+    it before either `INSERT` lands), so the actual `db.flush()` below is
+    also wrapped to catch the database's own unique-constraint violation
+    for that race, matching the established pattern already used for the
+    identical race in `app/technician_store.py::provision_technician_login`.
     No email-verification step yet (that's /goal Phase 5/6's own
     requirement) -- the account is usable immediately, matching this
     app's existing bootstrap/synthetic-owner accounts, which are also
@@ -63,12 +84,12 @@ def signup_shop_owner(db: Session, settings: Settings, payload: ShopSignupReques
     email_normalized = _normalize_email(payload.email)
 
     if db.scalar(select(UserAccount).where(UserAccount.username == username)) is not None:
-        raise ShopSignupConflictError("That username is already taken.")
+        raise ShopSignupConflictError(_SIGNUP_CONFLICT_MESSAGE, reason="username_taken")
     if (
         db.scalar(select(UserAccount).where(UserAccount.email_normalized == email_normalized))
         is not None
     ):
-        raise ShopSignupConflictError("That email address is already registered.")
+        raise ShopSignupConflictError(_SIGNUP_CONFLICT_MESSAGE, reason="email_taken")
 
     owner = UserAccount(
         username=username,
@@ -80,7 +101,11 @@ def signup_shop_owner(db: Session, settings: Settings, payload: ShopSignupReques
         is_active=True,
     )
     db.add(owner)
-    db.flush()
+    try:
+        db.flush()
+    except IntegrityError:
+        db.rollback()
+        raise ShopSignupConflictError(_SIGNUP_CONFLICT_MESSAGE, reason="race_conflict") from None
     create_shop_for_new_owner(
         db,
         settings,

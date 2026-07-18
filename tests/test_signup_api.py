@@ -10,6 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 import app.main as main
+import app.shop_store as shop_store
 from app.db_models import Shop, ShopMembership, UserAccount
 from app.models import CustomerCreate, ShopSignupRequest
 from tests.test_api import request_for
@@ -104,6 +105,45 @@ async def test_signup_rejects_duplicate_email_case_insensitively(
             username="someone.else",
             email="ALEX.RIVERA@EXAMPLE.COM",
         )
+    assert excinfo.value.status_code == 409
+
+
+async def test_signup_conflict_message_does_not_reveal_which_field_collided(
+    settings, db_session: Session
+) -> None:
+    """Regression test for a real account-enumeration gap found in
+    security review: the username-conflict and email-conflict errors used
+    to have distinct wording, letting an unauthenticated caller learn
+    which field of a guess was already registered by varying one field at
+    a time. Both conflicts must now produce identical response text."""
+    await signup(settings, db_session)
+
+    with pytest.raises(HTTPException) as username_conflict:
+        await signup(settings, db_session, email="someone.else@example.com")
+    with pytest.raises(HTTPException) as email_conflict:
+        await signup(settings, db_session, username="someone.else", email="alex.rivera@example.com")
+
+    assert username_conflict.value.status_code == email_conflict.value.status_code == 409
+    assert username_conflict.value.detail == email_conflict.value.detail
+
+
+async def test_signup_converts_flush_time_race_to_a_clean_conflict(
+    settings, db_session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression test for a real TOCTOU gap found in code review:
+    `signup_shop_owner`'s username/email uniqueness pre-check is a plain
+    `SELECT`, so two concurrent signups for the same username could both
+    pass it before either `INSERT` lands -- the second would previously
+    raise an unhandled `IntegrityError` (a raw 500) instead of a clean
+    409. Simulates the race by forcing the pre-check queries to report no
+    conflict even though one already exists, so it's the database's own
+    unique constraint that fires at `db.flush()` time, exactly as it would
+    for a real concurrent request."""
+    await signup(settings, db_session)  # existing "alex.rivera" owner
+
+    monkeypatch.setattr(shop_store.Session, "scalar", lambda self, *args, **kwargs: None)
+    with pytest.raises(HTTPException) as excinfo:
+        await signup(settings, db_session, email="different@example.com")
     assert excinfo.value.status_code == 409
 
 
