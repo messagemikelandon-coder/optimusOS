@@ -58,10 +58,22 @@ def resolve_shop_id_for_owner(db: Session, owner_id: int) -> int | None:
     Returns `None` rather than raising when no shop is found -- unlike
     `_shop_for_owner`/`get_current_shop`, which are used for routes that
     should hard-fail without a shop, a create path should not suddenly
-    start rejecting requests over a still-nullable column. In practice
-    this only returns `None` for an account created by a path this repo
-    hasn't wired to `create_shop_for_new_owner` yet -- every real owner
-    (bootstrapped, migrated, or synthetic-provisioned) always has a shop.
+    start rejecting requests over what was, when this function was
+    written, still a nullable column. In practice this only returns
+    `None` for an account created by a path this repo hasn't wired to
+    `create_shop_for_new_owner` yet -- every real owner (bootstrapped,
+    migrated, or synthetic-provisioned) always has a shop.
+
+    Since /goal Phase 3 slice 6 (`alembic/versions/025_shop_id_not_null.py`),
+    `shop_id` is NOT NULL on every one of this function's ~15 call sites'
+    target tables -- a `None` return today surfaces as an unhandled
+    Postgres `IntegrityError` (a loud 500, not silent data corruption) at
+    whichever call site hits it, rather than a clean domain error.
+    Independent review of that slice flagged this as a latent (not
+    currently reachable) robustness gap; tracked in
+    `docs/context/KNOWN_ISSUES.md` rather than fixed immediately, since a
+    proper fix (raising a clear exception here) needs matching exception
+    handling audited at every call site, not just this function.
     """
     return db.scalar(
         select(ShopMembership.shop_id)

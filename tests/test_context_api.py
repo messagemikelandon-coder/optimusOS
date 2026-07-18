@@ -60,7 +60,13 @@ def create_user(
     active owner-role membership, and any row created under them now
     fails the `shop_id NOT NULL` constraint (/goal Phase 3 slice 6).
     `settings` is optional (defaults to a fresh `Settings()`) so the ~56
-    existing call sites don't all need updating just to satisfy this."""
+    existing call sites don't all need updating just to satisfy this --
+    note this means this second owner's `ShopSettings` (labor_rate,
+    mobile_service_fee, etc.) come from bare `Settings()` defaults, not
+    the test's own configured `settings` fixture, if a caller doesn't
+    pass `settings=`. No current test asserts a calculated total on this
+    second owner's data, so this doesn't affect anything today -- but a
+    future test that does should pass `settings=settings` explicitly."""
     user = UserAccount(
         username=username,
         display_name=username.title(),
