@@ -159,7 +159,16 @@ def test_backfill_sets_shop_id_from_owner_membership_and_leaves_orphans_null(
             {"technician_id": technician_id},
         ).scalar_one()
 
-    _run_migration_to_head(pre_024_database.env)
+    # Migrate only to 024 (the backfill itself), not head -- migration 025
+    # (/goal Phase 3 slice 6) deliberately refuses to proceed while any
+    # orphan shop_id row exists, which this test creates on purpose to
+    # prove 024's own "leave unmatched rows NULL" behavior. Going further
+    # to 025 would just reproduce that refusal, not exercise anything new.
+    subprocess.run(
+        ["uv", "run", "alembic", "upgrade", "024_backfill_shop_id"],
+        check=True,
+        env=pre_024_database.env,
+    )
 
     with engine.begin() as connection:
         rows = connection.execute(text("SELECT id, shop_id FROM customers ORDER BY id")).fetchall()

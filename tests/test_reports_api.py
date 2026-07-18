@@ -22,6 +22,7 @@ from app.models import (
     PurchaseOrderReceiveRequest,
     WorkOrderUpdate,
 )
+from app.shop_store import resolve_shop_id_for_owner
 from tests.test_context_api import auth_context, create_user, login_as, raw_cookie_from_response
 from tests.test_dashboard_api import _use_part
 from tests.test_diagnostics_and_inspections_api import _create_vehicle
@@ -43,6 +44,7 @@ def _add_time_entry(
     entry = TechnicianTimeEntry(
         technician_id=technician_id,
         owner_user_id=owner_user_id,
+        shop_id=resolve_shop_id_for_owner(db_session, owner_user_id),
         clock_in_at=clock_in_at,
         clock_out_at=clock_out_at,
     )

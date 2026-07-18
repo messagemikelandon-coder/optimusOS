@@ -31,6 +31,7 @@ from app.models import (
     VehicleInput,
 )
 from app.services.estimator import EstimateService
+from app.shop_store import resolve_shop_id_for_owner
 from app.vehicle_store import vehicle_display_name
 
 
@@ -236,10 +237,12 @@ def main() -> None:
         )
         if owner is None:
             raise RuntimeError("Owner account was not found.")
+        shop_id = resolve_shop_id_for_owner(session, owner.id)
 
         stamp = datetime.now(UTC).strftime("%Y%m%d%H%M%S")
         customer = Customer(
             owner_user_id=owner.id,
+            shop_id=shop_id,
             first_name="Fixture",
             last_name=f"Approval {stamp}",
             email=f"fixture-{stamp}@example.test",
@@ -252,6 +255,7 @@ def main() -> None:
         session.flush()
         vehicle = Vehicle(
             owner_user_id=owner.id,
+            shop_id=shop_id,
             customer_id=customer.id,
             year=2018,
             make="Honda",
@@ -272,6 +276,7 @@ def main() -> None:
         approval_due_at = datetime.now(UTC) + timedelta(days=7)
         estimate = Estimate(
             owner_user_id=owner.id,
+            shop_id=shop_id,
             customer_id=customer.id,
             vehicle_id=vehicle.id,
             estimate_number=f"EST-{owner.id:03d}-FIX-{stamp[-6:]}",
@@ -310,6 +315,7 @@ def main() -> None:
         revision = EstimateRevision(
             estimate_id=estimate.id,
             owner_user_id=owner.id,
+            shop_id=shop_id,
             revision_number=1,
             status=EstimateStatus.READY.value,
             customer_snapshot=snapshot["customer"],

@@ -10,8 +10,10 @@ from sqlalchemy.orm import Session
 
 import app.main as main
 from app.auth import AuthContext, get_current_auth_context, hash_password
+from app.config import Settings
 from app.db_models import ContextEntry, UserAccount
 from app.models import AuthLoginRequest, ContextEntryUpsertRequest, ContextScope
+from app.shop_store import create_shop_for_new_owner
 from tests.test_api import request_for
 
 
@@ -48,7 +50,23 @@ def raw_cookie_from_response(response: Response) -> str:
     return response.headers["set-cookie"].split("optimus_session=", 1)[1].split(";", 1)[0]
 
 
-def create_user(db_session: Session, *, username: str, password: str) -> UserAccount:
+def create_user(
+    db_session: Session, *, username: str, password: str, settings: Settings | None = None
+) -> UserAccount:
+    """Test-only owner-account factory used across ~20 test files for
+    cross-owner isolation scenarios. Also creates a real Shop +
+    ShopMembership for this owner (mirroring `bootstrap_owner_account`/
+    `provision_synthetic_owner`) -- without it, this second owner has no
+    active owner-role membership, and any row created under them now
+    fails the `shop_id NOT NULL` constraint (/goal Phase 3 slice 6).
+    `settings` is optional (defaults to a fresh `Settings()`) so the ~56
+    existing call sites don't all need updating just to satisfy this --
+    note this means this second owner's `ShopSettings` (labor_rate,
+    mobile_service_fee, etc.) come from bare `Settings()` defaults, not
+    the test's own configured `settings` fixture, if a caller doesn't
+    pass `settings=`. No current test asserts a calculated total on this
+    second owner's data, so this doesn't affect anything today -- but a
+    future test that does should pass `settings=settings` explicitly."""
     user = UserAccount(
         username=username,
         display_name=username.title(),
@@ -57,6 +75,8 @@ def create_user(db_session: Session, *, username: str, password: str) -> UserAcc
         is_active=True,
     )
     db_session.add(user)
+    db_session.flush()
+    create_shop_for_new_owner(db_session, settings or Settings(), user)
     db_session.commit()
     db_session.refresh(user)
     return user

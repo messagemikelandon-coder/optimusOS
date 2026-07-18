@@ -131,6 +131,9 @@ jobs:
           uv run alembic upgrade head
           uv run alembic current | grep -q "(head)"
 
+      - name: shop_id orphan pre-flight check (/goal Phase 3 slice 6)
+        run: uv run python scripts/check_shop_id_orphans.py
+
   docker-compose-integration:
     name: Docker build, compose config, boot, and secret-log scan
     runs-on: ubuntu-latest

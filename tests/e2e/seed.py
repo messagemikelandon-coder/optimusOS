@@ -36,6 +36,7 @@ def seed_ready_estimate(db: Session, *, owner_id: int, customer_id: int, vehicle
 
     estimate = Estimate(
         owner_user_id=owner_id,
+        shop_id=customer.shop_id,
         customer_id=customer.id,
         vehicle_id=vehicle.id,
         estimate_number=f"EST-{owner_id:03d}-E2E-{stamp[-8:]}",
@@ -81,6 +82,7 @@ def seed_ready_estimate(db: Session, *, owner_id: int, customer_id: int, vehicle
     revision = EstimateRevision(
         estimate_id=estimate.id,
         owner_user_id=owner_id,
+        shop_id=estimate.shop_id,
         revision_number=1,
         status=EstimateStatus.READY.value,
         customer_snapshot=snapshot["customer"],
