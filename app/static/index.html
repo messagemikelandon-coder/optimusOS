@@ -429,6 +429,7 @@
                     Sign in
                   </button>
                 </div>
+                <p class="form-footnote">New shop? <button class="text-button" type="button" data-view="signup">Create one</button></p>
               </form>
             </section>
 
@@ -439,6 +440,51 @@
                   <div class="context-action"><b>01</b><span><strong>Server sessions</strong><small>Only a session-token hash is stored.</small></span></div>
                   <div class="context-action"><b>02</b><span><strong>Cookie transport</strong><small>Browser JavaScript cannot read the auth cookie.</small></span></div>
                   <div class="context-action"><b>03</b><span><strong>Owner bootstrap</strong><small>Only the first owner is created from environment values.</small></span></div>
+                </div>
+              </section>
+            </aside>
+          </div>
+        </section>
+
+        <section class="app-view" id="view-signup" data-view-panel="signup" hidden>
+          <div class="chat-layout">
+            <section class="panel chat-workbench">
+              <div class="panel-heading chat-heading">
+                <div class="heading-with-avatar">
+                  <div class="optimus-avatar"><span class="avatar-core"></span></div>
+                  <div><span class="section-kicker"><i></i> New shop</span><h2>Create your shop</h2><p>Set up a brand-new, independent shop workspace. You'll be signed in immediately as its owner.</p></div>
+                </div>
+              </div>
+
+              <form id="signup-form" class="estimate-form-panel">
+                <fieldset>
+                  <legend><span>01</span> Shop &amp; owner details</legend>
+                  <label class="field full">Business name <input id="signup-business-name" maxlength="200" autocomplete="organization" required></label>
+                  <div class="form-grid two">
+                    <label class="field">Your name <input id="signup-owner-display-name" maxlength="120" autocomplete="name" required></label>
+                    <label class="field">Username <input id="signup-username" maxlength="120" autocomplete="username" required></label>
+                    <label class="field">Email <input id="signup-email" type="email" maxlength="180" autocomplete="email" required></label>
+                    <label class="field">Password <input id="signup-password" type="password" minlength="8" maxlength="256" autocomplete="new-password" required></label>
+                  </div>
+                </fieldset>
+                <div class="estimate-submit-row">
+                  <div><strong id="signup-status-title">Create your account</strong><span id="signup-status-detail">Password must be at least 8 characters.</span></div>
+                  <button class="primary-button large" type="submit" id="signup-submit">
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14m-7-7h14" stroke="currentColor" stroke-width="2" fill="none"/></svg>
+                    Create shop
+                  </button>
+                </div>
+                <p class="form-footnote">Already have a shop? <button class="text-button" type="button" data-view="login">Sign in</button></p>
+              </form>
+            </section>
+
+            <aside class="chat-context">
+              <section class="panel">
+                <span class="section-kicker"><i></i> What happens next</span>
+                <div class="stacked-actions">
+                  <div class="context-action"><b>01</b><span><strong>Independent workspace</strong><small>Your shop's data is fully isolated from every other shop.</small></span></div>
+                  <div class="context-action"><b>02</b><span><strong>Owner access</strong><small>You're the owner of this new shop from the moment it's created.</small></span></div>
+                  <div class="context-action"><b>03</b><span><strong>Server sessions</strong><small>Only a session-token hash is stored, same as sign-in.</small></span></div>
                 </div>
               </section>
             </aside>
