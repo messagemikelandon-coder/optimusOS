@@ -37,7 +37,7 @@ Implemented in this slice:
 - The complete browser/real-service E2E suite passed: 21 tests, including the core repair workflow and both migration suites.
 - Three independent final reviews returned PASS: tenant-scope, security/archive lifecycle, and correctness/migration safety. No blocking findings remain.
 
-## Security invariants
+## Evidence
 
 - Membership, not `shop_owner_id`, is the tenant authorization source of truth.
 - A session is valid for exactly one active membership and the membership role must match `UserAccount.role`.
@@ -56,6 +56,11 @@ Implemented in this slice:
 
 - The root worktree still has the long-standing untracked nested `optimusOS/` clone. It was not touched.
 - Older worktrees/branches remain outside this slice.
+
+## Blockers and risks
+
+- No engineering blocker remains for this slice. Production email credentials, billable providers, staging/production deployment, and real-data retention policy remain explicitly owner-gated and were not exercised.
+- Context entries still lack their own `shop_id`; the canonical active Shop owner remains the compatibility key until a future multi-shop context migration is designed.
 
 ## Exact next task
 
