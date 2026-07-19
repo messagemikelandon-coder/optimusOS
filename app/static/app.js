@@ -197,6 +197,11 @@ const state = {
     workingHours: [],
   },
   accountSecurity: { generation: 0 },
+  workflowGaps: {
+    items: [], selectedId: null, page: 1, pageSize: 20, total: 0, hasMore: false,
+    search: "", statusFilter: "", severityFilter: "",
+    generation: 0, listRequestVersion: 0, selectionVersion: 0,
+  },
   currentView: "dashboard",
   health: null,
   lastEstimate: null,
@@ -231,6 +236,7 @@ const viewMeta = {
   estimate: { eyebrow: "Pricing workflow", title: "Job estimator" },
   approval: { eyebrow: "Customer authorization", title: "Estimate approval" },
   system: { eyebrow: "Configuration", title: "System bay" },
+  "workflow-gaps": { eyebrow: "Pilot learning", title: "Workflow gaps" },
 };
 
 function allowsAnonymousView(view) {
@@ -320,11 +326,34 @@ function clearAccountSecurity(message = "Sign in to load account security.") {
   if ($("account-mfa-status")) $("account-mfa-status").textContent = "MFA-ready";
 }
 
+function clearWorkflowGaps(message = "Sign in to load workflow gaps.") {
+  state.workflowGaps.generation += 1;
+  state.workflowGaps.listRequestVersion += 1;
+  state.workflowGaps.selectionVersion += 1;
+  Object.assign(state.workflowGaps, {
+    items: [], selectedId: null, page: 1, total: 0, hasMore: false,
+    search: "", statusFilter: "", severityFilter: "",
+  });
+  if ($("workflow-gaps-search")) $("workflow-gaps-search").value = "";
+  if ($("workflow-gaps-status-filter")) $("workflow-gaps-status-filter").value = "";
+  if ($("workflow-gaps-severity-filter")) $("workflow-gaps-severity-filter").value = "";
+  if ($("workflow-gaps-list")) {
+    $("workflow-gaps-list").innerHTML = `<div class="empty-card"><p>${escapeHtml(message)}</p></div>`;
+  }
+  if ($("workflow-gap-events")) {
+    $("workflow-gap-events").innerHTML = `<p>${escapeHtml(message)}</p>`;
+  }
+  if ($("workflow-gap-form")) editWorkflowGap();
+}
+
 function setAuthState(authenticated, user = null, expiresAt = null) {
   const wasAuthenticated = state.auth.authenticated;
   const previousUserId = state.auth.user?.id;
   state.auth = { authenticated, user, expiresAt };
-  if (!authenticated || previousUserId !== user?.id) clearAccountSecurity();
+  if (!authenticated || previousUserId !== user?.id) {
+    clearAccountSecurity();
+    clearWorkflowGaps();
+  }
   applyRoleNavVisibility();
   if (
     authenticated &&
@@ -910,6 +939,7 @@ function navigate(view) {
   if (view === "scheduling" && state.auth.authenticated) void loadScheduling();
   if (view === "my-day" && state.auth.authenticated) void loadMyDay();
   if (view === "system" && state.auth.authenticated) void loadAccountSecurity();
+  if (view === "workflow-gaps" && state.auth.authenticated) void loadWorkflowGaps();
   if (view === "chat") {
     renderChatContextSummary();
     window.setTimeout(() => $("chat-message").focus(), 180);
@@ -7295,6 +7325,210 @@ function initializeApprovalQueue() {
   });
 }
 
+function workflowGapLabel(value) {
+  return String(value || "").replaceAll("_", " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function renderWorkflowGapList() {
+  const container = $("workflow-gaps-list");
+  container.innerHTML = state.workflowGaps.items.length
+    ? state.workflowGaps.items.map((gap) => `
+      <button type="button" class="customer-list-item${gap.id === state.workflowGaps.selectedId ? " is-active" : ""}" data-workflow-gap-id="${gap.id}">
+        <span><strong>${escapeHtml(gap.title)}</strong><small>${escapeHtml(gap.workflow_area)} · ${gap.occurrence_count} occurrence${gap.occurrence_count === 1 ? "" : "s"}</small></span>
+        <span class="scheduling-status-badge">${escapeHtml(workflowGapLabel(gap.status))}</span>
+      </button>`).join("")
+    : '<div class="empty-card"><strong>No workflow gaps</strong><p>Record pilot friction when a real workflow needs a workaround.</p></div>';
+  $$('[data-workflow-gap-id]', container).forEach((button) => {
+    button.addEventListener("click", () => void selectWorkflowGap(Number(button.dataset.workflowGapId)));
+  });
+  $("workflow-gaps-page-status").textContent = `Page ${state.workflowGaps.page} · ${state.workflowGaps.total} total`;
+  $("workflow-gaps-prev").disabled = state.workflowGaps.page <= 1;
+  $("workflow-gaps-next").disabled = !state.workflowGaps.hasMore;
+}
+
+async function loadWorkflowGaps() {
+  const generation = state.workflowGaps.generation;
+  const userId = state.auth.user?.id;
+  const requestVersion = ++state.workflowGaps.listRequestVersion;
+  const params = new URLSearchParams({
+    page: String(state.workflowGaps.page), page_size: String(state.workflowGaps.pageSize),
+  });
+  if (state.workflowGaps.search) params.set("search", state.workflowGaps.search);
+  if (state.workflowGaps.statusFilter) params.set("status", state.workflowGaps.statusFilter);
+  if (state.workflowGaps.severityFilter) params.set("severity", state.workflowGaps.severityFilter);
+  $("workflow-gaps-list").innerHTML = '<div class="loading-panel"><span class="loading-spinner"></span><div><strong>Loading workflow gaps</strong></div></div>';
+  try {
+    const response = await apiFetch(`/api/workflow-gaps?${params.toString()}`);
+    const data = await readApiPayload(response);
+    if (
+      generation !== state.workflowGaps.generation ||
+      userId !== state.auth.user?.id ||
+      requestVersion !== state.workflowGaps.listRequestVersion
+    ) return;
+    if (!response.ok || !data) throw apiError(response, data, "Workflow-gap load failed");
+    Object.assign(state.workflowGaps, { items: data.items, total: data.total, hasMore: data.has_more });
+    renderWorkflowGapList();
+  } catch (error) {
+    if (
+      generation !== state.workflowGaps.generation ||
+      userId !== state.auth.user?.id ||
+      requestVersion !== state.workflowGaps.listRequestVersion
+    ) return;
+    $("workflow-gaps-list").innerHTML = `<div class="empty-card"><strong>Workflow gaps unavailable</strong><p>${escapeHtml(error.message)}</p></div>`;
+  }
+}
+
+function editWorkflowGap(gap = null) {
+  $("workflow-gap-id").value = gap ? String(gap.id) : "";
+  $("workflow-gap-title").value = gap?.title || "";
+  $("workflow-gap-description").value = gap?.description || "";
+  $("workflow-gap-area").value = gap?.workflow_area || "";
+  $("workflow-gap-severity").value = gap?.severity || "medium";
+  $("workflow-gap-status").value = gap?.status || "open";
+  $("workflow-gap-status").disabled = !gap;
+  $("workflow-gap-workaround").value = gap?.workaround || "";
+  $("workflow-gap-form-title").textContent = gap ? "Edit workflow gap" : "Create workflow gap";
+  $("workflow-gap-form-mode").textContent = gap ? "EDIT" : "CREATE";
+  $("workflow-gap-occurrence").disabled = !gap || ["resolved", "wont_fix"].includes(gap.status);
+}
+
+function resetWorkflowGapEditor() {
+  state.workflowGaps.selectionVersion += 1;
+  state.workflowGaps.selectedId = null;
+  editWorkflowGap();
+  $("workflow-gap-events").innerHTML = "<p>Select a gap to view its history.</p>";
+  renderWorkflowGapList();
+}
+
+async function selectWorkflowGap(id) {
+  const generation = state.workflowGaps.generation;
+  const userId = state.auth.user?.id;
+  const selectionVersion = ++state.workflowGaps.selectionVersion;
+  try {
+    const [gapResponse, eventResponse] = await Promise.all([
+      apiFetch(`/api/workflow-gaps/${id}`), apiFetch(`/api/workflow-gaps/${id}/events`),
+    ]);
+    const gap = await readApiPayload(gapResponse);
+    const events = await readApiPayload(eventResponse);
+    if (
+      generation !== state.workflowGaps.generation ||
+      userId !== state.auth.user?.id ||
+      selectionVersion !== state.workflowGaps.selectionVersion
+    ) return;
+    if (!gapResponse.ok || !gap) throw apiError(gapResponse, gap, "Workflow-gap load failed");
+    if (!eventResponse.ok || !events) throw apiError(eventResponse, events, "Workflow-gap history failed");
+    state.workflowGaps.selectedId = id;
+    editWorkflowGap(gap);
+    $("workflow-gap-events").innerHTML = events.items.length
+      ? events.items.map((event) => `<div class="context-action"><b>${escapeHtml(event.event_type.toUpperCase())}</b><span><strong>${escapeHtml(event.actor_name || "Former member")}</strong><small>${escapeHtml(event.from_status ? `${workflowGapLabel(event.from_status)} → ${workflowGapLabel(event.to_status)}` : workflowGapLabel(event.event_type))} · ${new Date(event.created_at).toLocaleString()}</small></span></div>`).join("")
+      : "<p>No events recorded.</p>";
+    renderWorkflowGapList();
+  } catch (error) {
+    if (
+      generation !== state.workflowGaps.generation ||
+      userId !== state.auth.user?.id ||
+      selectionVersion !== state.workflowGaps.selectionVersion
+    ) return;
+    showToast(`Workflow gap failed: ${error.message}`, "error");
+  }
+}
+
+async function submitWorkflowGap(event) {
+  event.preventDefault();
+  const id = $("workflow-gap-id").value;
+  const payload = {
+    title: $("workflow-gap-title").value.trim(),
+    description: $("workflow-gap-description").value.trim(),
+    workflow_area: $("workflow-gap-area").value.trim(),
+    severity: $("workflow-gap-severity").value,
+    workaround: $("workflow-gap-workaround").value.trim() || null,
+  };
+  if (id) payload.status = $("workflow-gap-status").value;
+  const button = $("workflow-gap-save");
+  const generation = state.workflowGaps.generation;
+  const userId = state.auth.user?.id;
+  const selectionVersion = ++state.workflowGaps.selectionVersion;
+  button.disabled = true;
+  try {
+    const response = await apiFetch(id ? `/api/workflow-gaps/${id}` : "/api/workflow-gaps", {
+      method: id ? "PATCH" : "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload),
+    });
+    const data = await readApiPayload(response);
+    if (
+      generation !== state.workflowGaps.generation ||
+      userId !== state.auth.user?.id ||
+      selectionVersion !== state.workflowGaps.selectionVersion
+    ) return;
+    if (!response.ok || !data) throw apiError(response, data, "Workflow-gap save failed");
+    showToast(id ? "Workflow gap updated." : "Workflow gap recorded.", "success");
+    state.workflowGaps.selectedId = data.id;
+    await loadWorkflowGaps();
+    if (selectionVersion !== state.workflowGaps.selectionVersion) return;
+    await selectWorkflowGap(data.id);
+  } catch (error) {
+    if (
+      generation !== state.workflowGaps.generation ||
+      userId !== state.auth.user?.id ||
+      selectionVersion !== state.workflowGaps.selectionVersion
+    ) return;
+    showToast(`Workflow-gap save failed: ${error.message}`, "error");
+  } finally {
+    button.disabled = false;
+  }
+}
+
+function initializeWorkflowGaps() {
+  $("workflow-gap-form").addEventListener("submit", submitWorkflowGap);
+  $("workflow-gaps-new").addEventListener("click", resetWorkflowGapEditor);
+  $("workflow-gap-cancel").addEventListener("click", resetWorkflowGapEditor);
+  $("workflow-gaps-refresh").addEventListener("click", () => void loadWorkflowGaps());
+  $("workflow-gaps-search").addEventListener("input", () => { state.workflowGaps.search = $("workflow-gaps-search").value.trim(); state.workflowGaps.page = 1; void loadWorkflowGaps(); });
+  $("workflow-gaps-status-filter").addEventListener("change", () => { state.workflowGaps.statusFilter = $("workflow-gaps-status-filter").value; state.workflowGaps.page = 1; void loadWorkflowGaps(); });
+  $("workflow-gaps-severity-filter").addEventListener("change", () => { state.workflowGaps.severityFilter = $("workflow-gaps-severity-filter").value; state.workflowGaps.page = 1; void loadWorkflowGaps(); });
+  $("workflow-gaps-prev").addEventListener("click", () => { if (state.workflowGaps.page > 1) { state.workflowGaps.page -= 1; void loadWorkflowGaps(); } });
+  $("workflow-gaps-next").addEventListener("click", () => { if (state.workflowGaps.hasMore) { state.workflowGaps.page += 1; void loadWorkflowGaps(); } });
+  $("workflow-gap-occurrence").addEventListener("click", async () => {
+    if (!state.workflowGaps.selectedId) return;
+    const generation = state.workflowGaps.generation;
+    const userId = state.auth.user?.id;
+    const selectionVersion = ++state.workflowGaps.selectionVersion;
+    const fieldset = $("workflow-gap-form").querySelector("fieldset");
+    $("workflow-gap-occurrence").disabled = true;
+    fieldset.disabled = true;
+    try {
+      const response = await apiFetch(`/api/workflow-gaps/${state.workflowGaps.selectedId}/occurrences`, { method: "POST" });
+      const data = await readApiPayload(response);
+      if (
+        generation !== state.workflowGaps.generation ||
+        userId !== state.auth.user?.id ||
+        selectionVersion !== state.workflowGaps.selectionVersion
+      ) return;
+      if (!response.ok || !data) throw apiError(response, data, "Occurrence failed");
+      await loadWorkflowGaps();
+      if (selectionVersion !== state.workflowGaps.selectionVersion) return;
+      await selectWorkflowGap(data.id);
+      showToast("Occurrence recorded.", "success");
+    } catch (error) {
+      if (
+        generation !== state.workflowGaps.generation ||
+        userId !== state.auth.user?.id ||
+        selectionVersion !== state.workflowGaps.selectionVersion
+      ) return;
+      showToast(`Occurrence failed: ${error.message}`, "error");
+    }
+    finally {
+      fieldset.disabled = false;
+      const stale =
+        generation !== state.workflowGaps.generation ||
+        userId !== state.auth.user?.id ||
+        selectionVersion !== state.workflowGaps.selectionVersion;
+      $("workflow-gap-occurrence").disabled =
+        stale || ["resolved", "wont_fix"].includes($("workflow-gap-status").value);
+    }
+  });
+  editWorkflowGap();
+}
+
 function initializeApp() {
   setAuthState(false);
   initializeNavigation();
@@ -7323,6 +7557,7 @@ function initializeApp() {
   initializeSystem();
   initializeAuth();
   initializeAccountSecurity();
+  initializeWorkflowGaps();
   // Auth and approval routes are never the marketing landing
   // page, regardless of auth state. Cleared here (not an inline <script>)
   // so it stays compliant with the app's script-src 'self' CSP.

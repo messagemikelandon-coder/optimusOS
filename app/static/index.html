@@ -357,6 +357,10 @@
 
         <div class="nav-group">
           <span class="nav-group-label">System</span>
+          <button class="nav-item" type="button" data-view="workflow-gaps" data-owner-only="true">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h16v3H4V4Zm0 6h10v3H4v-3Zm0 6h7v3H4v-3Zm13-5h3v8h-3v-8Zm0-4h3v2h-3V7Z"/></svg>
+            <span>Workflow gaps</span>
+          </button>
           <button class="nav-item" type="button" data-view="system">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 2 2 3.2 3.7-.4.9 3.6 3.4 1.6-1.6 3.4.4 3.7-3.6.9L16 22l-4-2-4 2-1.2-3.6-3.6-.9.4-3.7L2 10.4l3.4-1.6.9-3.6 3.7.4L12 2Zm0 7a3 3 0 1 0 0 6 3 3 0 0 0 0-6Z"/></svg>
             <span>System bay</span>
@@ -2570,6 +2574,55 @@
               <div class="empty-card"><strong>Approval link required</strong><p>Open this page from a generated approval link so the estimate token stays in the browser fragment and out of request URLs.</p></div>
             </div>
           </section>
+        </section>
+
+        <section class="app-view" id="view-workflow-gaps" data-view-panel="workflow-gaps" hidden>
+          <div class="customers-layout">
+            <section class="panel customers-list-panel">
+              <div class="panel-heading">
+                <div><span class="section-kicker"><i></i> Pilot learning</span><h2>Workflow gaps</h2><p>Track repeated operational friction, its workaround, and resolution without mixing it into customer support.</p></div>
+                <button class="secondary-button compact" type="button" id="workflow-gaps-new">New gap</button>
+              </div>
+              <div class="customers-toolbar">
+                <label class="field full">Search <input id="workflow-gaps-search" maxlength="120" placeholder="Search title, area, or description"></label>
+                <label class="field">Status <select id="workflow-gaps-status-filter"><option value="">All</option><option value="open">Open</option><option value="investigating">Investigating</option><option value="planned">Planned</option><option value="resolved">Resolved</option><option value="wont_fix">Won't fix</option></select></label>
+                <label class="field">Severity <select id="workflow-gaps-severity-filter"><option value="">All</option><option value="critical">Critical</option><option value="high">High</option><option value="medium">Medium</option><option value="low">Low</option></select></label>
+                <button class="secondary-button compact" type="button" id="workflow-gaps-refresh">Refresh</button>
+              </div>
+              <div id="workflow-gaps-list" class="customers-list" aria-live="polite"></div>
+              <div class="customers-pagination">
+                <button class="secondary-button compact" type="button" id="workflow-gaps-prev">Previous</button>
+                <span id="workflow-gaps-page-status">Page 1</span>
+                <button class="secondary-button compact" type="button" id="workflow-gaps-next">Next</button>
+              </div>
+            </section>
+
+            <section class="customers-detail-stack">
+              <section class="panel">
+                <div class="panel-heading"><div><span class="section-kicker"><i></i> Evidence trail</span><h3>Gap history</h3></div><button class="text-button" type="button" id="workflow-gap-occurrence" disabled>Record occurrence</button></div>
+                <div id="workflow-gap-events" class="customer-detail-card"><p>Select a gap to view its history.</p></div>
+              </section>
+              <form class="panel estimate-form-panel" id="workflow-gap-form">
+                <div class="panel-heading"><div><span class="section-kicker"><i></i> Record editor</span><h3 id="workflow-gap-form-title">Create workflow gap</h3></div><span class="estimate-number" id="workflow-gap-form-mode">CREATE</span></div>
+                <input id="workflow-gap-id" type="hidden">
+                <fieldset>
+                  <legend><span>01</span> Gap</legend>
+                  <label class="field full">Title <input id="workflow-gap-title" maxlength="200" required></label>
+                  <label class="field full">Description <textarea id="workflow-gap-description" maxlength="8000" required></textarea></label>
+                  <div class="form-grid two">
+                    <label class="field">Workflow area <input id="workflow-gap-area" maxlength="80" placeholder="Scheduling" required></label>
+                    <label class="field">Severity <select id="workflow-gap-severity"><option value="low">Low</option><option value="medium" selected>Medium</option><option value="high">High</option><option value="critical">Critical</option></select></label>
+                    <label class="field">Status <select id="workflow-gap-status"><option value="open">Open</option><option value="investigating">Investigating</option><option value="planned">Planned</option><option value="resolved">Resolved</option><option value="wont_fix">Won't fix</option></select></label>
+                  </div>
+                  <label class="field full">Current workaround <textarea id="workflow-gap-workaround" maxlength="8000"></textarea></label>
+                </fieldset>
+                <div class="estimate-submit-row">
+                  <div><strong id="workflow-gap-form-status-title">Pilot workflow record</strong><span id="workflow-gap-form-status-detail">Record the evidence and keep status changes auditable.</span></div>
+                  <div class="customers-form-actions"><button class="text-button" type="button" id="workflow-gap-cancel">Clear</button><button class="primary-button compact" type="submit" id="workflow-gap-save">Save gap</button></div>
+                </div>
+              </form>
+            </section>
+          </div>
         </section>
 
         <section class="app-view" id="view-system" data-view-panel="system" hidden>

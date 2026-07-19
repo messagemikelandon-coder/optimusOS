@@ -10,10 +10,10 @@ Relevant sources: `git status --short --branch`, `git rev-parse HEAD`, `env UV_C
 ## `/goal` Multi-Shop Pilot Program (in progress)
 
 - Full requirement-by-requirement status lives in `docs/context/GOAL_EVIDENCE_MATRIX.md` — not duplicated here to avoid drift between two copies of the same table.
-- Synced `main` HEAD: `506aff5` (PR #61, membership-derived tenant authorization). Phases 0-4, email verification, and the tenant-boundary cutover are merged.
-- Active isolated worktree: `.claude/worktrees/account-lifecycle`, branch `agent/codex/phase5-account-lifecycle`, based on `506aff5`.
-- Publication-ready in the current slice: the remaining Phase 5 account lifecycle/security surface. Migration head `029_account_lifecycle`; password change/reset, session inventory/revocation, persistent lockout/login history, all-role invitations, member suspension/reactivation, and provider-neutral MFA metadata are implemented. Final local proof is green: 449 fast tests passed with 2 skips, 26 complete real-Postgres/Chromium E2E tests passed, and UI/correctness/security reviews all returned PASS.
-- Remaining engineering work after this slice: Phases 6-17. The authoritative requirement-by-requirement status is the evidence matrix, not older completion prose below.
+- Synced `main` HEAD: `37f2376` (PR #62, Phase 5 account lifecycle/security — the final Phase 5 slice). Phases 0-5 (evidence matrix, request concurrency, CI backup/restore/rollback, Shop schema/backfill/NOT-NULL, self-service signup, email verification, membership tenant boundary, and full account-lifecycle security) are merged.
+- Active isolated worktree: `.claude/worktrees/workflow-gaps`, branch `agent/codex/phase6-workflow-gaps`, based on `37f2376`.
+- Publication-ready in the current slice: Phase 6 workflow-gap tracking. Migration head `030_workflow_gaps`; a Shop-scoped workflow-gap record (severity/status/workaround/occurrence-count) with an append-only audit-event log, owner-or-manager-gated CRUD/occurrence/event-history routes, and a System-bay "Workflow gaps" UI view are implemented. This slice was started by a Codex session and finished by Claude ("continue where codex stopped") — Claude found and fixed one real JS bug the Codex session had left uncaught (a duplicate/undeclared `selectionVersion` variable in `app.js` that would have broken every save), then fixed two independent-review findings (untyped list-filter query params; missing HTTP-route-level tests). Final local proof is green: 456 fast tests passed with 2 skips, 30 complete real-Postgres/Chromium E2E tests passed, and independent correctness/security reviews both returned PASS.
+- Remaining engineering work after this slice: Phases 7-17. The authoritative requirement-by-requirement status is the evidence matrix, not older completion prose below.
 
 ## Operational Snapshot
 

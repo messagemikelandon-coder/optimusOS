@@ -284,6 +284,13 @@ from app.models import (
     VendorRead,
     VendorUpdate,
     VerifyEmailRequest,
+    WorkflowGapCreate,
+    WorkflowGapEventsResponse,
+    WorkflowGapListResponse,
+    WorkflowGapRead,
+    WorkflowGapSeverity,
+    WorkflowGapStatus,
+    WorkflowGapUpdate,
     WorkingHoursCreate,
     WorkingHoursListResponse,
     WorkingHoursRead,
@@ -441,6 +448,17 @@ from app.work_order_store import (
     list_work_orders,
     transition_work_order_status,
     update_work_order,
+)
+from app.workflow_gap_store import (
+    WorkflowGapConflictError,
+    WorkflowGapNotFoundError,
+    WorkflowGapStoreError,
+    create_workflow_gap,
+    get_workflow_gap,
+    list_workflow_gap_events,
+    list_workflow_gaps,
+    record_workflow_gap_occurrence,
+    update_workflow_gap,
 )
 
 configure_structured_logging(get_settings().log_level)
@@ -2561,6 +2579,121 @@ async def list_part_allocation_event_records(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Part allocation storage is unavailable.",
         ) from exc
+
+
+@app.post("/api/workflow-gaps", response_model=WorkflowGapRead)
+async def create_workflow_gap_record(
+    payload: WorkflowGapCreate,
+    db: DbSessionDep,
+    auth: OwnerAuthContextDep,
+) -> WorkflowGapRead:
+    try:
+        return await asyncio.to_thread(create_workflow_gap, db, auth, payload)
+    except WorkflowGapStoreError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Workflow gap creation failed due to storage error.")
+        raise HTTPException(status_code=503, detail="Workflow-gap storage is unavailable.") from exc
+
+
+@app.get("/api/workflow-gaps", response_model=WorkflowGapListResponse)
+async def list_workflow_gap_records(
+    db: DbSessionDep,
+    settings: SettingsDep,
+    auth: OwnerAuthContextDep,
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=1),
+    search: str | None = Query(default=None, max_length=120),
+    status_filter: Annotated[WorkflowGapStatus | None, Query(alias="status")] = None,
+    severity_filter: Annotated[WorkflowGapSeverity | None, Query(alias="severity")] = None,
+) -> WorkflowGapListResponse:
+    try:
+        return await asyncio.to_thread(
+            list_workflow_gaps,
+            db,
+            auth,
+            settings,
+            page=page,
+            page_size=page_size,
+            status_filter=status_filter,
+            severity_filter=severity_filter,
+            search=search,
+        )
+    except WorkflowGapStoreError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Workflow gap listing failed due to storage error.")
+        raise HTTPException(status_code=503, detail="Workflow-gap storage is unavailable.") from exc
+
+
+@app.get("/api/workflow-gaps/{workflow_gap_id}", response_model=WorkflowGapRead)
+async def get_workflow_gap_record(
+    workflow_gap_id: int,
+    db: DbSessionDep,
+    auth: OwnerAuthContextDep,
+) -> WorkflowGapRead:
+    try:
+        return await asyncio.to_thread(get_workflow_gap, db, auth, workflow_gap_id)
+    except WorkflowGapNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Workflow gap retrieval failed due to storage error.")
+        raise HTTPException(status_code=503, detail="Workflow-gap storage is unavailable.") from exc
+
+
+@app.patch("/api/workflow-gaps/{workflow_gap_id}", response_model=WorkflowGapRead)
+async def update_workflow_gap_record(
+    workflow_gap_id: int,
+    payload: WorkflowGapUpdate,
+    db: DbSessionDep,
+    auth: OwnerAuthContextDep,
+) -> WorkflowGapRead:
+    try:
+        return await asyncio.to_thread(update_workflow_gap, db, auth, workflow_gap_id, payload)
+    except WorkflowGapNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except WorkflowGapConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except WorkflowGapStoreError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Workflow gap update failed due to storage error.")
+        raise HTTPException(status_code=503, detail="Workflow-gap storage is unavailable.") from exc
+
+
+@app.post("/api/workflow-gaps/{workflow_gap_id}/occurrences", response_model=WorkflowGapRead)
+async def record_workflow_gap_occurrence_record(
+    workflow_gap_id: int,
+    db: DbSessionDep,
+    auth: OwnerAuthContextDep,
+) -> WorkflowGapRead:
+    try:
+        return await asyncio.to_thread(record_workflow_gap_occurrence, db, auth, workflow_gap_id)
+    except WorkflowGapNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except WorkflowGapConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Workflow gap occurrence failed due to storage error.")
+        raise HTTPException(status_code=503, detail="Workflow-gap storage is unavailable.") from exc
+
+
+@app.get(
+    "/api/workflow-gaps/{workflow_gap_id}/events",
+    response_model=WorkflowGapEventsResponse,
+)
+async def list_workflow_gap_event_records(
+    workflow_gap_id: int,
+    db: DbSessionDep,
+    auth: OwnerAuthContextDep,
+) -> WorkflowGapEventsResponse:
+    try:
+        return await asyncio.to_thread(list_workflow_gap_events, db, auth, workflow_gap_id)
+    except WorkflowGapNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Workflow gap event listing failed due to storage error.")
+        raise HTTPException(status_code=503, detail="Workflow-gap storage is unavailable.") from exc
 
 
 @app.post("/api/intake-requests", response_model=IntakeRequestRead)

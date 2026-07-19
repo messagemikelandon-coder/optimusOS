@@ -2811,3 +2811,76 @@ class ShopEventRead(BaseModel):
     actor_name: str | None = None
     event_metadata: dict | None = None
     created_at: datetime
+
+
+class WorkflowGapSeverity(StrEnum):
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
+    CRITICAL = "critical"
+
+
+class WorkflowGapStatus(StrEnum):
+    OPEN = "open"
+    INVESTIGATING = "investigating"
+    PLANNED = "planned"
+    RESOLVED = "resolved"
+    WONT_FIX = "wont_fix"
+
+
+class WorkflowGapCreate(BaseModel):
+    title: NonBlank = Field(max_length=200)
+    description: NonBlank = Field(max_length=8000)
+    workflow_area: NonBlank = Field(max_length=80)
+    severity: WorkflowGapSeverity = WorkflowGapSeverity.MEDIUM
+    workaround: str | None = Field(default=None, max_length=8000)
+
+
+class WorkflowGapUpdate(BaseModel):
+    title: NonBlank | None = Field(default=None, max_length=200)
+    description: NonBlank | None = Field(default=None, max_length=8000)
+    workflow_area: NonBlank | None = Field(default=None, max_length=80)
+    severity: WorkflowGapSeverity | None = None
+    status: WorkflowGapStatus | None = None
+    workaround: str | None = Field(default=None, max_length=8000)
+
+
+class WorkflowGapRead(BaseModel):
+    id: int
+    title: str
+    description: str
+    workflow_area: str
+    severity: WorkflowGapSeverity
+    status: WorkflowGapStatus
+    workaround: str | None = None
+    occurrence_count: int
+    created_by_user_account_id: int | None = None
+    updated_by_user_account_id: int | None = None
+    first_reported_at: datetime
+    last_reported_at: datetime
+    closed_at: datetime | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class WorkflowGapListResponse(BaseModel):
+    items: list[WorkflowGapRead]
+    page: int
+    page_size: int
+    total: int
+    has_more: bool
+
+
+class WorkflowGapEventRead(BaseModel):
+    id: int
+    event_type: Literal["created", "updated", "status_changed", "occurrence_recorded"]
+    actor_user_account_id: int | None = None
+    actor_name: str | None = None
+    from_status: WorkflowGapStatus | None = None
+    to_status: WorkflowGapStatus | None = None
+    event_metadata: dict | None = None
+    created_at: datetime
+
+
+class WorkflowGapEventsResponse(BaseModel):
+    items: list[WorkflowGapEventRead]
