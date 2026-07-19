@@ -24,6 +24,13 @@ _NOT_ROLE_GATED_ROUTES = {
     # before any session/role exists at all -- own rate limiter
     # (enforce_signup_rate_limit) is the equivalent guard.
     ("POST", "/api/signup"),
+    # Email verification (/goal Phase 5): the raw token is the credential,
+    # same category as the estimate-approval trio below -- there is no
+    # session at all when a fresh signup's link is first opened.
+    ("POST", "/api/auth/verify-email"),
+    # A pending authenticated account must be able to resend its own token
+    # before the normal verified-account/role gates become available.
+    ("POST", "/api/auth/verify-email/resend"),
     ("GET", "/api/auth/me"),
     ("GET", "/api/context/{project_key}"),
     ("PUT", "/api/context/{project_key}/{context_key}"),

@@ -279,11 +279,18 @@ def test_ui_preserves_connected_workflows() -> None:
         "login-form",
         "login-username",
         "login-password",
+        "view-verify-email",
+        "verify-email-form",
+        "verify-email-token",
+        "verify-email-submit",
+        "verify-email-resend",
         "result",
     ):
         assert f'id="{element_id}"' in html
     assert 'apiFetch("/api/auth/login"' in javascript
     assert 'apiFetch("/api/auth/me"' in javascript
+    assert 'apiFetch("/api/auth/verify-email"' in javascript
+    assert 'apiFetch("/api/auth/verify-email/resend"' in javascript
     assert "/api/customers" in javascript
     assert "/api/vehicles" in javascript
     assert "/api/context/vehicles/selected-vehicle?scope=session" in javascript

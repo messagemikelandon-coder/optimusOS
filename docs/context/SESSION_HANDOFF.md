@@ -1,79 +1,74 @@
 # Session Handoff
 
-Purpose: replaceable handoff template for the next substantial Codex/Claude session.
+Purpose: replaceable handoff for the next substantial Codex/Claude session.
 Information owner: the active session author.
 Read when: starting or resuming work.
 Update when: a substantial task completes or context needs to be handed forward.
 Last verified date: 2026-07-19.
-Relevant sources: `docs/context/CURRENT_STATE.md`, `docs/context/KNOWN_ISSUES.md`, `docs/context/GOAL_EVIDENCE_MATRIX.md`, `git log`/`git status`, `gh pr view`, `pytest -q`.
+Relevant sources: current Git state, `docs/context/GOAL_EVIDENCE_MATRIX.md`, targeted/full gates, real-Postgres migration rehearsal, real-browser E2E, and two independent remediation reviews.
 
 ## Identity
 
-- Updated UTC: 2026-07-19.
-- Agent: Claude.
-- `main` HEAD: `b1e6e5e` (PR #57, Phase 4 slice 1 — self-service shop signup backend).
-- Current worktree/branch: `agent/claude/goal-phase4-signup-frontend`, branched from `origin/main` at `b1e6e5e`. Not yet committed as of this doc being written.
+- Agent: Codex.
+- Synced `main`: `ba596a91c2a3f1d97636240a62f104381293a728` (PR #59, Phase 4 signup frontend).
+- Active worktree: `/home/dejake/optimus-server/.claude/worktrees/release-process`.
+- Active branch: `agent/claude/goal-phase5-account-security`, based on `origin/main` at `ba596a9`.
+- Worktree state: intentionally dirty with the Phase 5 email-verification slice and context updates; not yet committed/pushed/PR'd at this handoff checkpoint.
 
 ## Active task
 
-This session is executing the `/goal` multi-shop-pilot roadmap (17 phases; see `docs/context/GOAL_EVIDENCE_MATRIX.md`). Phases 0-3 are merged. Phase 4 slice 1 (self-service shop signup backend, PR #57) is merged. This increment is **Phase 4 slice 2: self-service shop signup frontend form**.
+Continue the owner-authorized `/goal` roadmap without pausing between safe phases. The current slice is Phase 5 email verification, recovered from an abandoned uncommitted worktree after confirming its recorded lock PID and any matching Claude process were absent.
 
-Work in this increment:
+Implemented in this slice:
 
-1. `app/main.py` — new `GET /signup` route (`signup_index`), serving the SPA shell exactly like the existing `/login`/`/approval` routes.
-2. `app/static/index.html` — new `#view-signup` panel (mirrors `#view-login`'s visual structure): a form collecting business name, owner display name, username, email, and password, with a footnote link back to sign-in. The login view gained a matching "New shop? Create one" footnote link forward to signup.
-3. `app/static/app.js`:
-   - `viewMeta.signup`, `allowsAnonymousView` now includes `"signup"`.
-   - New `handleSignupSubmit` (mirrors `handleLoginSubmit`): `POST /api/signup`, then reuses `setAuthState`/`navigate("dashboard")` on success — the exact same auto-login flow as `/api/auth/login`.
-   - `navigate()`'s `history.replaceState` branching, the initial-pathname routing block (marketing-mode toggle, unauthenticated-redirect exception list, post-login-redirect-to-dashboard list), and the login-field-focus line all gained a `"/signup"`/`"signup"` counterpart alongside the existing `"/login"`/`"login"` handling.
-   - `initializeAuth()` now also wires `#signup-form`'s submit handler.
-4. `app/static/styles.css` — one new `.form-footnote` rule for the small cross-link paragraph under each form.
-5. `tests/e2e/test_signup_ui.py` (new) — two real Playwright browser tests: (a) fills and submits the actual `#signup-form`, asserts a real `POST /api/signup` response, lands on the dashboard, and proves the session is real by creating a customer through the UI afterward; (b) clicks the cross-links between `#view-login` and `#view-signup` and asserts the URL updates to `/signup`/`/login` accordingly.
-
-Not in this slice (explicitly deferred, per `/goal` Phase 12's own separate requirement): "resumable setup guidance" checklist/onboarding walkthrough. Also not touched: email verification, password reset (Phase 5/6).
-
-**Mistake made and corrected during this slice**: while proving the new Playwright tests were load-bearing (temporarily removing the `#signup-form` submit-listener wiring to confirm the test then fails), a stray `git checkout -- app/static/app.js` intended only to restore that one temporary revert instead discarded **all** uncommitted changes to that file, since none of it had been committed yet. Caught immediately via `git status`/`git diff --stat` showing the file back at its pre-slice state. All of the JS changes (items in point 3 above) were manually re-applied from scratch and re-verified (JS syntax check, `tests/test_official_ui.py`, the new Playwright tests, full fast + e2e suites) before proceeding. No work was lost from any other file (`index.html`/`styles.css` changes were separate `Edit` calls, unaffected). Lesson: never run a bare `git checkout -- <file>` to "undo one change" on a file with other uncommitted edits still in it — stage/commit the good state first, or use a narrower revert.
+1. Migration `027_email_verification`: `user_accounts.email_verified_at`; hash-only verification-token ledger with expiry/use/revocation timestamps, constrained status, unique token hash, and a partial unique index allowing one active token per account.
+2. `app/email_verification_store.py`: 256-bit random tokens, SHA-256 hash-at-rest, row locks for resend/confirmation races, generic public failure messages, single-use confirmation, expiry marking, and revoke-before-resend.
+3. Non-sending email adapter abstraction. Logs contain only a recipient hash and constant subject; recipient address, body, and raw token are excluded and regression-tested.
+4. Signup-triggered verification, authenticated resend, public confirmation, audit events, separate Redis-backed resend and confirmation rate limits, and `.env.example` settings.
+5. Verification-aware auth dependencies. Any account with an email but no verification timestamp is limited to login/signup, `/api/auth/me`, logout, resend, and public confirmation. Protected business/context/chat/estimate routes reject it with `403`. Legacy accounts with no email remain compatible.
+6. Public `/verify-email` SPA view with one-time-code submission and resend. Same-browser signup verification proceeds to the dashboard; cookie-free verification in a fresh browser proceeds to login.
+7. Real API and Playwright E2E now prove protected access is denied before verification and allowed afterward.
 
 ## Verified baseline
 
-- `node --check app/static/app.js` → OK.
-- `env UV_CACHE_DIR=/tmp/uv-cache uv run ruff format --check .` / `ruff check .` → clean.
-- `env UV_CACHE_DIR=/tmp/uv-cache uv run pyright` → 0 errors, 0 warnings.
-- `env UV_CACHE_DIR=/tmp/uv-cache uv run pytest -q` → all passed, exit 0 (413 tests, 2 pre-existing unrelated skips) — this slice is frontend-only plus one new e2e file, so the fast suite's count is unchanged from Phase 4 slice 1.
-- `env UV_CACHE_DIR=/tmp/uv-cache uv run pytest -q tests/e2e/` → **20 passed** (18 prior + 2 new browser tests), no leftover containers.
-- `tests/test_official_ui.py` (all 13 pre-existing frontend regression tests, including the marketing-landing-page-gating one whose exact-substring assertion this slice had to preserve character-for-character) → all pass unchanged.
-- The two new Playwright tests were proven load-bearing via revert-and-recheck: temporarily removed the `#signup-form` submit-listener wiring in `initializeAuth()`, confirmed `test_signup_form_creates_shop_and_logs_in_via_real_browser` then fails with a real Playwright `TimeoutError` (the click never gets a response because nothing is listening), restored the wiring, confirmed both new tests pass again.
+- Targeted auth/signup/role/UI suite: 39 passed.
+- Signup API + browser E2E: 3 passed before the final cookie-free case was added; the final signup UI file then passed all 3 cases.
+- Full fast gate: `ruff format --check` clean (153 files), `ruff check` clean, `pyright` 0 errors/warnings, 429 tests collected with 427 passed and 2 expected Redis-dependent skips, `node --check app/static/app.js` clean.
+- Full E2E: all 20 real-browser/Postgres scenarios passed together. The previously documented work-order-status race reproduced during verification and was fixed in the product: background list refreshes no longer replace or clear an active full-detail record with a summary/empty render. The core workflow passed twice in isolation after the first correction and the complete suite passed after the final late-request correction.
+- Real PostgreSQL migration rehearsal: empty database upgraded through `026`, upgraded to `027_email_verification`, downgraded to `026`, then upgraded to head again; `alembic heads` and `current` both reported the single `027_email_verification` head.
 
 ## Evidence
 
-- All verification above was run directly in this session — not assumed from a prior claim.
-- Grepped `tests/test_official_ui.py` before editing `app.js` to find the exact pre-existing substring assertions (`test_marketing_landing_page_gating`, `test_ui_preserves_connected_workflows`) that check for literal, single-line `window.location.pathname === "/login" || window.location.pathname === "/approval"`-style strings, and deliberately preserved that exact contiguous substring while inserting the new `"/signup"` clause elsewhere in the same conditional, rather than reformatting and breaking the test.
-- Confirmed via `docker ps -a` that no e2e containers were left running after both the full e2e suite and the isolated new-file run.
+- Initial independent security review found two real issues: unverified self-service owners could reach protected/server-funded workflows, and anonymous confirmation lacked throttling. Both were fixed.
+- First remediation re-review found one browser-only recovery defect: cookie-free `/verify-email` was redirected after the anonymous `/api/auth/me` probe. Fixed and covered with a fresh Playwright browser-context test.
+- Final focused re-reviews: verification gate/public recovery PASS; confirmation limiter and log-safety PASS.
+- A formal Codex Security diff-scan bundle was started under `/tmp/codex-security-scans/release-process/ba596a9_20260719T022718Z`. Discovery, validation, and attack-path receipts were produced, but the required dedicated vulnerability-writeup subagent was blocked by its safety filter and produced no file on the required retry. The scan was therefore not sealed and must not be described as complete. The independent reviews above remain valid evidence.
 
 ## Unverified
 
-- This diff is not yet committed, pushed, PR'd, or reviewed as of this doc being written — that's the immediate next step.
-- Whether any *real* deployment's actual owner or technician password is shorter than 8 characters remains unknown (carried over from Phase 4 slice 1, unrelated to this slice's frontend-only changes) — see `docs/context/KNOWN_ISSUES.md`.
+- No real email was sent; selecting/configuring a production email provider requires owner credentials/vendor choice and remains owner-gated.
+- No live/billable OpenAI request was made.
+- No staging/production deployment was attempted.
+- No remaining local verification gap for this slice.
 
 ## Unrelated preexisting changes
 
-- Untracked stray `optimusOS/` directory at the repo root — predates every session on record, not part of any commit, still present, still "leave alone" per every prior handoff.
+- The root worktree still has the long-standing untracked nested `optimusOS/` clone. It was not touched.
+- Older worktrees/branches listed by `git worktree list` remain outside this slice.
 
 ## Blockers and risks
 
-- None blocking. No real credentials, billing, or production/staging deployment were touched this increment. This slice is a pure frontend addition on top of Phase 4 slice 1's already-reviewed backend; no new server-side attack surface was introduced (same `/api/signup` endpoint, same validation, same rate limiter).
+- No engineering blocker for this slice.
+- Production self-service onboarding must remain non-public until a real email provider is selected and configured; the current adapter intentionally sends nothing.
+- Phase 3's query authorization still relies on `owner_user_id`/`effective_owner_id` despite populated NOT NULL `shop_id`; manager role/query-scoping cutover remains required before a true multi-member multi-shop pilot.
 
 ## Exact next task
 
-Commit this diff, push to `agent/claude/goal-phase4-signup-frontend`, open a PR, get independent + security review (the security reviewer should specifically confirm the new `/signup` route doesn't introduce any new unauthenticated attack surface beyond what PR #57 already reviewed, and that the cross-link buttons don't leak anything), fix any real findings, then merge once green. After that, either build the "resumable setup guidance" checklist (Phase 12) or start Phase 5 (account lifecycle/security: email verification, password reset, sessions, invitations) — Phase 5's password-reset work now has both a real `email` column and a real signup flow to test against.
+1. Review `git diff --check`/`git diff`, commit the email-verification slice, push, open a PR, wait for CI, and merge when green under the owner's current-turn roadmap authorization.
+2. Sync `main`, create a new isolated branch/worktree, and continue with the next dependency-safe slice: close the explicit Shop tenant query boundary/Manager role needed by the remainder of Phase 5 invitations, then finish password reset/change, sessions, login history/lockout, invitations, disabled/suspended behavior, and MFA-ready architecture.
 
-## Carried over from prior sessions — not touched by this session
+## Carried over from prior sessions
 
-- Ask the owner to re-test the three staging bugs reported after the Phase 5.5 deploy (notifications reachable via mobile nav + desktop sidebar; estimate "Refresh status" button; Square tab visible in both nav surfaces) — still the oldest open follow-up, not yet re-confirmed.
-- Payment-schedule installment percentage split remains an owner-confirmed placeholder (`docs/context/BUSINESS_RULES.md`).
-- The staging droplet is still behind current `main`. Catching it up is a deploy action requiring explicit current-turn approval and real credentials this session does not have.
-- Square: email-TLD and phone-format validation gaps found during an earlier sandbox smoke test are non-blocking, no fix requested yet. Staging still has no Square credentials configured.
-- `ShopMembership` rows aren't created for technicians added via the normal `create_technician_record` flow after migration 022 — deliberately deferred to Phase 5 (see `docs/context/KNOWN_ISSUES.md`).
-- The `ondelete="CASCADE"` choice on all 30 `shop_id` FKs (financial/audit tables included) is an open data-retention policy decision, not yet resolved — revisit before any shop-deletion/offboarding feature ships (see `docs/context/KNOWN_ISSUES.md`).
-- `app/shop_store.py::resolve_shop_id`/`resolve_shop_id_for_owner` returning `None` could surface as an unhandled `IntegrityError` at ~15 call sites now that `shop_id` is NOT NULL — not currently reachable, tracked as an accepted follow-up (see `docs/context/KNOWN_ISSUES.md`).
-- No API route yet exposes `app/shop_store.py::get_current_shop`/`get_current_shop_settings`/`list_current_shop_memberships` — these were built in Phase 3 slice 1 but never wired to an endpoint. Not needed for this slice; would be useful for a future "shop settings" UI page.
+- Owner policy decisions in `docs/context/DATA_RETENTION.md` remain owner-gated; implement conservative dry-run/configurable architecture without deleting real data.
+- Staging remains behind current `main`; deployment requires infrastructure access and remains separate from code-level phases.
+- Payment-schedule percentage policy and production email/billing/monitoring vendor choices remain owner decisions to consolidate in the Phase 17 report.

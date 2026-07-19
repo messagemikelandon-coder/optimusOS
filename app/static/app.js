@@ -204,6 +204,7 @@ const state = {
 const viewMeta = {
   login: { eyebrow: "Authentication", title: "Sign in" },
   signup: { eyebrow: "Onboarding", title: "Create your shop" },
+  "verify-email": { eyebrow: "Account security", title: "Verify your email" },
   dashboard: { eyebrow: "Operations", title: "Overview" },
   customers: { eyebrow: "Records", title: "Customers" },
   vehicles: { eyebrow: "Fleet", title: "Vehicles" },
@@ -229,7 +230,12 @@ const viewMeta = {
 };
 
 function allowsAnonymousView(view) {
-  return view === "login" || view === "approval" || view === "signup";
+  return (
+    view === "login" ||
+    view === "approval" ||
+    view === "signup" ||
+    view === "verify-email"
+  );
 }
 
 function showToast(message, type = "info") {
@@ -283,6 +289,10 @@ function isTechnicianSession() {
   return state.auth.authenticated && state.auth.user?.role === "technician";
 }
 
+function requiresEmailVerification(user = state.auth.user) {
+  return Boolean(user?.email && !user?.email_verified_at);
+}
+
 function applyRoleNavVisibility() {
   const technician = isTechnicianSession();
   $$("[data-owner-only]").forEach((el) => {
@@ -297,11 +307,18 @@ function setAuthState(authenticated, user = null, expiresAt = null) {
   const wasAuthenticated = state.auth.authenticated;
   state.auth = { authenticated, user, expiresAt };
   applyRoleNavVisibility();
-  if (authenticated && !wasAuthenticated && user?.role === "owner") void refreshNotificationsBadge();
+  if (
+    authenticated &&
+    !wasAuthenticated &&
+    user?.role === "owner" &&
+    !requiresEmailVerification(user)
+  )
+    void refreshNotificationsBadge();
   $("topbar-login-link").hidden = authenticated;
   $("topbar-logout").hidden = !authenticated;
   $("system-login-link").hidden = authenticated;
   $("system-logout").hidden = !authenticated;
+  $("verify-email-resend").hidden = !authenticated;
 
   if (authenticated && user) {
     $("operator-name").textContent = user.display_name || user.username;
@@ -310,8 +327,12 @@ function setAuthState(authenticated, user = null, expiresAt = null) {
     $("system-auth-detail").textContent = expiresAt
       ? `Session active until ${new Date(expiresAt).toLocaleString()}.`
       : "Session active.";
-    $("auth-status-title").textContent = "Signed in";
-    $("auth-status-detail").textContent = "Authenticated workflows are available.";
+    $("auth-status-title").textContent = requiresEmailVerification(user)
+      ? "Email verification required"
+      : "Signed in";
+    $("auth-status-detail").textContent = requiresEmailVerification(user)
+      ? "Verify your email before using shop workflows."
+      : "Authenticated workflows are available.";
     return;
   }
 
@@ -342,8 +363,18 @@ async function loadSession() {
 }
 
 async function requireAuthenticated(view = "login") {
+  if (state.auth.authenticated && requiresEmailVerification()) {
+    showToast("Verify your email before using this workflow.", "error");
+    navigate("verify-email");
+    return false;
+  }
   if (state.auth.authenticated) return true;
   await loadSession();
+  if (state.auth.authenticated && requiresEmailVerification()) {
+    showToast("Verify your email before using this workflow.", "error");
+    navigate("verify-email");
+    return false;
+  }
   if (state.auth.authenticated) return true;
   showToast("Sign in is required for this workflow.", "error");
   navigate(view);
@@ -369,6 +400,10 @@ async function handleLoginSubmit(event) {
     setAuthState(true, data.user, data.expires_at);
     $("login-password").value = "";
     showToast("Signed in.", "success");
+    if (requiresEmailVerification(data.user)) {
+      navigate("verify-email");
+      return;
+    }
     if (data.user.role === "technician") {
       navigate("my-day");
     } else {
@@ -406,16 +441,64 @@ async function handleSignupSubmit(event) {
     if (!response.ok || !data) throw apiError(response, data, "Could not create your shop");
     setAuthState(true, data.user, data.expires_at);
     $("signup-password").value = "";
-    showToast("Shop created. You're signed in.", "success");
-    void loadCustomerOptions();
-    void restoreSelectionsFromContext();
-    navigate("dashboard");
+    showToast("Shop created. Verify your email to continue.", "success");
+    navigate("verify-email");
   } catch (error) {
     setAuthState(false);
     showToast(`Sign-up failed: ${error.message}`, "error");
   } finally {
     submit.disabled = false;
     submit.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14m-7-7h14" stroke="currentColor" stroke-width="2" fill="none"/></svg> Create shop';
+  }
+}
+
+async function handleVerifyEmailSubmit(event) {
+  event.preventDefault();
+  const submit = $("verify-email-submit");
+  submit.disabled = true;
+  submit.textContent = "Verifying…";
+  try {
+    const response = await apiFetch("/api/auth/verify-email", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token: $("verify-email-token").value.trim() }),
+    });
+    const data = await readApiPayload(response);
+    if (!response.ok || !data) throw apiError(response, data, "Email verification failed");
+    $("verify-email-token").value = "";
+    const authenticated = await loadSession();
+    if (authenticated && requiresEmailVerification()) {
+      throw new Error("Verification completed, but the account state did not refresh");
+    }
+    if (authenticated) {
+      showToast("Email verified. Your shop is ready.", "success");
+      void loadCustomerOptions();
+      void restoreSelectionsFromContext();
+      navigate("dashboard");
+    } else {
+      showToast("Email verified. Sign in to continue.", "success");
+      navigate("login");
+    }
+  } catch (error) {
+    showToast(`Email verification failed: ${error.message}`, "error");
+  } finally {
+    submit.disabled = false;
+    submit.textContent = "Verify email";
+  }
+}
+
+async function resendEmailVerification() {
+  const button = $("verify-email-resend");
+  button.disabled = true;
+  try {
+    const response = await apiFetch("/api/auth/verify-email/resend", { method: "POST" });
+    const data = await readApiPayload(response);
+    if (!response.ok || !data) throw apiError(response, data, "Could not resend verification");
+    showToast("A new verification code was prepared.", "success");
+  } catch (error) {
+    showToast(`Resend failed: ${error.message}`, "error");
+  } finally {
+    button.disabled = false;
   }
 }
 
@@ -450,6 +533,15 @@ function navigate(view) {
     history.replaceState(null, "", "/login");
     return navigate("login");
   }
+  if (
+    state.auth.authenticated &&
+    requiresEmailVerification() &&
+    view !== "verify-email" &&
+    view !== "login"
+  ) {
+    history.replaceState(null, "", "/verify-email");
+    return navigate("verify-email");
+  }
   state.currentView = view;
   $$('[data-view-panel]').forEach((panel) => {
     const active = panel.dataset.viewPanel === view;
@@ -470,8 +562,13 @@ function navigate(view) {
   $("mobile-menu").setAttribute("aria-expanded", "false");
   if (view === "login") history.replaceState(null, "", "/login");
   else if (view === "signup") history.replaceState(null, "", "/signup");
+  else if (view === "verify-email") history.replaceState(null, "", "/verify-email");
   else if (view === "approval") history.replaceState(null, "", "/approval" + window.location.hash);
-  else if (window.location.pathname === "/login" || window.location.pathname === "/signup")
+  else if (
+    window.location.pathname === "/login" ||
+    window.location.pathname === "/signup" ||
+    window.location.pathname === "/verify-email"
+  )
     history.replaceState(null, "", "/");
   window.scrollTo({ top: 0, behavior: "smooth" });
   if (view === "dashboard" && state.auth.authenticated) void loadDashboardSummary();
@@ -2829,23 +2926,31 @@ async function loadWorkOrders() {
     state.workOrders.items = data.items;
     state.workOrders.total = data.total;
     state.workOrders.hasMore = data.has_more;
+    let selectionCleared = false;
     if (state.workOrders.selectedWorkOrderId) {
       const selected = data.items.find((item) => item.id === state.workOrders.selectedWorkOrderId);
-      if (selected) {
-        state.workOrders.selectedWorkOrder = selected;
-      } else {
+      // List rows are summary records and intentionally omit detail-only fields
+      // such as allowed_next_statuses. Keep the already-loaded detail record
+      // authoritative while refreshing the list; replacing it with the summary
+      // briefly clears the status select and can discard an in-flight choice.
+      if (!selected) {
         state.workOrders.selectedWorkOrderId = null;
         state.workOrders.selectedWorkOrder = null;
+        selectionCleared = true;
       }
     }
     renderWorkOrderList();
-    renderWorkOrderDetail(state.workOrders.selectedWorkOrder);
+    // A list refresh must not rebuild an active detail form. Detail is loaded
+    // and rendered by selectWorkOrder or a successful mutation; re-rendering
+    // here can race with the user's form interaction even when state still
+    // contains the same record.
+    if (selectionCleared) renderWorkOrderDetail(null);
   } catch (error) {
     state.workOrders.items = [];
     state.workOrders.total = 0;
     state.workOrders.hasMore = false;
     renderWorkOrderList();
-    renderWorkOrderDetail(null);
+    if (!state.workOrders.selectedWorkOrderId) renderWorkOrderDetail(null);
     showToast(`Work-order listing failed: ${error.message}`, "error");
   }
 }
@@ -6192,6 +6297,12 @@ function initializeAuth() {
   $("signup-form").addEventListener("submit", (event) => {
     void handleSignupSubmit(event);
   });
+  $("verify-email-form").addEventListener("submit", (event) => {
+    void handleVerifyEmailSubmit(event);
+  });
+  $("verify-email-resend").addEventListener("click", () => {
+    void resendEmailVerification();
+  });
 }
 
 // --- Overview dashboard --------------------------------------------------
@@ -6909,12 +7020,13 @@ function initializeApp() {
   initializeEstimate();
   initializeSystem();
   initializeAuth();
-  // "/login", "/approval", and "/signup" are never the marketing landing
+  // Auth and approval routes are never the marketing landing
   // page, regardless of auth state. Cleared here (not an inline <script>)
   // so it stays compliant with the app's script-src 'self' CSP.
   if (
     window.location.pathname === "/login" || window.location.pathname === "/approval" ||
-    window.location.pathname === "/signup"
+    window.location.pathname === "/signup" ||
+    window.location.pathname === "/verify-email"
   ) {
     document.body.classList.remove("marketing-mode");
   }
@@ -6925,6 +7037,8 @@ function initializeApp() {
     navigate("login");
   } else if (window.location.pathname === "/signup") {
     navigate("signup");
+  } else if (window.location.pathname === "/verify-email") {
+    navigate("verify-email");
   }
   void loadSession().then((authenticated) => {
     if (!authenticated) {
@@ -6935,12 +7049,17 @@ function initializeApp() {
       if (
         window.location.pathname !== "/approval" &&
         window.location.pathname !== "/" &&
-        window.location.pathname !== "/signup"
+        window.location.pathname !== "/signup" &&
+        window.location.pathname !== "/verify-email"
       )
         navigate("login");
       return;
     }
     document.body.classList.remove("marketing-mode");
+    if (requiresEmailVerification()) {
+      navigate("verify-email");
+      return;
+    }
     if (isTechnicianSession()) {
       // Unlike the owner branch below, "my-day" is never the page's static
       // default view (the HTML ships with #view-dashboard marked
@@ -6956,7 +7075,11 @@ function initializeApp() {
       void restoreSelectionsFromContext();
       void loadDashboardSummary();
       void refreshApprovalQueueBadge();
-      if (window.location.pathname === "/login" || window.location.pathname === "/signup")
+      if (
+        window.location.pathname === "/login" ||
+        window.location.pathname === "/signup" ||
+        window.location.pathname === "/verify-email"
+      )
         navigate("dashboard");
     }
   });

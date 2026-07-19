@@ -1,16 +1,38 @@
 from __future__ import annotations
 
+import hashlib
 from datetime import UTC, datetime, timedelta
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.customer_store import display_name as customer_display_name
-from app.db_models import Customer, Estimate, EstimateRevision, Vehicle
+from app.db_models import Customer, EmailVerificationToken, Estimate, EstimateRevision, Vehicle
 from app.estimate_store import _canonical_hash
 from app.models import EstimatePaymentOption, EstimatePaymentOptionCode, EstimateStatus
 from app.vehicle_store import vehicle_display_name
 from scripts.seed_estimate_approval_fixture import build_valid_response
+
+
+def set_email_verification_token_for_test(db: Session, *, user_id: int, raw_token: str) -> None:
+    """Replace a non-delivered test token with a deterministic raw value.
+
+    Production stores only hashes and the local adapter intentionally does
+    not expose message bodies. E2E can still exercise the real public route
+    by replacing the active row's hash inside its isolated disposable DB.
+    """
+    record = db.scalar(
+        select(EmailVerificationToken).where(
+            EmailVerificationToken.user_account_id == user_id,
+            EmailVerificationToken.status == "active",
+        )
+    )
+    if record is None:
+        raise ValueError("The test account has no active verification token.")
+    record.token_hash = hashlib.sha256(raw_token.encode("utf-8")).hexdigest()
+    db.add(record)
+    db.commit()
 
 
 def seed_ready_estimate(db: Session, *, owner_id: int, customer_id: int, vehicle_id: int) -> int:

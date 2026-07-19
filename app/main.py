@@ -28,6 +28,7 @@ from app.auth import (
     require_authenticated_user,
     require_owner_context,
     require_owner_or_technician_context,
+    require_verified_auth_context,
     set_session_cookie,
 )
 from app.config import Settings, get_settings
@@ -61,6 +62,12 @@ from app.diagnostics_store import (
     list_diagnostic_finding_events,
     list_diagnostic_findings,
     update_diagnostic_finding,
+)
+from app.email_verification_store import (
+    EmailVerificationError,
+    EmailVerificationTokenError,
+    confirm_email_verification,
+    request_email_verification,
 )
 from app.errors import EstimatorResearchError
 from app.estimate_store import (
@@ -241,6 +248,7 @@ from app.models import (
     VendorPurchasingReportResponse,
     VendorRead,
     VendorUpdate,
+    VerifyEmailRequest,
     WorkingHoursCreate,
     WorkingHoursListResponse,
     WorkingHoursRead,
@@ -332,6 +340,7 @@ from app.scheduling_store import (
     update_working_hours,
 )
 from app.security_events import SecurityEventType, log_security_event
+from app.services.email import LoggingEmailAdapter
 from app.services.http import SafeHttpClient
 from app.services.location import LocationService
 from app.services.optimus_chat import OptimusChatService
@@ -409,6 +418,7 @@ _APP_MIGRATION_HEAD = get_app_migration_head()
 SettingsDep = Annotated[Settings, Depends(get_settings)]
 DbSessionDep = Annotated[Session, Depends(get_db_session)]
 AuthContextDep = Annotated[AuthContext, Depends(get_current_auth_context)]
+VerifiedAuthContextDep = Annotated[AuthContext, Depends(require_verified_auth_context)]
 CurrentUserDep = Annotated[UserAccount, Depends(require_authenticated_user)]
 OwnerAuthContextDep = Annotated[AuthContext, Depends(require_owner_context)]
 OwnerOrTechnicianAuthContextDep = Annotated[
@@ -542,6 +552,87 @@ async def enforce_signup_rate_limit(request: Request, settings: Settings) -> Non
         ) from exc
 
 
+def email_adapter() -> LoggingEmailAdapter:
+    # Non-sending local/test adapter (/goal Phase 5) -- the only email
+    # adapter this codebase has; a real provider is future work requiring
+    # explicit owner approval (real email is a stop condition).
+    return LoggingEmailAdapter()
+
+
+_email_verification_resend_rate_limiter: RateLimiter | None = None
+_email_verification_resend_rate_limiter_redis_url: str | None = None
+_email_verification_rate_limiter: RateLimiter | None = None
+_email_verification_rate_limiter_redis_url: str | None = None
+
+
+def get_email_verification_rate_limiter(settings: Settings) -> RateLimiter:
+    global _email_verification_rate_limiter, _email_verification_rate_limiter_redis_url
+    if (
+        _email_verification_rate_limiter is None
+        or _email_verification_rate_limiter.limit
+        != settings.max_email_verification_attempts_per_minute
+        or _email_verification_rate_limiter_redis_url != settings.redis_url
+    ):
+        _email_verification_rate_limiter = RedisSlidingWindowRateLimiter(
+            redis_client=Redis.from_url(settings.redis_url),
+            limit=settings.max_email_verification_attempts_per_minute,
+        )
+        _email_verification_rate_limiter_redis_url = settings.redis_url
+    return _email_verification_rate_limiter
+
+
+async def enforce_email_verification_rate_limit(request: Request, settings: Settings) -> None:
+    client_host = request.client.host if request.client else "unknown"
+    client_key = f"email-verification:{client_host}"
+    try:
+        await get_email_verification_rate_limiter(settings).check(client_key)
+    except RateLimitExceeded as exc:
+        log_security_event(
+            logger, SecurityEventType.RATE_LIMIT_EXCEEDED, request=request, limit_key=client_key
+        )
+        raise HTTPException(
+            status_code=429, detail="Too many verification attempts. Try again shortly."
+        ) from exc
+
+
+def get_email_verification_resend_rate_limiter(settings: Settings) -> RateLimiter:
+    # Own limiter, keyed per authenticated user (not per IP, unlike
+    # login/signup) -- this action requires an existing session, so the
+    # abuse case is one account spamming itself/its own inbox, not
+    # unauthenticated IP-based abuse.
+    global \
+        _email_verification_resend_rate_limiter, \
+        _email_verification_resend_rate_limiter_redis_url
+    if (
+        _email_verification_resend_rate_limiter is None
+        or _email_verification_resend_rate_limiter.limit
+        != settings.max_email_verification_resend_attempts_per_hour
+        or _email_verification_resend_rate_limiter_redis_url != settings.redis_url
+    ):
+        _email_verification_resend_rate_limiter = RedisSlidingWindowRateLimiter(
+            redis_client=Redis.from_url(settings.redis_url),
+            limit=settings.max_email_verification_resend_attempts_per_hour,
+            window_seconds=3600.0,
+        )
+        _email_verification_resend_rate_limiter_redis_url = settings.redis_url
+    return _email_verification_resend_rate_limiter
+
+
+async def enforce_email_verification_resend_rate_limit(
+    request: Request, settings: Settings, user_id: int
+) -> None:
+    client_key = f"email-verification-resend:{user_id}"
+    try:
+        await get_email_verification_resend_rate_limiter(settings).check(client_key)
+    except RateLimitExceeded as exc:
+        log_security_event(
+            logger, SecurityEventType.RATE_LIMIT_EXCEEDED, request=request, limit_key=client_key
+        )
+        raise HTTPException(
+            status_code=429, detail="Too many verification emails requested. Try again later."
+        ) from exc
+
+
 def location_service(settings: Settings) -> LocationService:
     http = SafeHttpClient(
         timeout_seconds=settings.http_timeout_seconds,
@@ -589,6 +680,11 @@ async def login_index() -> FileResponse:
 
 @app.get("/signup", include_in_schema=False)
 async def signup_index() -> FileResponse:
+    return FileResponse(STATIC_DIR / "index.html")
+
+
+@app.get("/verify-email", include_in_schema=False)
+async def verify_email_index() -> FileResponse:
     return FileResponse(STATIC_DIR / "index.html")
 
 
@@ -748,8 +844,10 @@ async def signup(
 ) -> AuthSessionResponse:
     """Self-service shop signup (/goal Phase 4): creates a brand-new shop
     and its owner account, then logs the new owner in immediately (same
-    session/cookie flow as `/api/auth/login`) -- no email-verification
-    step yet, which is /goal Phase 5/6's own separate requirement."""
+    session/cookie flow as `/api/auth/login`). Also kicks off email
+    verification (/goal Phase 5) via the non-sending local/test adapter.
+    The session can access `/api/auth/me`, logout, and resend while pending;
+    protected business workflows require verification."""
     await enforce_signup_rate_limit(request, settings)
     try:
         owner = await asyncio.to_thread(signup_shop_owner, db, settings, payload)
@@ -787,11 +885,84 @@ async def signup(
         level=logging.INFO,
         user_id=owner.id,
     )
+    try:
+        await asyncio.to_thread(request_email_verification, db, settings, owner, email_adapter())
+        log_security_event(
+            logger,
+            SecurityEventType.EMAIL_VERIFICATION_REQUESTED,
+            request=request,
+            level=logging.INFO,
+            user_id=owner.id,
+        )
+    except EmailVerificationError:
+        # Not fatal to account creation. The pending session remains limited
+        # to verification/session-recovery routes and can request a new token.
+        pass
     return AuthSessionResponse(
         user=auth_user_response(owner),
         expires_at=auth_session.expires_at,
         session_expires_in_seconds=settings.session_ttl_hours * 3600,
     )
+
+
+@app.post("/api/auth/verify-email/resend")
+async def resend_email_verification(
+    request: Request,
+    db: DbSessionDep,
+    settings: SettingsDep,
+    auth: AuthContextDep,
+) -> dict[str, bool]:
+    """Authenticated resend of the /goal Phase 5 email-verification
+    message -- open to both roles (a technician account has no email
+    today, so this just 422s for one, but there's no reason to bar the
+    route itself once one does). Rate-limited per-user (not per-IP,
+    since this always requires an existing session -- see
+    `enforce_email_verification_resend_rate_limit`)."""
+    await enforce_email_verification_resend_rate_limit(request, settings, auth.user.id)
+    try:
+        await asyncio.to_thread(
+            request_email_verification, db, settings, auth.user, email_adapter()
+        )
+    except EmailVerificationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+        ) from exc
+    log_security_event(
+        logger,
+        SecurityEventType.EMAIL_VERIFICATION_REQUESTED,
+        request=request,
+        level=logging.INFO,
+        user_id=auth.user.id,
+    )
+    return {"sent": True}
+
+
+@app.post("/api/auth/verify-email")
+async def verify_email(
+    payload: VerifyEmailRequest,
+    request: Request,
+    db: DbSessionDep,
+    settings: SettingsDep,
+) -> dict[str, bool]:
+    """Public (no session required -- the token itself is the credential,
+    matching the existing estimate-approval-token pattern) confirmation
+    of a /goal Phase 5 email-verification code."""
+    await enforce_email_verification_rate_limit(request, settings)
+    try:
+        user = await asyncio.to_thread(confirm_email_verification, db, payload.token)
+    except EmailVerificationTokenError as exc:
+        log_security_event(logger, SecurityEventType.EMAIL_VERIFICATION_FAILED, request=request)
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+        ) from exc
+    log_security_event(
+        logger,
+        SecurityEventType.EMAIL_VERIFIED,
+        request=request,
+        level=logging.INFO,
+        user_id=user.id,
+    )
+    return {"verified": True}
 
 
 @app.post("/api/auth/logout")
@@ -2438,7 +2609,7 @@ async def get_context(
     project_key: str,
     db: DbSessionDep,
     settings: SettingsDep,
-    auth: AuthContextDep,
+    auth: VerifiedAuthContextDep,
     scope: ContextScope = ContextScope.PROJECT,
 ) -> ContextListResponse:
     await asyncio.to_thread(ensure_context_dependencies, settings)
@@ -2468,7 +2639,7 @@ async def put_context(
     payload: ContextEntryUpsertRequest,
     db: DbSessionDep,
     settings: SettingsDep,
-    auth: AuthContextDep,
+    auth: VerifiedAuthContextDep,
     scope: ContextScope = ContextScope.PROJECT,
 ) -> ContextEntryRead:
     await asyncio.to_thread(ensure_context_dependencies, settings)
@@ -2504,7 +2675,7 @@ async def remove_context(
     context_key: str,
     db: DbSessionDep,
     settings: SettingsDep,
-    auth: AuthContextDep,
+    auth: VerifiedAuthContextDep,
     scope: ContextScope = ContextScope.PROJECT,
     expected_revision: int | None = None,
 ) -> ContextDeleteResponse:

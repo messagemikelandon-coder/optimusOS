@@ -452,7 +452,7 @@
               <div class="panel-heading chat-heading">
                 <div class="heading-with-avatar">
                   <div class="optimus-avatar"><span class="avatar-core"></span></div>
-                  <div><span class="section-kicker"><i></i> New shop</span><h2>Create your shop</h2><p>Set up a brand-new, independent shop workspace. You'll be signed in immediately as its owner.</p></div>
+                  <div><span class="section-kicker"><i></i> New shop</span><h2>Create your shop</h2><p>Set up a brand-new, independent shop workspace. You'll verify your email before using shop workflows.</p></div>
                 </div>
               </div>
 
@@ -483,8 +483,44 @@
                 <span class="section-kicker"><i></i> What happens next</span>
                 <div class="stacked-actions">
                   <div class="context-action"><b>01</b><span><strong>Independent workspace</strong><small>Your shop's data is fully isolated from every other shop.</small></span></div>
-                  <div class="context-action"><b>02</b><span><strong>Owner access</strong><small>You're the owner of this new shop from the moment it's created.</small></span></div>
+                  <div class="context-action"><b>02</b><span><strong>Verified owner access</strong><small>Your owner session unlocks shop workflows after mailbox verification.</small></span></div>
                   <div class="context-action"><b>03</b><span><strong>Server sessions</strong><small>Only a session-token hash is stored, same as sign-in.</small></span></div>
+                </div>
+              </section>
+            </aside>
+          </div>
+        </section>
+
+        <section class="app-view" id="view-verify-email" data-view-panel="verify-email" hidden>
+          <div class="chat-layout">
+            <section class="panel chat-workbench">
+              <div class="panel-heading chat-heading">
+                <div class="heading-with-avatar">
+                  <div class="optimus-avatar"><span class="avatar-core"></span></div>
+                  <div><span class="section-kicker"><i></i> Account security</span><h2>Verify your email</h2><p>Enter the one-time code prepared for your email address. Shop workflows stay locked until verification succeeds.</p></div>
+                </div>
+              </div>
+
+              <form id="verify-email-form" class="estimate-form-panel">
+                <fieldset>
+                  <legend><span>01</span> Verification code</legend>
+                  <label class="field full">One-time code <input id="verify-email-token" maxlength="256" autocomplete="one-time-code" required></label>
+                </fieldset>
+                <div class="estimate-submit-row">
+                  <div><strong>Mailbox proof required</strong><span>The code expires after 24 hours and can be used once.</span></div>
+                  <button class="primary-button large" type="submit" id="verify-email-submit">Verify email</button>
+                </div>
+                <p class="form-footnote"><button class="text-button" type="button" id="verify-email-resend">Prepare a new code</button> <button class="text-button" type="button" data-view="login">Return to sign in</button></p>
+              </form>
+            </section>
+
+            <aside class="chat-context">
+              <section class="panel">
+                <span class="section-kicker"><i></i> Verification policy</span>
+                <div class="stacked-actions">
+                  <div class="context-action"><b>01</b><span><strong>Single use</strong><small>Using a code permanently invalidates it.</small></span></div>
+                  <div class="context-action"><b>02</b><span><strong>Hashed storage</strong><small>The raw code is never stored in the database.</small></span></div>
+                  <div class="context-action"><b>03</b><span><strong>Protected access</strong><small>Shop data and funded workflows remain unavailable while pending.</small></span></div>
                 </div>
               </section>
             </aside>

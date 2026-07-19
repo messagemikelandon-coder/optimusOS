@@ -30,6 +30,10 @@ def _reset_rate_limiter_singletons() -> None:
     main._login_rate_limiter_redis_url = None
     main._signup_rate_limiter = None
     main._signup_rate_limiter_redis_url = None
+    main._email_verification_resend_rate_limiter = None
+    main._email_verification_resend_rate_limiter_redis_url = None
+    main._email_verification_rate_limiter = None
+    main._email_verification_rate_limiter_redis_url = None
 
 
 @pytest.fixture
@@ -38,6 +42,10 @@ def settings() -> Settings:
         app_env="test",
         openai_api_key="test-key",
         database_url="sqlite+pysqlite:///:memory:",
+        # Keep unit tests hermetic and make every Redis-backed limiter take
+        # its documented in-process fallback immediately. Real Redis
+        # behavior has dedicated tests that connect to 127.0.0.1:6379.
+        redis_url=("redis://127.0.0.1:1/0?socket_connect_timeout=0.1&socket_timeout=0.1"),
         frontend_origin="http://127.0.0.1:5173",
         labor_rate=100,
         mobile_service_fee=25,
