@@ -159,6 +159,12 @@ h1, h2, h3, .marketing-hero-copy h1, .section-kicker { font-family: var(--font-c
   border-bottom: 1px solid rgba(198, 192, 182, .12);
   background: var(--bg-0);
 }
+.impersonation-banner {
+  position: sticky; top: 60px; z-index: 19; display: flex; align-items: center; justify-content: center; gap: 16px;
+  padding: 10px clamp(20px, 3vw, 44px); background: #7a3b1f; color: #fff2ea; font-size: .82rem; font-weight: 700;
+}
+.impersonation-banner strong { font-weight: 800; }
+.impersonation-banner .secondary-button { border-color: rgba(255,255,255,.5); color: #fff2ea; }
 .topbar-title .eyebrow { display: block; color: var(--blue); font-size: .65rem; font-weight: 800; letter-spacing: .18em; text-transform: uppercase; }
 .topbar-title h1 { margin: 1px 0 0; font-size: 1.08rem; letter-spacing: .02em; }
 .topbar-actions { display: flex; align-items: center; gap: 12px; }

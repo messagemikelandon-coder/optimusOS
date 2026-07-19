@@ -399,6 +399,10 @@ class AuthUser(BaseModel):
     email: str | None = None
     email_verified_at: datetime | None = None
     account_status: Literal["active", "disabled", "suspended"] = "active"
+    # /goal Phase 8: set only when the current session was minted by
+    # support-initiated impersonation (see AuthSession.impersonated_by_user_account_id).
+    is_impersonated: bool = False
+    impersonated_by_username: str | None = None
 
 
 class AuthSessionResponse(BaseModel):
@@ -2938,3 +2942,23 @@ class SubscriptionEventRead(BaseModel):
 
 class SubscriptionEventsResponse(BaseModel):
     items: list[SubscriptionEventRead]
+
+
+class SupportShopSummary(BaseModel):
+    shop_id: int
+    display_name: str
+    status: str
+    created_at: datetime
+    owner_username: str | None = None
+    owner_display_name: str | None = None
+    member_count: int
+    subscription_tier: str | None = None
+    subscription_billing_status: str | None = None
+    seat_limit: int | None = None
+    seats_used: int
+    trial_ends_at: datetime | None = None
+    is_access_suspended: bool
+
+
+class SupportShopListResponse(BaseModel):
+    items: list[SupportShopSummary]

@@ -27,7 +27,9 @@ class UserAccount(Base):
     __tablename__ = "user_accounts"
     __table_args__ = (
         UniqueConstraint("username", name="uq_user_accounts_username"),
-        CheckConstraint("role IN ('owner', 'manager', 'technician')", name="ck_user_accounts_role"),
+        CheckConstraint(
+            "role IN ('owner', 'manager', 'technician', 'support')", name="ck_user_accounts_role"
+        ),
         CheckConstraint(
             "account_status IN ('active', 'disabled', 'suspended')",
             name="ck_user_accounts_account_status",
@@ -91,6 +93,7 @@ class UserAccount(Base):
     sessions: Mapped[list[AuthSession]] = relationship(
         back_populates="user",
         cascade="all, delete-orphan",
+        foreign_keys="AuthSession.user_id",
     )
     context_entries: Mapped[list[ContextEntry]] = relationship(
         back_populates="user",
@@ -124,6 +127,7 @@ class AuthSession(Base):
         UniqueConstraint("token_hash", name="uq_auth_sessions_token_hash"),
         Index("ix_auth_sessions_user_id", "user_id"),
         Index("ix_auth_sessions_expires_at", "expires_at"),
+        Index("ix_auth_sessions_impersonated_by", "impersonated_by_user_account_id"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
@@ -143,8 +147,16 @@ class AuthSession(Base):
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     ip_address: Mapped[str | None] = mapped_column(String(64))
     user_agent: Mapped[str | None] = mapped_column(String(512))
+    # /goal Phase 8: set only on a session minted by support-initiated
+    # impersonation (this session belongs to the real target owner account,
+    # not the support account) -- never set on the support account's own
+    # session. SET NULL (not CASCADE) so deleting the support account can
+    # never silently delete/corrupt the impersonated owner's session history.
+    impersonated_by_user_account_id: Mapped[int | None] = mapped_column(
+        ForeignKey("user_accounts.id", ondelete="SET NULL")
+    )
 
-    user: Mapped[UserAccount] = relationship(back_populates="sessions")
+    user: Mapped[UserAccount] = relationship(back_populates="sessions", foreign_keys=[user_id])
     context_entries: Mapped[list[ContextEntry]] = relationship(back_populates="auth_session")
 
 

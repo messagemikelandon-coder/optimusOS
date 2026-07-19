@@ -13,6 +13,7 @@ from app.auth import (
     require_billing_context,
     require_owner_context,
     require_owner_or_technician_context,
+    require_support_context,
 )
 from app.db import get_db_session, get_settings
 from app.db_models import ShopMembership, UserAccount
@@ -73,6 +74,12 @@ _AUTHENTICATED_SELF_SERVICE_ROUTES = {
     ("POST", "/api/auth/sessions/{session_id}/revoke"),
     ("GET", "/api/auth/login-history"),
     ("GET", "/api/auth/security"),
+    # /goal Phase 8: reachable by whichever role is currently being
+    # impersonated (always "owner" by this design) -- gated by checking
+    # `AuthSession.impersonated_by_user_account_id` inside the handler
+    # itself, not by a role dependency, since the caller's role at this
+    # point is the impersonated owner's, not "support".
+    ("POST", "/api/support/end-impersonation"),
 }
 
 # Routes deliberately opened to BOTH owner and technician (Phase 5.6
@@ -129,6 +136,15 @@ _BILLING_ROUTES = {
     ("POST", "/api/billing/refresh"),
 }
 
+# /goal Phase 8: the read-only platform support directory is gated by its
+# own dependency (support role only), not owner/owner-or-technician -- it
+# deliberately reads across every shop, the one disclosed exception to the
+# rest of this app's effective_shop_id-scoping rule.
+_SUPPORT_ROUTES = {
+    ("GET", "/api/support/shops"),
+    ("POST", "/api/support/shops/{shop_id}/impersonate"),
+}
+
 
 def _dependant_uses(dependant, target, seen: set[int] | None = None) -> bool:  # type: ignore[no-untyped-def]
     if seen is None:
@@ -173,9 +189,14 @@ def test_every_business_route_is_role_gated_as_expected() -> None:
             )
             uses_owner_only = _dependant_uses(dependant, require_owner_context)
             uses_billing = _dependant_uses(dependant, require_billing_context)
+            uses_support = _dependant_uses(dependant, require_support_context)
             if key in _BILLING_ROUTES:
                 if not uses_billing:
                     wrong.append(("expected billing gate, missing", key))
+                continue
+            if key in _SUPPORT_ROUTES:
+                if not uses_support:
+                    wrong.append(("expected support gate, missing", key))
                 continue
             if key in _OWNER_OR_TECHNICIAN_ROUTES:
                 if not uses_owner_or_technician:

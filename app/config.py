@@ -91,6 +91,11 @@ class Settings(BaseSettings):
     session_cookie_name: str = "optimus_session"
     optimus_owner_username: str = Field(default="", repr=False)
     optimus_owner_password: str = Field(default="", repr=False)
+    # /goal Phase 8: a platform-side, read-only support operator account.
+    # Never self-service, never granted by a shop owner -- provisioned the
+    # same way the first owner account is, via app/bootstrap_support.py.
+    optimus_support_username: str = Field(default="", repr=False)
+    optimus_support_password: str = Field(default="", repr=False)
 
     square_access_token: str = Field(default="", repr=False)
     square_environment: Literal["sandbox", "production"] = "sandbox"
@@ -192,6 +197,8 @@ class Settings(BaseSettings):
     @field_validator(
         "optimus_owner_username",
         "optimus_owner_password",
+        "optimus_support_username",
+        "optimus_support_password",
         "session_cookie_name",
         mode="before",
     )
