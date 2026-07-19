@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from sqlalchemy import Select, and_, func, or_, select
 from sqlalchemy.orm import Session
 
-from app.auth import AuthContext, effective_owner_id, ensure_utc
+from app.auth import AuthContext, effective_shop_id, effective_shop_owner_id, ensure_utc
 from app.config import Settings
 from app.db_models import Customer
 from app.models import (
@@ -130,12 +130,12 @@ def _to_read(customer: Customer) -> CustomerRead:
     )
 
 
-def _owner_query(auth: AuthContext) -> Select[tuple[Customer]]:
-    return select(Customer).where(Customer.owner_user_id == effective_owner_id(auth))
+def _owner_query(db: Session, auth: AuthContext) -> Select[tuple[Customer]]:
+    return select(Customer).where(Customer.shop_id == effective_shop_id(db, auth))
 
 
 def _get_customer(db: Session, auth: AuthContext, customer_id: int) -> Customer:
-    customer = db.scalar(_owner_query(auth).where(Customer.id == customer_id))
+    customer = db.scalar(_owner_query(db, auth).where(Customer.id == customer_id))
     if customer is None:
         raise CustomerNotFoundError("Customer not found.")
     return customer
@@ -158,7 +158,9 @@ def create_customer(
         company_name=normalized["company_name"],  # type: ignore[arg-type]
     )
     customer = Customer(
-        owner_user_id=effective_owner_id(auth), shop_id=resolve_shop_id(db, auth), **normalized
+        owner_user_id=effective_shop_owner_id(db, auth),
+        shop_id=resolve_shop_id(db, auth),
+        **normalized,
     )
     db.add(customer)
     db.commit()
@@ -241,7 +243,7 @@ def list_customers(
     if page < 1:
         raise CustomerStoreError("Page must be 1 or greater.")
 
-    query = _owner_query(auth).where(Customer.is_archived == archived)
+    query = _owner_query(db, auth).where(Customer.is_archived == archived)
     if search:
         lowered_tokens = [token for token in search.strip().lower().split() if token]
         if lowered_tokens:

@@ -10,10 +10,10 @@ Relevant sources: `git status --short --branch`, `git rev-parse HEAD`, `env UV_C
 ## `/goal` Multi-Shop Pilot Program (in progress)
 
 - Full requirement-by-requirement status lives in `docs/context/GOAL_EVIDENCE_MATRIX.md` — not duplicated here to avoid drift between two copies of the same table.
-- Synced `main` HEAD: `ba596a9` (PR #59, Phase 4 signup frontend). Phases 0-4 are merged: evidence matrix, request concurrency, CI backup/restore/rollback, staged Shop schema/backfill/NOT-NULL work, and self-service signup backend plus frontend.
-- Active isolated worktree: `.claude/worktrees/release-process`, branch `agent/claude/goal-phase5-account-security`, preserving and continuing the abandoned uncommitted Phase 5 worktree after its recorded process/lock was confirmed stale.
-- In progress, pending publication: Phase 5 slice 1 email verification. Migration head `027_email_verification`; full fast gates and complete E2E suite are green, including real-browser verification with and without the signup session. See `docs/context/SESSION_HANDOFF.md` for exact evidence.
-- Remaining engineering work: the rest of Phase 5 account lifecycle/security, the still-unfinished Phase 3 query-scoping/manager-role boundary, then Phases 6-17. The authoritative requirement-by-requirement status is the evidence matrix, not older completion prose below.
+- Synced `main` HEAD: `2e99c7b` (PR #60, secure email verification). Phases 0-4 and the first Phase 5 security slice are merged.
+- Active isolated worktree: `.claude/worktrees/tenant-boundary`, branch `agent/codex/phase3-tenant-boundary`, based on `2e99c7b`.
+- Publication-ready in the current slice: final Phase 3 authorization cutover. Migration head `028_membership_tenant_boundary`; Manager is a first-class account role, every authenticated request validates one active role-matching membership, every business-store read/query filters by `shop_id`, and technician provisioning creates the membership transactionally. Final proof is green: full fast suite, 36 focused boundary tests, 4 real-Postgres tenant migration tests, 21 complete E2E tests, static/type/format gates, and three independent PASS reviews.
+- Remaining engineering work after this slice: the rest of Phase 5 account lifecycle/security, then Phases 6-17. The authoritative requirement-by-requirement status is the evidence matrix, not older completion prose below.
 
 ## Operational Snapshot
 

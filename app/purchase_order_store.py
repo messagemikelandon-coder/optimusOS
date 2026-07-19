@@ -7,7 +7,7 @@ from sqlalchemy import Select, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.auth import AuthContext, effective_owner_id, ensure_utc
+from app.auth import AuthContext, effective_shop_id, effective_shop_owner_id, ensure_utc
 from app.config import Settings
 from app.db_models import Part, PurchaseOrder, PurchaseOrderLineItem, PurchaseOrderReceipt, Vendor
 from app.models import (
@@ -61,12 +61,12 @@ def _money(value: float | Decimal, field_label: str = "Amount") -> Decimal:
     return normalized.quantize(MONEY, rounding=ROUND_HALF_UP)
 
 
-def _owner_query(auth: AuthContext) -> Select[tuple[PurchaseOrder]]:
-    return select(PurchaseOrder).where(PurchaseOrder.owner_user_id == effective_owner_id(auth))
+def _owner_query(db: Session, auth: AuthContext) -> Select[tuple[PurchaseOrder]]:
+    return select(PurchaseOrder).where(PurchaseOrder.shop_id == effective_shop_id(db, auth))
 
 
 def _get_purchase_order(db: Session, auth: AuthContext, purchase_order_id: int) -> PurchaseOrder:
-    purchase_order = db.scalar(_owner_query(auth).where(PurchaseOrder.id == purchase_order_id))
+    purchase_order = db.scalar(_owner_query(db, auth).where(PurchaseOrder.id == purchase_order_id))
     if purchase_order is None:
         raise PurchaseOrderNotFoundError("Purchase order not found.")
     return purchase_order
@@ -74,9 +74,7 @@ def _get_purchase_order(db: Session, auth: AuthContext, purchase_order_id: int) 
 
 def _validate_vendor(db: Session, auth: AuthContext, vendor_id: int) -> None:
     vendor = db.scalar(
-        select(Vendor).where(
-            Vendor.id == vendor_id, Vendor.owner_user_id == effective_owner_id(auth)
-        )
+        select(Vendor).where(Vendor.id == vendor_id, Vendor.shop_id == effective_shop_id(db, auth))
     )
     if vendor is None:
         raise PurchaseOrderStoreError("Selected vendor was not found.")
@@ -84,7 +82,7 @@ def _validate_vendor(db: Session, auth: AuthContext, vendor_id: int) -> None:
 
 def _require_part(db: Session, auth: AuthContext, part_id: int) -> Part:
     part = db.scalar(
-        select(Part).where(Part.id == part_id, Part.owner_user_id == effective_owner_id(auth))
+        select(Part).where(Part.id == part_id, Part.shop_id == effective_shop_id(db, auth))
     )
     if part is None:
         raise PurchaseOrderStoreError("Selected part was not found.")
@@ -96,11 +94,11 @@ def _next_po_number(db: Session, auth: AuthContext) -> str:
         db.scalar(
             select(func.count())
             .select_from(PurchaseOrder)
-            .where(PurchaseOrder.owner_user_id == effective_owner_id(auth))
+            .where(PurchaseOrder.shop_id == effective_shop_id(db, auth))
         )
         or 0
     )
-    return f"PO-{effective_owner_id(auth):03d}-{count + 1:05d}"
+    return f"PO-{effective_shop_owner_id(db, auth):03d}-{count + 1:05d}"
 
 
 def _line_item_to_read(line_item: PurchaseOrderLineItem) -> PurchaseOrderLineItemRead:
@@ -123,7 +121,7 @@ def _to_read(db: Session, auth: AuthContext, purchase_order: PurchaseOrder) -> P
     vendor_name = db.scalar(
         select(Vendor.name).where(
             Vendor.id == purchase_order.vendor_id,
-            Vendor.owner_user_id == effective_owner_id(auth),
+            Vendor.shop_id == effective_shop_id(db, auth),
         )
     )
     return PurchaseOrderRead(
@@ -187,7 +185,7 @@ def create_purchase_order(
             for part_id, unit_cost, quantity in validated_items
         ]
         purchase_order = PurchaseOrder(
-            owner_user_id=effective_owner_id(auth),
+            owner_user_id=effective_shop_owner_id(db, auth),
             shop_id=resolve_shop_id(db, auth),
             vendor_id=payload.vendor_id,
             po_number=_next_po_number(db, auth),
@@ -236,7 +234,7 @@ def list_purchase_orders(
     if page < 1:
         raise PurchaseOrderStoreError("Page must be 1 or greater.")
 
-    query = _owner_query(auth)
+    query = _owner_query(db, auth)
     if status is not None:
         query = query.where(PurchaseOrder.status == status.value)
     if vendor_id is not None:
@@ -353,7 +351,7 @@ def receive_purchase_order_line_item(
 
     part = db.scalar(
         select(Part)
-        .where(Part.id == line_item.part_id)
+        .where(Part.id == line_item.part_id, Part.shop_id == purchase_order.shop_id)
         .with_for_update()
         .execution_options(populate_existing=True)
     )
@@ -397,7 +395,10 @@ def list_purchase_order_receipts(
     purchase_order = _get_purchase_order(db, auth, purchase_order_id)
     receipts = db.scalars(
         select(PurchaseOrderReceipt)
-        .where(PurchaseOrderReceipt.purchase_order_id == purchase_order.id)
+        .where(
+            PurchaseOrderReceipt.purchase_order_id == purchase_order.id,
+            PurchaseOrderReceipt.shop_id == purchase_order.shop_id,
+        )
         .order_by(PurchaseOrderReceipt.created_at.asc(), PurchaseOrderReceipt.id.asc())
     ).all()
     return PurchaseOrderReceiptsResponse(

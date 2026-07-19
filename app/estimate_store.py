@@ -9,7 +9,7 @@ from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from sqlalchemy import Select, func, select
 from sqlalchemy.orm import Session
 
-from app.auth import AuthContext, effective_owner_id, ensure_utc
+from app.auth import AuthContext, effective_shop_id, effective_shop_owner_id, ensure_utc
 from app.customer_store import display_name as customer_display_name
 from app.customer_store import get_customer_model
 from app.db_models import (
@@ -257,8 +257,8 @@ def _validate_estimate_ready_for_approval(
         raise EstimateStoreError("Zero-value estimates cannot be sent for approval.")
 
 
-def _estimate_query(auth: AuthContext) -> Select[tuple[Estimate]]:
-    return select(Estimate).where(Estimate.owner_user_id == effective_owner_id(auth))
+def _estimate_query(db: Session, auth: AuthContext) -> Select[tuple[Estimate]]:
+    return select(Estimate).where(Estimate.shop_id == effective_shop_id(db, auth))
 
 
 def _approval_request_query(token: str) -> Select[tuple[EstimateApprovalRequest]]:
@@ -439,7 +439,7 @@ def _estimate_to_read(estimate: Estimate) -> EstimateRead:
 
 
 def _require_estimate(db: Session, auth: AuthContext, estimate_id: int) -> Estimate:
-    estimate = db.scalar(_estimate_query(auth).where(Estimate.id == estimate_id))
+    estimate = db.scalar(_estimate_query(db, auth).where(Estimate.id == estimate_id))
     if estimate is None:
         raise EstimateNotFoundError("Estimate not found.")
     return estimate
@@ -450,11 +450,11 @@ def _next_estimate_number(db: Session, auth: AuthContext) -> str:
         db.scalar(
             select(func.count())
             .select_from(Estimate)
-            .where(Estimate.owner_user_id == effective_owner_id(auth))
+            .where(Estimate.shop_id == effective_shop_id(db, auth))
         )
         or 0
     )
-    return f"EST-{effective_owner_id(auth):03d}-{count + 1:05d}"
+    return f"EST-{effective_shop_owner_id(db, auth):03d}-{count + 1:05d}"
 
 
 async def _build_estimate_payload(
@@ -553,7 +553,7 @@ async def create_estimate(
         approval_due_at=approval_due_at,
     )
     estimate = Estimate(
-        owner_user_id=effective_owner_id(auth),
+        owner_user_id=effective_shop_owner_id(db, auth),
         shop_id=resolve_shop_id(db, auth),
         customer_id=payload.customer_id,
         vehicle_id=payload.vehicle_id,
@@ -568,7 +568,7 @@ async def create_estimate(
     db.flush()
     revision = EstimateRevision(
         estimate_id=estimate.id,
-        owner_user_id=effective_owner_id(auth),
+        owner_user_id=effective_shop_owner_id(db, auth),
         shop_id=estimate.shop_id,
         revision_number=1,
         status=EstimateStatus.DRAFT.value,
@@ -605,7 +605,7 @@ def list_estimates(
 ) -> EstimateListResponse:
     if page < 1:
         raise EstimateStoreError("Page must be 1 or greater.")
-    query = _estimate_query(auth).where(Estimate.is_archived == archived)
+    query = _estimate_query(db, auth).where(Estimate.is_archived == archived)
     if status is not None:
         query = query.where(Estimate.status == status.value)
     if customer_id is not None:
@@ -731,7 +731,7 @@ async def create_estimate_revision(
     next_revision_number = estimate.current_revision_number + 1
     revision = EstimateRevision(
         estimate_id=estimate.id,
-        owner_user_id=effective_owner_id(auth),
+        owner_user_id=effective_shop_owner_id(db, auth),
         shop_id=estimate.shop_id,
         revision_number=next_revision_number,
         status=EstimateStatus.READY.value,
@@ -774,7 +774,7 @@ def send_estimate_for_approval(
     approval_request = EstimateApprovalRequest(
         estimate_id=estimate.id,
         estimate_revision_id=revision.id,
-        owner_user_id=effective_owner_id(auth),
+        owner_user_id=effective_shop_owner_id(db, auth),
         shop_id=estimate.shop_id,
         token_hash=_hash_token(token),
         status="active",
@@ -1071,7 +1071,10 @@ def approval_history(
     estimate = _require_estimate(db, auth, estimate_id)
     events = db.scalars(
         select(EstimateApprovalEvent)
-        .where(EstimateApprovalEvent.estimate_id == estimate.id)
+        .where(
+            EstimateApprovalEvent.estimate_id == estimate.id,
+            EstimateApprovalEvent.shop_id == estimate.shop_id,
+        )
         .order_by(EstimateApprovalEvent.created_at.asc(), EstimateApprovalEvent.id.asc())
     ).all()
     active_request = db.scalar(

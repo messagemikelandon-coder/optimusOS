@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 import app.main as main
 from app.auth import hash_password, require_owner_context, require_owner_or_technician_context
 from app.db import get_db_session, get_settings
-from app.db_models import UserAccount
+from app.db_models import ShopMembership, UserAccount
 
 pytestmark = pytest.mark.anyio
 
@@ -155,6 +155,16 @@ def _create_technician(db_session: Session, *, shop_owner_id: int) -> UserAccoun
     db_session.add(user)
     db_session.commit()
     db_session.refresh(user)
+    shop_id = db_session.scalar(
+        select(ShopMembership.shop_id).where(
+            ShopMembership.user_account_id == shop_owner_id,
+            ShopMembership.role == "owner",
+            ShopMembership.is_active.is_(True),
+        )
+    )
+    assert shop_id is not None
+    db_session.add(ShopMembership(shop_id=shop_id, user_account_id=user.id, role="technician"))
+    db_session.commit()
     return user
 
 

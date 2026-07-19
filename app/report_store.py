@@ -7,7 +7,7 @@ from decimal import Decimal
 from sqlalchemy import case, func, select
 from sqlalchemy.orm import Session
 
-from app.auth import AuthContext, effective_owner_id, ensure_utc
+from app.auth import AuthContext, effective_shop_id, ensure_utc
 from app.db_models import (
     DiagnosticFinding,
     Inspection,
@@ -63,7 +63,7 @@ def get_payment_activity_report(
         select(InvoicePayment, Invoice.invoice_number)
         .join(Invoice, Invoice.id == InvoicePayment.invoice_id)
         .where(
-            InvoicePayment.owner_user_id == effective_owner_id(auth),
+            InvoicePayment.shop_id == effective_shop_id(db, auth),
             InvoicePayment.recorded_at >= date_from,
             InvoicePayment.recorded_at < date_to,
         )
@@ -120,7 +120,7 @@ def get_technician_time_report(
 ) -> TechnicianTimeReportResponse:
     technicians = db.scalars(
         select(Technician).where(
-            Technician.owner_user_id == effective_owner_id(auth),
+            Technician.shop_id == effective_shop_id(db, auth),
             Technician.is_archived.is_(False),
         )
     ).all()
@@ -140,6 +140,7 @@ def get_technician_time_report(
         entries = db.scalars(
             select(TechnicianTimeEntry).where(
                 TechnicianTimeEntry.technician_id == technician.id,
+                TechnicianTimeEntry.shop_id == technician.shop_id,
                 TechnicianTimeEntry.clock_in_at >= date_from,
                 TechnicianTimeEntry.clock_in_at < date_to,
             )
@@ -212,7 +213,7 @@ def get_inventory_valuation_report(
         select(Part, Vendor.name)
         .outerjoin(Vendor, Vendor.id == Part.vendor_id)
         .where(
-            Part.owner_user_id == effective_owner_id(auth),
+            Part.shop_id == effective_shop_id(db, auth),
             Part.is_archived.is_(False),
         )
     ).all()
@@ -304,7 +305,7 @@ def get_parts_usage_report(
         .join(PartAllocation, PartAllocation.id == PartAllocationEvent.allocation_id)
         .join(Part, Part.id == PartAllocation.part_id)
         .where(
-            PartAllocation.owner_user_id == effective_owner_id(auth),
+            PartAllocation.shop_id == effective_shop_id(db, auth),
             PartAllocationEvent.event_type == "used",
             PartAllocationEvent.created_at >= date_from,
             PartAllocationEvent.created_at < date_to,
@@ -375,7 +376,7 @@ def get_vendor_purchasing_report(
         )
         .join(Vendor, Vendor.id == PurchaseOrder.vendor_id)
         .where(
-            PurchaseOrder.owner_user_id == effective_owner_id(auth),
+            PurchaseOrder.shop_id == effective_shop_id(db, auth),
             PurchaseOrder.submitted_at.is_not(None),
             PurchaseOrder.submitted_at >= date_from,
             PurchaseOrder.submitted_at < date_to,
@@ -425,7 +426,7 @@ def get_work_order_cycle_time_report(
         select(WorkOrder.created_at, WorkOrder.is_comeback, WorkOrderStatusEvent.created_at)
         .join(WorkOrderStatusEvent, WorkOrderStatusEvent.work_order_id == WorkOrder.id)
         .where(
-            WorkOrderStatusEvent.owner_user_id == effective_owner_id(auth),
+            WorkOrderStatusEvent.shop_id == effective_shop_id(db, auth),
             WorkOrderStatusEvent.to_status == WorkOrderStatus.COMPLETED.value,
             WorkOrderStatusEvent.created_at >= date_from,
             WorkOrderStatusEvent.created_at < date_to,
@@ -476,11 +477,11 @@ def get_diagnostic_inspection_report(
     layer (`InspectionItem` in `app/models.py`) enforces its shape on every
     write, so counting status literals in Python here is reading a genuinely
     structured field, not guessing at freeform data."""
-    owner_id = effective_owner_id(auth)
+    shop_id = effective_shop_id(db, auth)
 
     finding_rows = db.execute(
         select(DiagnosticFinding.conclusion).where(
-            DiagnosticFinding.owner_user_id == owner_id,
+            DiagnosticFinding.shop_id == shop_id,
             DiagnosticFinding.created_at >= date_from,
             DiagnosticFinding.created_at < date_to,
         )
@@ -490,7 +491,7 @@ def get_diagnostic_inspection_report(
 
     inspection_rows = db.execute(
         select(Inspection.items).where(
-            Inspection.owner_user_id == owner_id,
+            Inspection.shop_id == shop_id,
             Inspection.created_at >= date_from,
             Inspection.created_at < date_to,
         )

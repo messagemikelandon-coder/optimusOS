@@ -7,7 +7,7 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy import Select, func, select
 from sqlalchemy.orm import Session
 
-from app.auth import AuthContext, effective_owner_id, ensure_utc
+from app.auth import AuthContext, effective_shop_owner_id, ensure_utc
 from app.config import Settings
 from app.db_models import ContextEntry
 from app.models import ContextDeleteResponse, ContextEntryRead, ContextListResponse, ContextScope
@@ -85,12 +85,13 @@ def stale_cutoff(settings: Settings) -> datetime:
 
 
 def _base_query(
+    db: Session,
     auth: AuthContext,
     normalized_scope: NormalizedScope,
 ) -> Select[tuple[ContextEntry]]:
     return (
         select(ContextEntry)
-        .where(ContextEntry.user_id == effective_owner_id(auth))
+        .where(ContextEntry.user_id == effective_shop_owner_id(db, auth))
         .where(ContextEntry.project_key == normalized_scope.project_key)
         .where(ContextEntry.scope_type == normalized_scope.scope.value)
         .where(ContextEntry.scope_key == normalized_scope.scope_key)
@@ -123,14 +124,14 @@ def list_entries(
     entries: list[ContextEntry]
     if scope is ContextScope.SESSION:
         session_entries = db.scalars(
-            _base_query(auth, normalized_scope).order_by(
+            _base_query(db, auth, normalized_scope).order_by(
                 ContextEntry.updated_at.desc(),
                 ContextEntry.id.desc(),
             )
         ).all()
         project_scope = normalize_scope(project_key, ContextScope.PROJECT, auth)
         project_entries = db.scalars(
-            _base_query(auth, project_scope).order_by(
+            _base_query(db, auth, project_scope).order_by(
                 ContextEntry.updated_at.desc(),
                 ContextEntry.id.desc(),
             )
@@ -143,7 +144,7 @@ def list_entries(
     else:
         entries = list(
             db.scalars(
-                _base_query(auth, normalized_scope).order_by(
+                _base_query(db, auth, normalized_scope).order_by(
                     ContextEntry.updated_at.desc(),
                     ContextEntry.id.desc(),
                 )
@@ -173,7 +174,7 @@ def upsert_entry(
     normalized_key = normalize_identifier(context_key, field_name="context_key")
     normalized_value = validate_context_value(value, settings)
     existing = db.scalar(
-        _base_query(auth, normalized_scope).where(ContextEntry.context_key == normalized_key)
+        _base_query(db, auth, normalized_scope).where(ContextEntry.context_key == normalized_key)
     )
     if existing is not None:
         if expected_revision is not None and existing.revision != expected_revision:
@@ -190,7 +191,7 @@ def upsert_entry(
     count = db.scalar(
         select(func.count())
         .select_from(ContextEntry)
-        .where(ContextEntry.user_id == effective_owner_id(auth))
+        .where(ContextEntry.user_id == effective_shop_owner_id(db, auth))
         .where(ContextEntry.scope_type == normalized_scope.scope.value)
         .where(ContextEntry.scope_key == normalized_scope.scope_key)
     )
@@ -200,7 +201,7 @@ def upsert_entry(
         )
 
     entry = ContextEntry(
-        user_id=effective_owner_id(auth),
+        user_id=effective_shop_owner_id(db, auth),
         auth_session_id=normalized_scope.auth_session_id,
         project_key=normalized_scope.project_key,
         scope_type=normalized_scope.scope.value,
@@ -228,7 +229,7 @@ def delete_entry(
     normalized_scope = normalize_scope(project_key, scope, auth)
     normalized_key = normalize_identifier(context_key, field_name="context_key")
     entry = db.scalar(
-        _base_query(auth, normalized_scope).where(ContextEntry.context_key == normalized_key)
+        _base_query(db, auth, normalized_scope).where(ContextEntry.context_key == normalized_key)
     )
     if entry is None:
         raise ContextStoreError("Context entry was not found.")

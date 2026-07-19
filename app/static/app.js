@@ -310,7 +310,7 @@ function setAuthState(authenticated, user = null, expiresAt = null) {
   if (
     authenticated &&
     !wasAuthenticated &&
-    user?.role === "owner" &&
+    user?.role !== "technician" &&
     !requiresEmailVerification(user)
   )
     void refreshNotificationsBadge();
@@ -2926,31 +2926,16 @@ async function loadWorkOrders() {
     state.workOrders.items = data.items;
     state.workOrders.total = data.total;
     state.workOrders.hasMore = data.has_more;
-    let selectionCleared = false;
-    if (state.workOrders.selectedWorkOrderId) {
-      const selected = data.items.find((item) => item.id === state.workOrders.selectedWorkOrderId);
-      // List rows are summary records and intentionally omit detail-only fields
-      // such as allowed_next_statuses. Keep the already-loaded detail record
-      // authoritative while refreshing the list; replacing it with the summary
-      // briefly clears the status select and can discard an in-flight choice.
-      if (!selected) {
-        state.workOrders.selectedWorkOrderId = null;
-        state.workOrders.selectedWorkOrder = null;
-        selectionCleared = true;
-      }
-    }
     renderWorkOrderList();
-    // A list refresh must not rebuild an active detail form. Detail is loaded
-    // and rendered by selectWorkOrder or a successful mutation; re-rendering
-    // here can race with the user's form interaction even when state still
-    // contains the same record.
-    if (selectionCleared) renderWorkOrderDetail(null);
+    // List rows are summaries and can also exclude the selected record due to
+    // pagination, filters, or an older in-flight request. A list refresh must
+    // never rebuild or clear the active detail form; only selectWorkOrder or a
+    // successful detail mutation has authority over that state.
   } catch (error) {
     state.workOrders.items = [];
     state.workOrders.total = 0;
     state.workOrders.hasMore = false;
     renderWorkOrderList();
-    if (!state.workOrders.selectedWorkOrderId) renderWorkOrderDetail(null);
     showToast(`Work-order listing failed: ${error.message}`, "error");
   }
 }
@@ -7086,7 +7071,7 @@ function initializeApp() {
   void loadHealth(false);
   window.setInterval(() => loadHealth(false), 60000);
   window.setInterval(() => {
-    if (state.auth.authenticated && state.auth.user?.role === "owner") {
+    if (state.auth.authenticated && state.auth.user?.role !== "technician") {
       void refreshNotificationsBadge();
       void refreshApprovalQueueBadge();
     }

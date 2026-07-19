@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 
 from app.config import Settings, get_settings
 from app.db import build_session_factory, get_db_session
-from app.db_models import AuthSession, UserAccount
+from app.db_models import AuthSession, ShopMembership, UserAccount
 
 SettingsDep = Annotated[Settings, Depends(get_settings)]
 DbSessionDep = Annotated[Session, Depends(get_db_session)]
@@ -133,6 +133,9 @@ def create_auth_session(
         ip_address=request.client.host if request.client else None,
         user_agent=request.headers.get("user-agent"),
     )
+    # Do not mint even a dormant session for an orphaned, deactivated, or
+    # role-mismatched membership. Reactivation must require a fresh login.
+    effective_shop_id(db, AuthContext(user=user, session=auth_session))
     user.last_login_at = datetime.now(UTC)
     db.add(user)
     db.add(auth_session)
@@ -226,7 +229,13 @@ def get_current_auth_context(
         db.commit()
         db.refresh(auth_session)
         auth_session.expires_at = ensure_utc(auth_session.expires_at)
-        return AuthContext(user=user, session=auth_session)
+        auth = AuthContext(user=user, session=auth_session)
+        # Validate membership on every authenticated request, including routes
+        # that do not happen to load a business record. This makes membership
+        # deactivation immediate and prevents an orphaned or role-mismatched
+        # session from reaching chat, location, context, or account surfaces.
+        effective_shop_id(db, auth)
+        return auth
     except SQLAlchemyError as exc:
         logger.warning("Authentication lookup failed due to storage error.")
         raise HTTPException(
@@ -245,11 +254,9 @@ def require_authenticated_user(
 def effective_owner_id(auth: AuthContext) -> int:
     """The shop-owning user id that business data should be scoped to.
 
-    Owners scope to themselves. Technicians scope to their shop owner, so an
-    owner and their technicians share one pool of customers/estimates/work
-    orders/etc. Every store module must use this instead of `auth.user.id`
-    for data scoping (actor/audit fields like `created_by_user_id` still use
-    `auth.user.id` directly since those record who acted, not whose shop).
+    This remains only as a compatibility value for legacy `owner_user_id`
+    columns and human-readable record numbering. Authorization and record
+    lookup must use `effective_shop_id()` and the real `shop_id` boundary.
     """
     if auth.user.role == "owner":
         return auth.user.id
@@ -259,6 +266,62 @@ def effective_owner_id(auth: AuthContext) -> int:
             detail="This account is not associated with a shop owner.",
         )
     return auth.user.shop_owner_id
+
+
+def effective_shop_id(db: Session, auth: AuthContext) -> int:
+    """Resolve the one active Shop membership for this account.
+
+    Membership is the authorization source of truth. The legacy
+    `UserAccount.shop_owner_id` pointer is deliberately ignored here so a
+    stale or corrupted compatibility pointer cannot grant cross-shop access.
+    Migration 028 enforces at most one active membership per user; the
+    explicit two-row check keeps the application fail-closed on databases
+    that have not applied that constraint yet.
+    """
+    memberships = db.execute(
+        select(ShopMembership.shop_id, ShopMembership.role)
+        .where(
+            ShopMembership.user_account_id == auth.user.id,
+            ShopMembership.is_active.is_(True),
+        )
+        .order_by(ShopMembership.id)
+        .limit(2)
+    ).all()
+    if len(memberships) != 1 or memberships[0].role != auth.user.role:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="This account does not have one valid active shop membership.",
+        )
+    return memberships[0].shop_id
+
+
+def effective_shop_owner_id(db: Session, auth: AuthContext) -> int:
+    """Return the canonical active owner of the authenticated Shop.
+
+    Legacy business columns still require an `owner_user_id` compatibility
+    value. Resolve it through the same membership boundary as authorization;
+    never trust `UserAccount.shop_owner_id`, which can be stale or corrupted.
+    """
+    shop_id = effective_shop_id(db, auth)
+    owner_id = db.scalar(
+        select(ShopMembership.user_account_id)
+        .join(UserAccount, UserAccount.id == ShopMembership.user_account_id)
+        .where(
+            ShopMembership.shop_id == shop_id,
+            ShopMembership.role == "owner",
+            ShopMembership.is_active.is_(True),
+            UserAccount.role == "owner",
+            UserAccount.is_active.is_(True),
+        )
+        .order_by(ShopMembership.id)
+        .limit(1)
+    )
+    if owner_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="This shop does not have one valid active owner.",
+        )
+    return owner_id
 
 
 def require_role(auth: AuthContext, *allowed: str) -> None:
@@ -294,15 +357,15 @@ def require_verified_auth_context(
 def require_owner_context(
     auth: Annotated[AuthContext, Depends(get_current_auth_context)],
 ) -> AuthContext:
-    """Route dependency for endpoints that stay owner-only.
+    """Route dependency for endpoints available to Shop operators.
 
-    Most business routes are still owner-only. Technicians (as of sub-phase 2)
-    can log in, clock in/out, and view/update only their own assigned work
-    orders, diagnostic findings, and inspections via
+    Owners and managers can operate the Shop. Technicians can log in, clock
+    in/out, and view/update only their own assigned work orders, diagnostic
+    findings, and inspections via
     `require_owner_or_technician_context` below plus store-level scoping in
     `work_order_store.py`, `diagnostics_store.py`, and `inspection_store.py`.
     """
-    require_role(auth, "owner")
+    require_role(auth, "owner", "manager")
     require_verified_email_if_present(auth)
     return auth
 
@@ -310,13 +373,13 @@ def require_owner_context(
 def require_owner_or_technician_context(
     auth: Annotated[AuthContext, Depends(get_current_auth_context)],
 ) -> AuthContext:
-    """Route dependency for the small set of routes both roles can reach.
+    """Route dependency for routes Shop operators and technicians can reach.
 
     Does not by itself scope *which* rows a technician can see — the store
     layer (e.g. `work_order_store._work_order_query`) still filters a
-    technician down to their own assigned records via `effective_owner_id`
-    plus an explicit `assigned_technician_id` check.
+    technician down to their membership Shop and own profile/assignments via
+    `effective_shop_id` plus explicit `assigned_technician_id` checks.
     """
-    require_role(auth, "owner", "technician")
+    require_role(auth, "owner", "manager", "technician")
     require_verified_email_if_present(auth)
     return auth

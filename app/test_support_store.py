@@ -77,7 +77,7 @@ class SyntheticAccount:
     user_id: int
     username: str
     password: str
-    role: Literal["owner", "technician"]
+    role: Literal["owner", "manager", "technician"]
     technician_id: int | None = None
 
 

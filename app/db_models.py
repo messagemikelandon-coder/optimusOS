@@ -27,7 +27,7 @@ class UserAccount(Base):
     __tablename__ = "user_accounts"
     __table_args__ = (
         UniqueConstraint("username", name="uq_user_accounts_username"),
-        CheckConstraint("role IN ('owner', 'technician')", name="ck_user_accounts_role"),
+        CheckConstraint("role IN ('owner', 'manager', 'technician')", name="ck_user_accounts_role"),
         # Partial (not a plain UniqueConstraint) because pre-existing rows
         # and technician accounts have no email at all -- NULL must stay
         # unconstrained, only a real, provided email must be unique
@@ -2029,17 +2029,15 @@ class ShopMembership(Base):
         ),
         Index("ix_shop_memberships_shop_id", "shop_id"),
         Index("ix_shop_memberships_user_account_id", "user_account_id"),
-        # A user must resolve to exactly one shop as an active owner --
-        # security review found that without this, a future bug creating a
-        # second active owner-role membership for the same user would make
-        # `shop_store._shop_for_owner`'s shop resolution ambiguous rather
-        # than a loud, immediate constraint violation.
+        # A session currently represents one shop and has no shop-switching
+        # selector, so every account must resolve to exactly one active
+        # membership regardless of role.
         Index(
-            "uq_shop_memberships_one_active_owner_per_user",
+            "uq_shop_memberships_one_active_per_user",
             "user_account_id",
             unique=True,
-            sqlite_where=text("role = 'owner' AND is_active = 1"),
-            postgresql_where=text("role = 'owner' AND is_active = true"),
+            sqlite_where=text("is_active = 1"),
+            postgresql_where=text("is_active = true"),
         ),
     )
 
