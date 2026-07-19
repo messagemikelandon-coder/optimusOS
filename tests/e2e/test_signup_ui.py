@@ -2,9 +2,12 @@ from __future__ import annotations
 
 import re
 
+import httpx
 from playwright.sync_api import Page, expect
 
+from app.db import build_session_factory
 from tests.e2e.conftest import LiveServer
+from tests.e2e.seed import set_email_verification_token_for_test
 
 
 def test_signup_form_creates_shop_and_logs_in_via_real_browser(
@@ -32,14 +35,35 @@ def test_signup_form_creates_shop_and_logs_in_via_real_browser(
         page.click("#signup-submit")
     response = response_info.value
     assert response.status == 200
-    assert response.json()["user"]["role"] == "owner"
+    signup_body = response.json()
+    assert signup_body["user"]["role"] == "owner"
 
-    expect(page.locator("#view-dashboard")).to_be_visible()
+    expect(page.locator("#view-verify-email")).to_be_visible()
     expect(page.locator("#operator-name")).to_have_text("Alex Rivera")
 
+    blocked_status = page.evaluate(
+        """async () => (await fetch('/api/customers', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({first_name: 'Blocked', last_name: 'Before Verification'})
+        })).status"""
+    )
+    assert blocked_status == 403
+
+    raw_token = "browser-email-verification-token"
+    with build_session_factory(live_server.database_url)() as db:
+        set_email_verification_token_for_test(
+            db, user_id=signup_body["user"]["id"], raw_token=raw_token
+        )
+    page.fill("#verify-email-token", raw_token)
+    with page.expect_response(re.compile(r"/api/auth/verify-email$")) as verify_response_info:
+        page.click("#verify-email-submit")
+    assert verify_response_info.value.status == 200
+    expect(page.locator("#view-dashboard")).to_be_visible()
+
     # The signup form's own session cookie (not injected state) authenticates
-    # a real subsequent UI action, proving the login-on-signup flow is a
-    # genuine, working session -- not just a client-side auth flag flip.
+    # a real subsequent UI action after mailbox proof, proving both the
+    # session and verification gate are real server-side controls.
     page.click('[data-view="customers"]')
     expect(page.locator("#customer-form")).to_be_visible()
     page.fill("#customer-first-name", "Real")
@@ -63,3 +87,44 @@ def test_signup_and_login_views_cross_link_to_each_other(
     page.click('#view-signup [data-view="login"]')
     expect(page.locator("#view-login")).to_be_visible()
     assert page.url.endswith("/login")
+
+
+def test_email_verification_page_works_without_an_existing_session(
+    page: Page, live_server: LiveServer
+) -> None:
+    unique = str(id(page))
+    signup_response = httpx.post(
+        f"{live_server.base_url}/api/signup",
+        json={
+            "business_name": f"Fresh Browser Shop {unique}",
+            "owner_display_name": "Fresh Browser Owner",
+            "username": f"fresh.browser.{unique}",
+            "email": f"fresh.browser.{unique}@example.com",
+            "password": "a-real-password-123",
+        },
+        timeout=10,
+    )
+    signup_response.raise_for_status()
+
+    raw_token = "fresh-browser-email-verification-token"
+    with build_session_factory(live_server.database_url)() as db:
+        set_email_verification_token_for_test(
+            db, user_id=signup_response.json()["user"]["id"], raw_token=raw_token
+        )
+
+    browser = page.context.browser
+    assert browser is not None
+    fresh_context = browser.new_context()
+    verification_page = fresh_context.new_page()
+    try:
+        verification_page.goto(f"{live_server.base_url}/verify-email")
+        expect(verification_page.locator("#view-verify-email")).to_be_visible()
+        verification_page.fill("#verify-email-token", raw_token)
+        with verification_page.expect_response(
+            re.compile(r"/api/auth/verify-email$")
+        ) as response_info:
+            verification_page.click("#verify-email-submit")
+        assert response_info.value.status == 200
+        expect(verification_page.locator("#view-login")).to_be_visible()
+    finally:
+        fresh_context.close()

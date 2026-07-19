@@ -4,15 +4,16 @@ Purpose: concise operational snapshot of the verified current repository state.
 Information owner: repository maintainers and the current Codex session author.
 Read when: before every task, together with `SESSION_HANDOFF.md`.
 Update when: the branch, working status, live stack status, migrations, or quality-gate results change.
-Last verified date: 2026-07-13 (this pass: verified directly against `origin/main` at `077f4d3` from a clean isolated worktree — not carried forward from a prior session's claims). A `/goal` multi-shop-pilot roadmap is now in progress on top of this baseline — see the section immediately below and `docs/context/GOAL_EVIDENCE_MATRIX.md` for its own up-to-date status; the rest of this document (below that section) still reflects the pre-`/goal` single-shop baseline as of 2026-07-13.
+Last verified date: 2026-07-19. The `/goal` multi-shop-pilot roadmap is in progress; use the section immediately below plus `docs/context/GOAL_EVIDENCE_MATRIX.md` for current status. Older module history below remains useful background but is not the authoritative branch marker.
 Relevant sources: `git status --short --branch`, `git rev-parse HEAD`, `env UV_CACHE_DIR=/tmp/uv-cache uv run ruff format .`, `env UV_CACHE_DIR=/tmp/uv-cache uv run ruff check .`, `env UV_CACHE_DIR=/tmp/uv-cache uv run pyright`, `env UV_CACHE_DIR=/tmp/uv-cache uv run pytest -q`, `node --check app/static/app.js`, `docker compose config -q`, `docker compose build backend worker`, `docker compose up -d backend worker frontend`, `docker compose exec -T backend alembic heads`, `docker compose exec -T backend alembic upgrade head`, `docker compose exec -T backend alembic current`, `curl https://staging.optimus-os.com/health` and served-HTML marker checks, `gh pr list --state merged`, non-billable Playwright/API proof commands run from the local shell.
 
 ## `/goal` Multi-Shop Pilot Program (in progress)
 
 - Full requirement-by-requirement status lives in `docs/context/GOAL_EVIDENCE_MATRIX.md` — not duplicated here to avoid drift between two copies of the same table.
-- Merged to `main` (HEAD `8114a15`): Phase 0 (evidence matrix, PR #49), Phase 1 (request-concurrency fix — routes now offload blocking store calls via `asyncio.to_thread`, PR #50), Phase 2 (CI backup/restore/rollback rehearsal job + a real `IMAGE_PREFIX` bug it found in `scripts/optimusctl.sh`, PR #51).
-- In progress, not yet merged: Phase 3 slice 1 (Shop/tenant model — new `Shop`/`ShopSettings`/`ShopMembership`/`ShopInvitation`/`ShopEvent` tables plus a real-data backfill; business tables still scope by `owner_user_id`, not `shop_id` — that cutover is later, separate slices per the goal's own staged-migration plan). See `docs/context/SESSION_HANDOFF.md` for this slice's exact diff and verification evidence.
-- Remaining phases (4-17: onboarding, account lifecycle/security, workflow-gap tracking, billing, support-admin, observability, exports, pilot controls, feedback, expanded E2E, release-candidate prep, pilot operating package, final readiness report) are not started.
+- Synced `main` HEAD: `ba596a9` (PR #59, Phase 4 signup frontend). Phases 0-4 are merged: evidence matrix, request concurrency, CI backup/restore/rollback, staged Shop schema/backfill/NOT-NULL work, and self-service signup backend plus frontend.
+- Active isolated worktree: `.claude/worktrees/release-process`, branch `agent/claude/goal-phase5-account-security`, preserving and continuing the abandoned uncommitted Phase 5 worktree after its recorded process/lock was confirmed stale.
+- In progress, pending publication: Phase 5 slice 1 email verification. Migration head `027_email_verification`; full fast gates and complete E2E suite are green, including real-browser verification with and without the signup session. See `docs/context/SESSION_HANDOFF.md` for exact evidence.
+- Remaining engineering work: the rest of Phase 5 account lifecycle/security, the still-unfinished Phase 3 query-scoping/manager-role boundary, then Phases 6-17. The authoritative requirement-by-requirement status is the evidence matrix, not older completion prose below.
 
 ## Operational Snapshot
 

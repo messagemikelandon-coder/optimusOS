@@ -338,6 +338,10 @@ class ShopSignupRequest(BaseModel):
     password: Password
 
 
+class VerifyEmailRequest(BaseModel):
+    token: NonBlank = Field(max_length=256)
+
+
 class AuthUser(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -345,6 +349,8 @@ class AuthUser(BaseModel):
     username: str
     display_name: str
     role: str
+    email: str | None = None
+    email_verified_at: datetime | None = None
 
 
 class AuthSessionResponse(BaseModel):

@@ -238,6 +238,7 @@ def get_current_auth_context(
 def require_authenticated_user(
     auth: Annotated[AuthContext, Depends(get_current_auth_context)],
 ) -> UserAccount:
+    require_verified_email_if_present(auth)
     return auth.user
 
 
@@ -268,6 +269,28 @@ def require_role(auth: AuthContext, *allowed: str) -> None:
         )
 
 
+def require_verified_email_if_present(auth: AuthContext) -> None:
+    """Require mailbox proof for accounts created with an email address.
+
+    Legacy bootstrapped owners and technicians have no email, so they remain
+    usable until an explicit account-profile flow gives them one. A self-
+    service signup always has an email and stays limited to session recovery
+    routes until verification succeeds.
+    """
+    if auth.user.email is not None and auth.user.email_verified_at is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Email verification is required before using this workflow.",
+        )
+
+
+def require_verified_auth_context(
+    auth: Annotated[AuthContext, Depends(get_current_auth_context)],
+) -> AuthContext:
+    require_verified_email_if_present(auth)
+    return auth
+
+
 def require_owner_context(
     auth: Annotated[AuthContext, Depends(get_current_auth_context)],
 ) -> AuthContext:
@@ -280,6 +303,7 @@ def require_owner_context(
     `work_order_store.py`, `diagnostics_store.py`, and `inspection_store.py`.
     """
     require_role(auth, "owner")
+    require_verified_email_if_present(auth)
     return auth
 
 
@@ -294,4 +318,5 @@ def require_owner_or_technician_context(
     plus an explicit `assigned_technician_id` check.
     """
     require_role(auth, "owner", "technician")
+    require_verified_email_if_present(auth)
     return auth

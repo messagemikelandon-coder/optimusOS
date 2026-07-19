@@ -56,6 +56,9 @@ class UserAccount(Base):
     # eventually, an owner-editable profile field populate it.
     email: Mapped[str | None] = mapped_column(String(180))
     email_normalized: Mapped[str | None] = mapped_column(String(180))
+    # NULL means "unverified" -- also true, permanently, for every account
+    # with no email at all (bootstrapped owner, technicians). /goal Phase 5.
+    email_verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     is_active: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=True, server_default="true"
     )
@@ -131,6 +134,45 @@ class AuthSession(Base):
 
     user: Mapped[UserAccount] = relationship(back_populates="sessions")
     context_entries: Mapped[list[ContextEntry]] = relationship(back_populates="auth_session")
+
+
+class EmailVerificationToken(Base):
+    """Token requirements (/goal Phase 5): random, hashed at rest,
+    expiring, single-use (`status`), revocable, auditable -- matches the
+    established `EstimateApprovalRequest` token pattern. Only
+    `token_hash` is ever stored; the raw token exists only in memory
+    long enough to be included in the (non-sending, /goal Phase 5)
+    verification email."""
+
+    __tablename__ = "email_verification_tokens"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('active', 'used', 'expired', 'revoked')",
+            name="ck_email_verification_tokens_status",
+        ),
+        Index("ix_email_verification_tokens_user_account_id", "user_account_id"),
+        Index("uq_email_verification_tokens_token_hash", "token_hash", unique=True),
+        Index(
+            "uq_email_verification_tokens_active_user",
+            "user_account_id",
+            unique=True,
+            sqlite_where=text("status = 'active'"),
+            postgresql_where=text("status = 'active'"),
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    user_account_id: Mapped[int] = mapped_column(
+        ForeignKey("user_accounts.id", ondelete="CASCADE"), nullable=False
+    )
+    token_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="active")
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
 
 
 class ContextEntry(Base):

@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import httpx
 
+from app.db import build_session_factory
 from tests.e2e.conftest import LiveServer
+from tests.e2e.seed import set_email_verification_token_for_test
 
 
 def test_signup_creates_a_real_shop_and_logs_in_via_the_real_api(live_server: LiveServer) -> None:
@@ -30,6 +32,17 @@ def test_signup_creates_a_real_shop_and_logs_in_via_the_real_api(live_server: Li
     me_response = client.get("/api/auth/me")
     me_response.raise_for_status()
     assert me_response.json()["user"]["id"] == body["user"]["id"]
+
+    customer_response = client.post(
+        "/api/customers", json={"first_name": "Real", "last_name": "Customer"}
+    )
+    assert customer_response.status_code == 403
+
+    raw_token = "e2e-email-verification-token"
+    with build_session_factory(live_server.database_url)() as db:
+        set_email_verification_token_for_test(db, user_id=body["user"]["id"], raw_token=raw_token)
+    verification_response = client.post("/api/auth/verify-email", json={"token": raw_token})
+    verification_response.raise_for_status()
 
     customer_response = client.post(
         "/api/customers", json={"first_name": "Real", "last_name": "Customer"}
