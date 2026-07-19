@@ -97,6 +97,16 @@ class Settings(BaseSettings):
     square_location_id: str = ""
     square_timeout_seconds: float = Field(default=20.0, ge=2, le=120)
 
+    # /goal Phase 7: Square Subscriptions plan-variation ids for OptimusOS's
+    # own shop-subscription tiers (billing the shop, distinct from the
+    # customer-invoice integration above). Each must be created once in the
+    # Square Catalog (sandbox) before that tier can be subscribed to; a blank
+    # value means that tier is not yet billable and `subscribe()` rejects it
+    # with a clear error rather than calling Square with an empty id.
+    square_solo_plan_variation_id: str = ""
+    square_team_plan_variation_id: str = ""
+    square_shop_plan_variation_id: str = ""
+
     autonomy_mode: Literal["owner_full_control", "guarded"] = "owner_full_control"
     direct_owner_chat_default: bool = True
     agent_delegation_enabled: bool = True

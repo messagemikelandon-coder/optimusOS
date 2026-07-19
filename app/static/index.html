@@ -26,7 +26,10 @@
         <a href="#field">Built in the field</a>
         <a href="#control">Owner control</a>
       </nav>
-      <a class="marketing-signin" href="/login">Owner sign in</a>
+      <div class="marketing-header-actions">
+        <a class="marketing-signin" href="#pricing">Pricing</a>
+        <a class="marketing-signin" href="/login">Owner sign in</a>
+      </div>
     </header>
 
     <main id="marketing-main">
@@ -190,6 +193,46 @@
         </ul>
       </section>
 
+      <section class="marketing-section" id="pricing">
+        <div class="marketing-section-lead">
+          <span class="section-kicker"><i></i> Pricing</span>
+          <h2>One plan for every shop size.</h2>
+          <p>Every plan includes the full OptimusOS workflow &mdash; customers, vehicles, estimates, work orders, invoices, and scheduling. Plans differ only by how many technician seats you need. Every new shop starts with a 14-day free trial; no card required to start.</p>
+        </div>
+        <div class="pricing-grid">
+          <article class="panel pricing-card">
+            <div class="pricing-card-heading"><span>Solo</span><strong>$49<small>/mo</small></strong></div>
+            <p class="pricing-card-seats">1 technician seat</p>
+            <ul class="pricing-card-features">
+              <li>Full customer &amp; vehicle records</li>
+              <li>Estimates, approvals &amp; invoicing</li>
+              <li>Work orders &amp; scheduling</li>
+            </ul>
+            <a class="primary-button" href="/signup?tier=solo">Start free trial</a>
+          </article>
+          <article class="panel pricing-card is-featured">
+            <div class="pricing-card-heading"><span>Team</span><strong>$99<small>/mo</small></strong></div>
+            <p class="pricing-card-seats">Up to 5 technician seats</p>
+            <ul class="pricing-card-features">
+              <li>Everything in Solo</li>
+              <li>Technician clock-in/out &amp; assignment</li>
+              <li>Manager role with delegated invitations</li>
+            </ul>
+            <a class="primary-button" href="/signup?tier=team">Start free trial</a>
+          </article>
+          <article class="panel pricing-card">
+            <div class="pricing-card-heading"><span>Shop</span><strong>$199<small>/mo</small></strong></div>
+            <p class="pricing-card-seats">Unlimited technician seats</p>
+            <ul class="pricing-card-features">
+              <li>Everything in Team</li>
+              <li>No seat limit as your crew grows</li>
+              <li>Priority for future support &amp; reporting features</li>
+            </ul>
+            <a class="primary-button" href="/signup?tier=shop">Start free trial</a>
+          </article>
+        </div>
+      </section>
+
       <section class="marketing-control" id="control">
         <div class="marketing-control-lead">
           <span class="section-kicker"><i></i> Owner approval boundary</span>
@@ -218,6 +261,7 @@
         <a href="#platform">Platform</a>
         <a href="#workflow">Workflow</a>
         <a href="#field">Built in the field</a>
+        <a href="#pricing">Pricing</a>
         <a href="#control">Owner control</a>
         <a href="/login">Owner sign in</a>
       </nav>
@@ -528,6 +572,59 @@
                 </div>
               </section>
             </aside>
+          </div>
+        </section>
+
+        <section class="app-view" id="view-choose-plan" data-view-panel="choose-plan" hidden>
+          <div class="chat-layout">
+            <section class="panel chat-workbench">
+              <div class="panel-heading chat-heading">
+                <div class="heading-with-avatar">
+                  <div class="optimus-avatar"><span class="avatar-core"></span></div>
+                  <div><span class="section-kicker"><i></i> Onboarding</span><h2>Choose your plan</h2><p>Your shop already has a 14-day free trial running. Subscribe now if you're ready, or keep exploring and subscribe later from System bay &rarr; Billing.</p></div>
+                </div>
+              </div>
+              <div id="choose-plan-status" class="location-display">
+                <div class="status-marker" aria-hidden="true"></div>
+                <div><strong id="choose-plan-status-title">Loading your trial&hellip;</strong><p id="choose-plan-status-detail">Fetching subscription status.</p></div>
+              </div>
+              <div class="pricing-grid" id="choose-plan-grid">
+                <article class="panel pricing-card" data-plan-tier="solo">
+                  <div class="pricing-card-heading"><span>Solo</span><strong>$49<small>/mo</small></strong></div>
+                  <p class="pricing-card-seats">1 technician seat</p>
+                  <ul class="pricing-card-features">
+                    <li>Full customer &amp; vehicle records</li>
+                    <li>Estimates, approvals &amp; invoicing</li>
+                    <li>Work orders &amp; scheduling</li>
+                  </ul>
+                  <button class="primary-button" type="button" data-choose-tier="solo">Choose Solo</button>
+                </article>
+                <article class="panel pricing-card is-featured" data-plan-tier="team">
+                  <div class="pricing-card-heading"><span>Team</span><strong>$99<small>/mo</small></strong></div>
+                  <p class="pricing-card-seats">Up to 5 technician seats</p>
+                  <ul class="pricing-card-features">
+                    <li>Everything in Solo</li>
+                    <li>Technician clock-in/out &amp; assignment</li>
+                    <li>Manager role with delegated invitations</li>
+                  </ul>
+                  <button class="primary-button" type="button" data-choose-tier="team">Choose Team</button>
+                </article>
+                <article class="panel pricing-card" data-plan-tier="shop">
+                  <div class="pricing-card-heading"><span>Shop</span><strong>$199<small>/mo</small></strong></div>
+                  <p class="pricing-card-seats">Unlimited technician seats</p>
+                  <ul class="pricing-card-features">
+                    <li>Everything in Team</li>
+                    <li>No seat limit as your crew grows</li>
+                    <li>Priority for future support &amp; reporting features</li>
+                  </ul>
+                  <button class="primary-button" type="button" data-choose-tier="shop">Choose Shop</button>
+                </article>
+              </div>
+              <div class="estimate-submit-row">
+                <div><strong>Not ready to subscribe?</strong><span>Your free trial keeps running either way.</span></div>
+                <button class="secondary-button large" type="button" id="choose-plan-skip">Continue with free trial</button>
+              </div>
+            </section>
           </div>
         </section>
 
@@ -2676,6 +2773,25 @@
             <section class="panel access-panel" data-owner-only="true">
               <div class="panel-heading"><div><span class="section-kicker"><i></i> Team status</span><h3>Shop members</h3></div><span class="security-badge">Session revocation</span></div>
               <div id="shop-member-list" class="stacked-actions"><div class="empty-card"><p>No members loaded.</p></div></div>
+            </section>
+
+            <section class="panel access-panel" data-owner-only="true">
+              <div class="panel-heading"><div><span class="section-kicker"><i></i> Platform subscription</span><h3>Billing</h3></div><button class="secondary-button compact" type="button" id="billing-refresh">Refresh status</button></div>
+              <div id="billing-summary" class="location-display">
+                <div class="status-marker" aria-hidden="true"></div>
+                <div><strong id="billing-status-title">Loading…</strong><p id="billing-status-detail">Fetching subscription status.</p></div>
+              </div>
+              <div class="form-grid three">
+                <label class="field">Plan <select id="billing-tier"><option value="solo">Solo — 1 seat</option><option value="team">Team — up to 5 seats</option><option value="shop">Shop — unlimited seats</option></select></label>
+                <div class="estimate-submit-row"><button class="secondary-button compact" type="button" id="billing-subscribe">Subscribe with this plan</button></div>
+                <div class="estimate-submit-row"><button class="secondary-button compact" type="button" id="billing-change-tier">Change existing plan</button></div>
+                <div class="estimate-submit-row"><button class="text-button" type="button" id="billing-cancel">Cancel subscription</button></div>
+              </div>
+              <div class="estimate-submit-row">
+                <div><strong>Payment method</strong><span id="billing-payment-status">No payment method on file.</span></div>
+                <button class="secondary-button compact" type="button" id="billing-add-payment-method">Add sandbox test card</button>
+              </div>
+              <div id="billing-events" class="stacked-actions"><div class="empty-card"><p>No billing history yet.</p></div></div>
             </section>
 
             <section class="panel location-panel">

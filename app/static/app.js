@@ -197,6 +197,7 @@ const state = {
     workingHours: [],
   },
   accountSecurity: { generation: 0 },
+  billing: { generation: 0 },
   workflowGaps: {
     items: [], selectedId: null, page: 1, pageSize: 20, total: 0, hasMore: false,
     search: "", statusFilter: "", severityFilter: "",
@@ -214,6 +215,7 @@ const viewMeta = {
   "forgot-password": { eyebrow: "Account recovery", title: "Request password reset" },
   "reset-password": { eyebrow: "Account recovery", title: "Set a new password" },
   "accept-invitation": { eyebrow: "Shop access", title: "Accept invitation" },
+  "choose-plan": { eyebrow: "Onboarding", title: "Choose your plan" },
   dashboard: { eyebrow: "Operations", title: "Overview" },
   customers: { eyebrow: "Records", title: "Customers" },
   vehicles: { eyebrow: "Fleet", title: "Vehicles" },
@@ -318,12 +320,15 @@ function applyRoleNavVisibility() {
 
 function clearAccountSecurity(message = "Sign in to load account security.") {
   state.accountSecurity.generation += 1;
+  state.billing.generation += 1;
   const empty = `<div class="empty-card"><p>${escapeHtml(message)}</p></div>`;
-  ["account-session-list", "account-login-history", "shop-invitation-list", "shop-member-list"]
+  ["account-session-list", "account-login-history", "shop-invitation-list", "shop-member-list", "billing-events"]
     .forEach((id) => {
       if ($(id)) $(id).innerHTML = empty;
     });
   if ($("account-mfa-status")) $("account-mfa-status").textContent = "MFA-ready";
+  if ($("billing-status-title")) $("billing-status-title").textContent = "Sign in to load billing";
+  if ($("billing-status-detail")) $("billing-status-detail").textContent = message;
 }
 
 function clearWorkflowGaps(message = "Sign in to load workflow gaps.") {
@@ -472,6 +477,12 @@ async function handleLoginSubmit(event) {
   }
 }
 
+function consumeJustSignedUpFlag() {
+  const justSignedUp = sessionStorage.getItem("optimusJustSignedUp") === "1";
+  sessionStorage.removeItem("optimusJustSignedUp");
+  return justSignedUp;
+}
+
 async function handleSignupSubmit(event) {
   event.preventDefault();
   const submit = $("signup-submit");
@@ -493,6 +504,7 @@ async function handleSignupSubmit(event) {
     if (!response.ok || !data) throw apiError(response, data, "Could not create your shop");
     setAuthState(true, data.user, data.expires_at);
     $("signup-password").value = "";
+    sessionStorage.setItem("optimusJustSignedUp", "1");
     showToast("Shop created. Verify your email to continue.", "success");
     navigate("verify-email");
   } catch (error) {
@@ -526,7 +538,7 @@ async function handleVerifyEmailSubmit(event) {
       showToast("Email verified. Your shop is ready.", "success");
       void loadCustomerOptions();
       void restoreSelectionsFromContext();
-      navigate("dashboard");
+      navigate(consumeJustSignedUpFlag() ? "choose-plan" : "dashboard");
     } else {
       showToast("Email verified. Sign in to continue.", "success");
       navigate("login");
@@ -674,6 +686,51 @@ function renderShopInvitations(invitations) {
     : '<div class="empty-card"><p>No invitations yet.</p></div>';
 }
 
+function billingTierLabel(tier) {
+  return { solo: "Solo (1 seat)", team: "Team (up to 5 seats)", shop: "Shop (unlimited seats)" }[tier] || tier;
+}
+
+function renderBilling(subscription) {
+  const detail = $("billing-status-title");
+  const sub = $("billing-status-detail");
+  detail.textContent = `${billingTierLabel(subscription.tier)} · ${subscription.billing_status.replace("_", " ")}`;
+  const parts = [];
+  if (subscription.is_access_suspended) parts.push("Access is currently suspended -- resolve billing to restore it.");
+  if (subscription.trial_ends_at) parts.push(`Trial ends ${new Date(subscription.trial_ends_at).toLocaleDateString()}.`);
+  if (subscription.grace_period_ends_at) parts.push(`Grace period ends ${new Date(subscription.grace_period_ends_at).toLocaleDateString()}.`);
+  if (subscription.current_period_end) parts.push(`Current period ends ${new Date(subscription.current_period_end).toLocaleDateString()}.`);
+  parts.push(`${subscription.seats_used} of ${subscription.seat_limit === null ? "unlimited" : subscription.seat_limit} technician seat(s) used.`);
+  sub.textContent = parts.join(" ");
+  $("billing-payment-status").textContent = subscription.has_payment_method
+    ? "A payment method is on file."
+    : "No payment method on file.";
+  $("billing-tier").value = subscription.tier;
+  $("billing-cancel").disabled = subscription.billing_status === "canceled";
+}
+
+function renderBillingEvents(events) {
+  $("billing-events").innerHTML = events.length
+    ? events.map((event) => `<div class="context-action"><b>${escapeHtml(event.event_type.replace(/_/g, " ").toUpperCase())}</b><span><small>${new Date(event.created_at).toLocaleString()}</small></span></div>`).join("")
+    : '<div class="empty-card"><p>No billing history yet.</p></div>';
+}
+
+async function loadBilling() {
+  const generation = ++state.billing.generation;
+  try {
+    const [subscription, events] = await Promise.all([
+      accountApi("/api/billing/subscription"),
+      accountApi("/api/billing/events"),
+    ]);
+    if (generation !== state.billing.generation) return;
+    renderBilling(subscription);
+    renderBillingEvents(events.items);
+  } catch (error) {
+    if (generation !== state.billing.generation) return;
+    $("billing-status-title").textContent = "Billing unavailable";
+    $("billing-status-detail").textContent = error.message;
+  }
+}
+
 function renderShopMembers(members) {
   $("shop-member-list").innerHTML = members.length
     ? members.map((member) => {
@@ -721,6 +778,7 @@ async function loadAccountSecurity() {
       ) return;
       renderShopInvitations(invitations);
       renderShopMembers(members);
+      await loadBilling();
     } else {
       $("shop-invitation-list").innerHTML = '<div class="empty-card"><p>Shop administration is unavailable for technician accounts.</p></div>';
       $("shop-member-list").innerHTML = '<div class="empty-card"><p>Shop administration is unavailable for technician accounts.</p></div>';
@@ -836,6 +894,117 @@ function initializeAccountSecurity() {
       await loadAccountSecurity();
     }
   });
+  $("billing-refresh").addEventListener("click", async () => {
+    try {
+      await accountApi("/api/billing/refresh", { method: "POST" });
+      showToast("Billing status refreshed.", "success");
+      await loadBilling();
+    } catch (error) {
+      showToast(`Billing refresh failed: ${error.message}`, "error");
+    }
+  });
+  $("billing-add-payment-method").addEventListener("click", async () => {
+    try {
+      // Sandbox-only: Square's documented test-nonce stands in for a real
+      // card-capture form, which needs its own CSP/architecture decision
+      // (Square's Web Payments SDK) before this can accept a real card.
+      await accountApi("/api/billing/payment-method", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ source_id: "cnon:card-nonce-ok" }),
+      });
+      showToast("Sandbox test payment method added.", "success");
+      await loadBilling();
+    } catch (error) {
+      showToast(`Adding a payment method failed: ${error.message}`, "error");
+    }
+  });
+  $("billing-subscribe").addEventListener("click", async () => {
+    try {
+      await accountApi("/api/billing/subscribe", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ tier: $("billing-tier").value }),
+      });
+      showToast("Subscribed.", "success");
+      await loadBilling();
+    } catch (error) {
+      showToast(`Subscribe failed: ${error.message}`, "error");
+    }
+  });
+  $("billing-change-tier").addEventListener("click", async () => {
+    try {
+      await accountApi("/api/billing/tier", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ tier: $("billing-tier").value }),
+      });
+      showToast("Plan updated.", "success");
+      await loadBilling();
+    } catch (error) {
+      showToast(`Plan change failed: ${error.message}`, "error");
+    }
+  });
+  $("billing-cancel").addEventListener("click", async () => {
+    try {
+      await accountApi("/api/billing/cancel", { method: "POST" });
+      showToast("Subscription canceled.", "success");
+      await loadBilling();
+    } catch (error) {
+      showToast(`Cancellation failed: ${error.message}`, "error");
+    }
+  });
+}
+
+async function loadChoosePlanStatus() {
+  try {
+    const subscription = await accountApi("/api/billing/subscription");
+    $("choose-plan-status-title").textContent = subscription.has_payment_method
+      ? `Payment method on file (${billingTierLabel(subscription.tier)})`
+      : "No payment method yet";
+    $("choose-plan-status-detail").textContent = subscription.trial_ends_at
+      ? `Your free trial runs through ${new Date(subscription.trial_ends_at).toLocaleDateString()}.`
+      : "Your shop's subscription is already active.";
+    const preselected = sessionStorage.getItem("optimusSelectedTier");
+    $$("#choose-plan-grid .pricing-card").forEach((card) => {
+      card.classList.toggle("is-featured", card.dataset.planTier === (preselected || "team"));
+    });
+  } catch (error) {
+    $("choose-plan-status-title").textContent = "Billing unavailable";
+    $("choose-plan-status-detail").textContent = error.message;
+  }
+}
+
+function initializeChoosePlan() {
+  $("choose-plan-skip").addEventListener("click", () => {
+    void loadDashboardSummary();
+    navigate("dashboard");
+  });
+  $("choose-plan-grid").addEventListener("click", async (event) => {
+    const button = event.target.closest("[data-choose-tier]");
+    if (!button) return;
+    const tier = button.dataset.chooseTier;
+    button.disabled = true;
+    try {
+      await accountApi("/api/billing/payment-method", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ source_id: "cnon:card-nonce-ok" }),
+      });
+      await accountApi("/api/billing/subscribe", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ tier }),
+      });
+      showToast("Subscribed. Welcome to OptimusOS.", "success");
+      void loadDashboardSummary();
+      navigate("dashboard");
+    } catch (error) {
+      showToast(`Subscribe failed: ${error.message}`, "error");
+    } finally {
+      button.disabled = false;
+    }
+  });
 }
 
 async function performLogout() {
@@ -914,6 +1083,7 @@ function navigate(view) {
     history.replaceState(null, "", "/");
   window.scrollTo({ top: 0, behavior: "smooth" });
   if (view === "dashboard" && state.auth.authenticated) void loadDashboardSummary();
+  if (view === "choose-plan" && state.auth.authenticated) void loadChoosePlanStatus();
   if (view === "customers" && state.auth.authenticated) void loadCustomers();
   if (view === "vehicles" && state.auth.authenticated) void loadVehicles();
   if (view === "work-orders" && state.auth.authenticated) {
@@ -7557,6 +7727,7 @@ function initializeApp() {
   initializeSystem();
   initializeAuth();
   initializeAccountSecurity();
+  initializeChoosePlan();
   initializeWorkflowGaps();
   // Auth and approval routes are never the marketing landing
   // page, regardless of auth state. Cleared here (not an inline <script>)
@@ -7578,6 +7749,10 @@ function initializeApp() {
     navigate("login");
   } else if (window.location.pathname === "/signup") {
     navigate("signup");
+    const requestedTier = new URLSearchParams(window.location.search).get("tier");
+    if (["solo", "team", "shop"].includes(requestedTier)) {
+      sessionStorage.setItem("optimusSelectedTier", requestedTier);
+    }
   } else if (window.location.pathname === "/verify-email") {
     navigate("verify-email");
   } else if (window.location.pathname === "/forgot-password") {
@@ -7630,7 +7805,7 @@ function initializeApp() {
         window.location.pathname === "/signup" ||
         window.location.pathname === "/verify-email"
       )
-        navigate("dashboard");
+        navigate(consumeJustSignedUpFlag() ? "choose-plan" : "dashboard");
     }
   });
   void loadHealth(false);

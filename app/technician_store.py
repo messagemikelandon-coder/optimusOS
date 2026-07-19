@@ -23,6 +23,7 @@ from app.db_models import (
     AuthSession,
     PasswordResetToken,
     ShopMembership,
+    ShopSubscription,
     Technician,
     TechnicianTimeEntry,
     UserAccount,
@@ -267,16 +268,47 @@ def get_technician_for_user(db: Session, auth: AuthContext) -> Technician | None
     )
 
 
+def enforce_technician_seat_limit(db: Session, shop_id: int) -> None:
+    """/goal Phase 7: a shop's subscription tier caps how many non-archived
+    Technician profiles it may hold. Locks the subscription row first so two
+    concurrent creates at exactly the seat limit cannot both pass this check
+    -- mirrors the row-lock pattern already used for occurrence-recording in
+    `app/workflow_gap_store.py`. Public (not `_`-prefixed): also called from
+    `app/account_security_store.py::accept_invitation`, the other code path
+    that can create a brand-new `Technician` row (a security-review finding
+    -- invitation acceptance previously bypassed this check entirely)."""
+    subscription = db.scalar(
+        select(ShopSubscription).where(ShopSubscription.shop_id == shop_id).with_for_update()
+    )
+    if subscription is None or subscription.seat_limit is None:
+        return
+    active_seats = (
+        db.scalar(
+            select(func.count())
+            .select_from(Technician)
+            .where(Technician.shop_id == shop_id, Technician.is_archived.is_(False))
+        )
+        or 0
+    )
+    if active_seats >= subscription.seat_limit:
+        raise TechnicianConflictError(
+            f"This shop's subscription allows {subscription.seat_limit} technician seat(s); "
+            "archive a technician or upgrade the plan before adding another."
+        )
+
+
 def create_technician(
     *,
     db: Session,
     auth: AuthContext,
     payload: TechnicianCreate,
 ) -> TechnicianRead:
+    shop_id = resolve_shop_id(db, auth)
+    enforce_technician_seat_limit(db, shop_id)
     normalized = normalize_technician_fields(payload)
     technician = Technician(
         owner_user_id=effective_shop_owner_id(db, auth),
-        shop_id=resolve_shop_id(db, auth),
+        shop_id=shop_id,
         **normalized,
     )
     db.add(technician)

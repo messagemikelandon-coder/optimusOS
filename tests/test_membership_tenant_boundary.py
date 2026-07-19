@@ -83,7 +83,7 @@ def test_manager_uses_membership_shop_even_when_legacy_owner_pointer_is_wrong(
 
     auth = _auth_for(db_session, manager)
     assert effective_shop_id(db_session, auth) == first_membership.shop_id
-    assert require_owner_context(auth) is auth
+    assert require_owner_context(auth, db_session) is auth
 
     created = create_customer(
         db=db_session,

@@ -2884,3 +2884,57 @@ class WorkflowGapEventRead(BaseModel):
 
 class WorkflowGapEventsResponse(BaseModel):
     items: list[WorkflowGapEventRead]
+
+
+class SubscriptionTier(StrEnum):
+    SOLO = "solo"
+    TEAM = "team"
+    SHOP = "shop"
+
+
+class SubscriptionBillingStatus(StrEnum):
+    TRIALING = "trialing"
+    ACTIVE = "active"
+    PAST_DUE = "past_due"
+    CANCELED = "canceled"
+
+
+class SubscriptionRead(BaseModel):
+    tier: SubscriptionTier
+    billing_status: SubscriptionBillingStatus
+    seat_limit: int | None = None
+    seats_used: int
+    trial_ends_at: datetime | None = None
+    current_period_start: datetime | None = None
+    current_period_end: datetime | None = None
+    grace_period_ends_at: datetime | None = None
+    canceled_at: datetime | None = None
+    has_payment_method: bool
+    is_access_suspended: bool
+    shop_status: str
+
+
+class SubscribeRequest(BaseModel):
+    tier: SubscriptionTier
+
+
+class AddPaymentMethodRequest(BaseModel):
+    # The raw card number never reaches this backend -- `source_id` is a
+    # single-use, already-tokenized nonce from Square's card-capture flow
+    # (see docs/context/SECURITY.md's note on this sandbox-only slice: a
+    # production-ready embedded card form needs its own CSP/architecture
+    # decision, so this phase accepts Square's documented sandbox test
+    # nonce rather than a real Web Payments SDK integration).
+    source_id: NonBlank = Field(max_length=120)
+
+
+class SubscriptionEventRead(BaseModel):
+    id: int
+    event_type: str
+    actor_name: str | None = None
+    event_metadata: dict | None = None
+    created_at: datetime
+
+
+class SubscriptionEventsResponse(BaseModel):
+    items: list[SubscriptionEventRead]

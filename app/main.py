@@ -49,6 +49,7 @@ from app.auth import (
     create_auth_session,
     get_current_auth_context,
     require_authenticated_user,
+    require_billing_context,
     require_owner_context,
     require_owner_or_technician_context,
     require_verified_auth_context,
@@ -146,6 +147,7 @@ from app.migration_compat import (
 from app.models import (
     AccountSecurityRead,
     AccountStatusUpdate,
+    AddPaymentMethodRequest,
     AppointmentCancelRequest,
     AppointmentCreate,
     AppointmentListResponse,
@@ -259,6 +261,9 @@ from app.models import (
     ShopInvitationRead,
     ShopMemberRead,
     ShopSignupRequest,
+    SubscribeRequest,
+    SubscriptionEventsResponse,
+    SubscriptionRead,
     SyntheticAccountResponse,
     SyntheticCleanupResponse,
     SyntheticTechnicianRequest,
@@ -386,7 +391,7 @@ from app.services.email import LoggingEmailAdapter
 from app.services.http import SafeHttpClient
 from app.services.location import LocationService
 from app.services.optimus_chat import OptimusChatService
-from app.services.square import SquareApiError, SquareInvoiceClient
+from app.services.square import SquareApiError, SquareInvoiceClient, SquareSubscriptionClient
 from app.shop_store import ShopSignupConflictError, ShopSignupError, signup_shop_owner
 from app.square_store import (
     SquareAlreadyPushedError,
@@ -394,6 +399,17 @@ from app.square_store import (
     push_invoice_to_square,
     refresh_square_invoice,
 )
+from app.subscription_store import (
+    SubscriptionConflictError,
+    SubscriptionStoreError,
+    add_payment_method,
+    cancel_subscription,
+    change_tier,
+    get_subscription,
+    list_subscription_events,
+    refresh_subscription_from_square,
+)
+from app.subscription_store import subscribe as subscribe_shop
 from app.technician_store import (
     TechnicianConflictError,
     TechnicianNotFoundError,
@@ -477,6 +493,7 @@ OwnerAuthContextDep = Annotated[AuthContext, Depends(require_owner_context)]
 OwnerOrTechnicianAuthContextDep = Annotated[
     AuthContext, Depends(require_owner_or_technician_context)
 ]
+BillingAuthContextDep = Annotated[AuthContext, Depends(require_billing_context)]
 
 app = FastAPI(
     title="Optimus Command Center | Landon Motor Works",
@@ -1370,6 +1387,188 @@ async def change_shop_member_status(
         account_status=payload.status,
     )
     return member
+
+
+def _require_square_configured(settings: Settings) -> None:
+    if not settings.square_configured:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Square is not configured (sandbox only in this phase).",
+        )
+
+
+@app.get("/api/billing/subscription", response_model=SubscriptionRead)
+async def get_billing_subscription(
+    db: DbSessionDep, auth: BillingAuthContextDep
+) -> SubscriptionRead:
+    try:
+        return await asyncio.to_thread(get_subscription, db, auth)
+    except SubscriptionStoreError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Subscription lookup failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Subscription storage is unavailable.",
+        ) from exc
+
+
+@app.get("/api/billing/events", response_model=SubscriptionEventsResponse)
+async def list_billing_events(
+    db: DbSessionDep, auth: BillingAuthContextDep
+) -> SubscriptionEventsResponse:
+    return await asyncio.to_thread(list_subscription_events, db, auth)
+
+
+@app.post("/api/billing/payment-method", response_model=SubscriptionRead)
+async def add_billing_payment_method(
+    payload: AddPaymentMethodRequest,
+    db: DbSessionDep,
+    settings: SettingsDep,
+    auth: BillingAuthContextDep,
+) -> SubscriptionRead:
+    _require_square_configured(settings)
+    client = SquareSubscriptionClient(settings)
+    try:
+        return await asyncio.to_thread(
+            lambda: add_payment_method(db, auth, client=client, source_id=payload.source_id)
+        )
+    except SubscriptionConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except SubscriptionStoreError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except SquareApiError as exc:
+        log_security_event(
+            logger,
+            SecurityEventType.SQUARE_API_FAILED,
+            operation="add_payment_method",
+            error=str(exc),
+        )
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Payment method update failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Subscription storage is unavailable.",
+        ) from exc
+    finally:
+        client.close()
+
+
+@app.post("/api/billing/subscribe", response_model=SubscriptionRead)
+async def subscribe_billing(
+    payload: SubscribeRequest,
+    db: DbSessionDep,
+    settings: SettingsDep,
+    auth: BillingAuthContextDep,
+) -> SubscriptionRead:
+    _require_square_configured(settings)
+    client = SquareSubscriptionClient(settings)
+    try:
+        return await asyncio.to_thread(
+            lambda: subscribe_shop(db, auth, settings=settings, client=client, tier=payload.tier)
+        )
+    except SubscriptionConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except SubscriptionStoreError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except SquareApiError as exc:
+        log_security_event(
+            logger, SecurityEventType.SQUARE_API_FAILED, operation="subscribe", error=str(exc)
+        )
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Subscribe failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Subscription storage is unavailable.",
+        ) from exc
+    finally:
+        client.close()
+
+
+@app.post("/api/billing/tier", response_model=SubscriptionRead)
+async def change_billing_tier(
+    payload: SubscribeRequest,
+    db: DbSessionDep,
+    settings: SettingsDep,
+    auth: BillingAuthContextDep,
+) -> SubscriptionRead:
+    client = SquareSubscriptionClient(settings) if settings.square_configured else None
+    try:
+        return await asyncio.to_thread(
+            lambda: change_tier(db, auth, settings=settings, client=client, tier=payload.tier)
+        )
+    except SubscriptionConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except SubscriptionStoreError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except SquareApiError as exc:
+        log_security_event(
+            logger, SecurityEventType.SQUARE_API_FAILED, operation="change_tier", error=str(exc)
+        )
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Tier change failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Subscription storage is unavailable.",
+        ) from exc
+    finally:
+        if client is not None:
+            client.close()
+
+
+@app.post("/api/billing/cancel", response_model=SubscriptionRead)
+async def cancel_billing_subscription(
+    db: DbSessionDep, settings: SettingsDep, auth: BillingAuthContextDep
+) -> SubscriptionRead:
+    client = SquareSubscriptionClient(settings) if settings.square_configured else None
+    try:
+        return await asyncio.to_thread(lambda: cancel_subscription(db, auth, client=client))
+    except SubscriptionStoreError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except SquareApiError as exc:
+        log_security_event(
+            logger, SecurityEventType.SQUARE_API_FAILED, operation="cancel", error=str(exc)
+        )
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Subscription cancel failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Subscription storage is unavailable.",
+        ) from exc
+    finally:
+        if client is not None:
+            client.close()
+
+
+@app.post("/api/billing/refresh", response_model=SubscriptionRead)
+async def refresh_billing_subscription(
+    db: DbSessionDep, settings: SettingsDep, auth: BillingAuthContextDep
+) -> SubscriptionRead:
+    _require_square_configured(settings)
+    client = SquareSubscriptionClient(settings)
+    try:
+        return await asyncio.to_thread(
+            lambda: refresh_subscription_from_square(db, auth, client=client)
+        )
+    except SubscriptionStoreError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except SquareApiError as exc:
+        log_security_event(
+            logger, SecurityEventType.SQUARE_API_FAILED, operation="refresh", error=str(exc)
+        )
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Subscription refresh failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Subscription storage is unavailable.",
+        ) from exc
+    finally:
+        client.close()
 
 
 def _require_test_support_enabled(settings: Settings) -> None:

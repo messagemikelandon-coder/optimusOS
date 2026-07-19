@@ -10,6 +10,7 @@ import app.main as main
 from app.auth import (
     get_current_auth_context,
     hash_password,
+    require_billing_context,
     require_owner_context,
     require_owner_or_technician_context,
 )
@@ -113,6 +114,21 @@ _OWNER_OR_TECHNICIAN_ROUTES = {
     ("POST", "/api/part-allocations/{allocation_id}/return"),
 }
 
+# /goal Phase 7: the billing surface deliberately does NOT gate on
+# `require_shop_access_active` (unlike every other owner/manager route via
+# `require_owner_context`) -- a suspended shop must still be able to view
+# its billing status and add a payment method to restore access, or
+# suspension would be permanent. Owner/manager role-gating still applies.
+_BILLING_ROUTES = {
+    ("GET", "/api/billing/subscription"),
+    ("GET", "/api/billing/events"),
+    ("POST", "/api/billing/payment-method"),
+    ("POST", "/api/billing/subscribe"),
+    ("POST", "/api/billing/tier"),
+    ("POST", "/api/billing/cancel"),
+    ("POST", "/api/billing/refresh"),
+}
+
 
 def _dependant_uses(dependant, target, seen: set[int] | None = None) -> bool:  # type: ignore[no-untyped-def]
     if seen is None:
@@ -156,6 +172,11 @@ def test_every_business_route_is_role_gated_as_expected() -> None:
                 dependant, require_owner_or_technician_context
             )
             uses_owner_only = _dependant_uses(dependant, require_owner_context)
+            uses_billing = _dependant_uses(dependant, require_billing_context)
+            if key in _BILLING_ROUTES:
+                if not uses_billing:
+                    wrong.append(("expected billing gate, missing", key))
+                continue
             if key in _OWNER_OR_TECHNICIAN_ROUTES:
                 if not uses_owner_or_technician:
                     wrong.append(("expected owner-or-technician gate, missing", key))

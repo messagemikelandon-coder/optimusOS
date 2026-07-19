@@ -241,7 +241,7 @@ async def test_unverified_signup_session_is_limited_until_email_is_confirmed(
     owner_auth = auth_context(settings, db_session, raw_cookie_from_response(response))
 
     with pytest.raises(HTTPException) as owner_denial:
-        require_owner_context(owner_auth)
+        require_owner_context(owner_auth, db_session)
     assert owner_denial.value.status_code == 403
 
     with pytest.raises(HTTPException) as authenticated_denial:
@@ -251,7 +251,7 @@ async def test_unverified_signup_session_is_limited_until_email_is_confirmed(
     await _verify(db_session, _extract_token(adapter.messages[0]), settings)
     db_session.refresh(owner_auth.user)
 
-    assert require_owner_context(owner_auth) is owner_auth
+    assert require_owner_context(owner_auth, db_session) is owner_auth
     assert require_authenticated_user(owner_auth) is owner_auth.user
 
 

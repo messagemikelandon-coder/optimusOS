@@ -178,6 +178,20 @@ def test_marketing_landing_page_gating() -> None:
     assert 'document.body.classList.remove("marketing-mode")' in javascript
 
 
+def test_marketing_landing_page_has_a_pricing_section_and_nav_link() -> None:
+    """/goal Phase 7: the landing page must let a prospective owner see plan
+    pricing and start a trial without signing in first -- a top nav button
+    to the pricing section, three tier cards, and per-tier signup links that
+    carry the chosen tier through to /signup?tier=<tier>."""
+    html = (STATIC / "index.html").read_text(encoding="utf-8")
+    assert 'href="#pricing"' in html
+    assert 'id="pricing"' in html
+    assert 'href="/signup?tier=solo"' in html
+    assert 'href="/signup?tier=team"' in html
+    assert 'href="/signup?tier=shop"' in html
+    assert html.count('class="panel pricing-card') >= 3
+
+
 def test_overview_dashboard_and_approval_queue_markup() -> None:
     """Regression coverage for the Overview dashboard that replaced the old
     "Shop intelligence online" hero, and the new Approval Queue view."""

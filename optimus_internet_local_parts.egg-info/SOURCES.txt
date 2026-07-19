@@ -64,6 +64,7 @@ app/security.py
 app/security_events.py
 app/shop_store.py
 app/square_store.py
+app/subscription_store.py
 app/technician_store.py
 app/test_support_store.py
 app/vehicle_store.py
@@ -183,4 +184,7 @@ tests/e2e/test_shop_id_populated_on_create.py
 tests/e2e/test_shop_tenant_migration_backfill.py
 tests/e2e/test_signup_e2e.py
 tests/e2e/test_signup_ui.py
+tests/e2e/test_workflow_gap_concurrency.py
+tests/e2e/test_workflow_gap_migration.py
+tests/e2e/test_workflow_gaps_ui.py
 tests/fixtures/research_cases.json
