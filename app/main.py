@@ -587,6 +587,11 @@ async def login_index() -> FileResponse:
     return FileResponse(STATIC_DIR / "index.html")
 
 
+@app.get("/signup", include_in_schema=False)
+async def signup_index() -> FileResponse:
+    return FileResponse(STATIC_DIR / "index.html")
+
+
 @app.get("/approval", include_in_schema=False)
 async def approval_index() -> FileResponse:
     return FileResponse(STATIC_DIR / "index.html")
