@@ -19,9 +19,32 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app import __version__
+from app.account_security_store import (
+    InvitationConflictError,
+    InvitationError,
+    MemberManagementError,
+    PasswordChangeError,
+    PasswordResetTokenError,
+    SessionNotFoundError,
+    accept_invitation,
+    authenticate_account,
+    change_password,
+    confirm_password_reset,
+    create_invitation,
+    list_invitations,
+    list_members,
+    list_sessions,
+    login_history,
+    record_login_success,
+    request_password_reset,
+    revoke_invitation,
+    revoke_other_sessions,
+    revoke_session,
+    security_summary,
+    update_member_status,
+)
 from app.auth import (
     AuthContext,
-    authenticate_user,
     clear_session_cookie,
     create_auth_session,
     get_current_auth_context,
@@ -121,6 +144,8 @@ from app.migration_compat import (
     get_app_migration_head,
 )
 from app.models import (
+    AccountSecurityRead,
+    AccountStatusUpdate,
     AppointmentCancelRequest,
     AppointmentCreate,
     AppointmentListResponse,
@@ -128,8 +153,10 @@ from app.models import (
     AppointmentRead,
     AppointmentStatus,
     AppointmentUpdate,
+    AuthLoginHistoryResponse,
     AuthLoginRequest,
     AuthMeResponse,
+    AuthSessionListResponse,
     AuthSessionResponse,
     AuthUser,
     AvailabilityResponse,
@@ -211,6 +238,9 @@ from app.models import (
     PartRead,
     PartsUsageReportResponse,
     PartUpdate,
+    PasswordChangeRequest,
+    PasswordResetConfirmRequest,
+    PasswordResetRequest,
     PaymentActivityReportResponse,
     PurchaseOrderCreate,
     PurchaseOrderListResponse,
@@ -223,6 +253,11 @@ from app.models import (
     ScheduleBlockListResponse,
     ScheduleBlockRead,
     ScheduleBlockUpdate,
+    ShopInvitationAccept,
+    ShopInvitationAcceptResponse,
+    ShopInvitationCreate,
+    ShopInvitationRead,
+    ShopMemberRead,
     ShopSignupRequest,
     SyntheticAccountResponse,
     SyntheticCleanupResponse,
@@ -633,6 +668,77 @@ async def enforce_email_verification_resend_rate_limit(
         ) from exc
 
 
+_password_reset_rate_limiter: RateLimiter | None = None
+_password_reset_rate_limiter_redis_url: str | None = None
+
+
+def get_password_reset_rate_limiter(settings: Settings) -> RateLimiter:
+    global _password_reset_rate_limiter, _password_reset_rate_limiter_redis_url
+    if (
+        _password_reset_rate_limiter is None
+        or _password_reset_rate_limiter.limit != settings.max_password_reset_attempts_per_hour
+        or _password_reset_rate_limiter_redis_url != settings.redis_url
+    ):
+        _password_reset_rate_limiter = RedisSlidingWindowRateLimiter(
+            redis_client=Redis.from_url(settings.redis_url),
+            limit=settings.max_password_reset_attempts_per_hour,
+            window_seconds=3600.0,
+        )
+        _password_reset_rate_limiter_redis_url = settings.redis_url
+    return _password_reset_rate_limiter
+
+
+async def enforce_password_reset_rate_limit(
+    request: Request, settings: Settings, *, action: str
+) -> None:
+    client_host = request.client.host if request.client else "unknown"
+    client_key = f"password-reset-{action}:{client_host}"
+    try:
+        await get_password_reset_rate_limiter(settings).check(client_key)
+    except RateLimitExceeded as exc:
+        log_security_event(
+            logger, SecurityEventType.RATE_LIMIT_EXCEEDED, request=request, limit_key=client_key
+        )
+        raise HTTPException(
+            status_code=429, detail="Too many password-reset attempts. Try again later."
+        ) from exc
+
+
+_invitation_acceptance_rate_limiter: RateLimiter | None = None
+_invitation_acceptance_rate_limiter_redis_url: str | None = None
+
+
+def get_invitation_acceptance_rate_limiter(settings: Settings) -> RateLimiter:
+    global _invitation_acceptance_rate_limiter, _invitation_acceptance_rate_limiter_redis_url
+    if (
+        _invitation_acceptance_rate_limiter is None
+        or _invitation_acceptance_rate_limiter.limit
+        != settings.max_invitation_acceptance_attempts_per_hour
+        or _invitation_acceptance_rate_limiter_redis_url != settings.redis_url
+    ):
+        _invitation_acceptance_rate_limiter = RedisSlidingWindowRateLimiter(
+            redis_client=Redis.from_url(settings.redis_url),
+            limit=settings.max_invitation_acceptance_attempts_per_hour,
+            window_seconds=3600.0,
+        )
+        _invitation_acceptance_rate_limiter_redis_url = settings.redis_url
+    return _invitation_acceptance_rate_limiter
+
+
+async def enforce_invitation_acceptance_rate_limit(request: Request, settings: Settings) -> None:
+    client_host = request.client.host if request.client else "unknown"
+    client_key = f"invitation-acceptance:{client_host}"
+    try:
+        await get_invitation_acceptance_rate_limiter(settings).check(client_key)
+    except RateLimitExceeded as exc:
+        log_security_event(
+            logger, SecurityEventType.RATE_LIMIT_EXCEEDED, request=request, limit_key=client_key
+        )
+        raise HTTPException(
+            status_code=429, detail="Too many invitation attempts. Try again later."
+        ) from exc
+
+
 def location_service(settings: Settings) -> LocationService:
     http = SafeHttpClient(
         timeout_seconds=settings.http_timeout_seconds,
@@ -685,6 +791,21 @@ async def signup_index() -> FileResponse:
 
 @app.get("/verify-email", include_in_schema=False)
 async def verify_email_index() -> FileResponse:
+    return FileResponse(STATIC_DIR / "index.html")
+
+
+@app.get("/forgot-password", include_in_schema=False)
+async def forgot_password_index() -> FileResponse:
+    return FileResponse(STATIC_DIR / "index.html")
+
+
+@app.get("/reset-password", include_in_schema=False)
+async def reset_password_index() -> FileResponse:
+    return FileResponse(STATIC_DIR / "index.html")
+
+
+@app.get("/accept-invitation", include_in_schema=False)
+async def accept_invitation_index() -> FileResponse:
     return FileResponse(STATIC_DIR / "index.html")
 
 
@@ -792,7 +913,13 @@ async def login(
     settings: SettingsDep,
 ) -> AuthSessionResponse:
     await enforce_login_rate_limit(request, settings)
-    user = authenticate_user(db=db, username=payload.username, password=payload.password)
+    user = authenticate_account(
+        db,
+        settings,
+        request,
+        username=payload.username,
+        password=payload.password,
+    )
     if user is None:
         # Logs a hash, not the raw attempted username: a real user who
         # fat-fingers the login form can end up with their password typed
@@ -814,6 +941,7 @@ async def login(
     session_token, auth_session = create_auth_session(
         db=db, settings=settings, user=user, request=request
     )
+    record_login_success(db, user, auth_session, request)
     set_session_cookie(response, settings, session_token, auth_session.expires_at)
     log_security_event(
         logger,
@@ -965,6 +1093,72 @@ async def verify_email(
     return {"verified": True}
 
 
+@app.post("/api/auth/password/reset-request")
+async def password_reset_request(
+    payload: PasswordResetRequest,
+    request: Request,
+    db: DbSessionDep,
+    settings: SettingsDep,
+) -> dict[str, bool]:
+    """Prepare a reset message without revealing whether the email exists."""
+    await enforce_password_reset_rate_limit(request, settings, action="request")
+    await asyncio.to_thread(request_password_reset, db, settings, payload.email, email_adapter())
+    log_security_event(
+        logger,
+        SecurityEventType.PASSWORD_RESET_REQUESTED,
+        request=request,
+        level=logging.INFO,
+    )
+    return {"accepted": True}
+
+
+@app.post("/api/auth/password/reset-confirm")
+async def password_reset_confirm(
+    payload: PasswordResetConfirmRequest,
+    request: Request,
+    db: DbSessionDep,
+    settings: SettingsDep,
+) -> dict[str, bool]:
+    await enforce_password_reset_rate_limit(request, settings, action="confirm")
+    try:
+        await asyncio.to_thread(confirm_password_reset, db, payload.token, payload.new_password)
+    except PasswordResetTokenError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+        ) from exc
+    log_security_event(
+        logger,
+        SecurityEventType.PASSWORD_RESET_COMPLETED,
+        request=request,
+        level=logging.INFO,
+    )
+    return {"reset": True}
+
+
+@app.post("/api/invitations/accept", response_model=ShopInvitationAcceptResponse)
+async def accept_shop_invitation(
+    payload: ShopInvitationAccept,
+    request: Request,
+    db: DbSessionDep,
+    settings: SettingsDep,
+) -> ShopInvitationAcceptResponse:
+    await enforce_invitation_acceptance_rate_limit(request, settings)
+    try:
+        user = await asyncio.to_thread(accept_invitation, db, payload)
+    except (InvitationError, InvitationConflictError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+        ) from exc
+    log_security_event(
+        logger,
+        SecurityEventType.INVITATION_ACCEPTED,
+        request=request,
+        level=logging.INFO,
+        user_id=user.id,
+    )
+    return ShopInvitationAcceptResponse(user=auth_user_response(user))
+
+
 @app.post("/api/auth/logout")
 async def logout(
     response: Response,
@@ -985,6 +1179,179 @@ async def auth_me(auth: AuthContextDep) -> AuthMeResponse:
         user=auth_user_response(auth.user),
         expires_at=auth.session.expires_at,
     )
+
+
+@app.post("/api/auth/password/change")
+async def password_change(
+    payload: PasswordChangeRequest,
+    request: Request,
+    db: DbSessionDep,
+    auth: AuthContextDep,
+) -> dict[str, bool]:
+    try:
+        await asyncio.to_thread(change_password, db, auth, payload)
+    except PasswordChangeError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+        ) from exc
+    log_security_event(
+        logger,
+        SecurityEventType.PASSWORD_CHANGED,
+        request=request,
+        level=logging.INFO,
+        user_id=auth.user.id,
+    )
+    return {"changed": True, "other_sessions_revoked": True}
+
+
+@app.get("/api/auth/sessions", response_model=AuthSessionListResponse)
+async def get_auth_sessions(db: DbSessionDep, auth: AuthContextDep) -> AuthSessionListResponse:
+    return await asyncio.to_thread(list_sessions, db, auth)
+
+
+@app.post("/api/auth/sessions/revoke-others")
+async def revoke_other_auth_sessions(
+    request: Request,
+    db: DbSessionDep,
+    auth: AuthContextDep,
+) -> dict[str, int]:
+    revoked = await asyncio.to_thread(revoke_other_sessions, db, auth)
+    log_security_event(
+        logger,
+        SecurityEventType.SESSION_REVOKED,
+        request=request,
+        level=logging.INFO,
+        user_id=auth.user.id,
+        revoked_count=revoked,
+    )
+    return {"revoked": revoked}
+
+
+@app.post("/api/auth/sessions/{session_id}/revoke")
+async def revoke_auth_session(
+    session_id: int,
+    request: Request,
+    response: Response,
+    db: DbSessionDep,
+    settings: SettingsDep,
+    auth: AuthContextDep,
+) -> dict[str, bool]:
+    try:
+        current = await asyncio.to_thread(revoke_session, db, auth, session_id)
+    except SessionNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    if current:
+        clear_session_cookie(response, settings)
+    log_security_event(
+        logger,
+        SecurityEventType.SESSION_REVOKED,
+        request=request,
+        level=logging.INFO,
+        user_id=auth.user.id,
+        current_session=current,
+    )
+    return {"revoked": True, "current_session": current}
+
+
+@app.get("/api/auth/login-history", response_model=AuthLoginHistoryResponse)
+async def get_login_history(db: DbSessionDep, auth: AuthContextDep) -> AuthLoginHistoryResponse:
+    return await asyncio.to_thread(login_history, db, auth)
+
+
+@app.get("/api/auth/security", response_model=AccountSecurityRead)
+async def get_account_security(db: DbSessionDep, auth: AuthContextDep) -> AccountSecurityRead:
+    return await asyncio.to_thread(security_summary, db, auth)
+
+
+@app.post("/api/shop/invitations", response_model=ShopInvitationRead)
+async def prepare_shop_invitation(
+    payload: ShopInvitationCreate,
+    request: Request,
+    db: DbSessionDep,
+    settings: SettingsDep,
+    auth: OwnerAuthContextDep,
+) -> ShopInvitationRead:
+    try:
+        invitation = await asyncio.to_thread(
+            create_invitation, db, settings, auth, payload, email_adapter()
+        )
+    except InvitationConflictError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    except InvitationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+        ) from exc
+    log_security_event(
+        logger,
+        SecurityEventType.INVITATION_CREATED,
+        request=request,
+        level=logging.INFO,
+        user_id=auth.user.id,
+        invitation_id=invitation.id,
+    )
+    return invitation
+
+
+@app.get("/api/shop/invitations", response_model=list[ShopInvitationRead])
+async def get_shop_invitations(
+    db: DbSessionDep, auth: OwnerAuthContextDep
+) -> list[ShopInvitationRead]:
+    return await asyncio.to_thread(list_invitations, db, auth)
+
+
+@app.post("/api/shop/invitations/{invitation_id}/revoke")
+async def revoke_shop_invitation(
+    invitation_id: int,
+    request: Request,
+    db: DbSessionDep,
+    auth: OwnerAuthContextDep,
+) -> dict[str, bool]:
+    try:
+        await asyncio.to_thread(revoke_invitation, db, auth, invitation_id)
+    except InvitationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+        ) from exc
+    log_security_event(
+        logger,
+        SecurityEventType.INVITATION_REVOKED,
+        request=request,
+        level=logging.INFO,
+        user_id=auth.user.id,
+        invitation_id=invitation_id,
+    )
+    return {"revoked": True}
+
+
+@app.get("/api/shop/members", response_model=list[ShopMemberRead])
+async def get_shop_members(db: DbSessionDep, auth: OwnerAuthContextDep) -> list[ShopMemberRead]:
+    return await asyncio.to_thread(list_members, db, auth)
+
+
+@app.patch("/api/shop/members/{user_account_id}/status", response_model=ShopMemberRead)
+async def change_shop_member_status(
+    user_account_id: int,
+    payload: AccountStatusUpdate,
+    request: Request,
+    db: DbSessionDep,
+    auth: OwnerAuthContextDep,
+) -> ShopMemberRead:
+    try:
+        member = await asyncio.to_thread(update_member_status, db, auth, user_account_id, payload)
+    except MemberManagementError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+        ) from exc
+    log_security_event(
+        logger,
+        SecurityEventType.ACCOUNT_STATUS_CHANGED,
+        request=request,
+        level=logging.INFO,
+        user_id=auth.user.id,
+        target_user_id=user_account_id,
+        account_status=payload.status,
+    )
+    return member
 
 
 def _require_test_support_enabled(settings: Settings) -> None:

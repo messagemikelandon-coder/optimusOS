@@ -125,13 +125,14 @@ def create_auth_session(
     request: Request,
 ) -> tuple[str, AuthSession]:
     token = secrets.token_urlsafe(48)
+    ip_address, user_agent = request_metadata(request)
     auth_session = AuthSession(
         user_id=user.id,
         token_hash=hash_session_token(token),
         expires_at=session_expiry(settings),
         last_seen_at=datetime.now(UTC),
-        ip_address=request.client.host if request.client else None,
-        user_agent=request.headers.get("user-agent"),
+        ip_address=ip_address,
+        user_agent=user_agent,
     )
     # Do not mint even a dormant session for an orphaned, deactivated, or
     # role-mismatched membership. Reactivation must require a fresh login.
@@ -143,6 +144,16 @@ def create_auth_session(
     db.refresh(auth_session)
     auth_session.expires_at = ensure_utc(auth_session.expires_at)
     return token, auth_session
+
+
+def request_metadata(request: Request) -> tuple[str | None, str | None]:
+    """Return request metadata bounded to the shared authentication schema."""
+    ip_address = request.client.host if request.client else None
+    user_agent = request.headers.get("user-agent")
+    return (
+        ip_address[:64] if ip_address else None,
+        user_agent[:512] if user_agent else None,
+    )
 
 
 def set_session_cookie(
@@ -182,7 +193,7 @@ def authenticate_user(
     user = db.scalar(
         select(UserAccount).where(UserAccount.username == normalize_username(username))
     )
-    if user is None or not user.is_active:
+    if user is None or not user.is_active or user.account_status != "active":
         return None
     if not verify_password(password, user.password_hash):
         return None
@@ -218,7 +229,7 @@ def get_current_auth_context(
             )
 
         user = db.get(UserAccount, auth_session.user_id)
-        if user is None or not user.is_active:
+        if user is None or not user.is_active or user.account_status != "active":
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Authentication required.",

@@ -7,7 +7,12 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 import app.main as main
-from app.auth import hash_password, require_owner_context, require_owner_or_technician_context
+from app.auth import (
+    get_current_auth_context,
+    hash_password,
+    require_owner_context,
+    require_owner_or_technician_context,
+)
 from app.db import get_db_session, get_settings
 from app.db_models import ShopMembership, UserAccount
 
@@ -31,6 +36,12 @@ _NOT_ROLE_GATED_ROUTES = {
     # A pending authenticated account must be able to resend its own token
     # before the normal verified-account/role gates become available.
     ("POST", "/api/auth/verify-email/resend"),
+    # Password recovery and invitation acceptance are public token flows;
+    # the raw single-use token is the credential and each route has its own
+    # public rate limit.
+    ("POST", "/api/auth/password/reset-request"),
+    ("POST", "/api/auth/password/reset-confirm"),
+    ("POST", "/api/invitations/accept"),
     ("GET", "/api/auth/me"),
     ("GET", "/api/context/{project_key}"),
     ("PUT", "/api/context/{project_key}/{context_key}"),
@@ -52,6 +63,15 @@ _NOT_ROLE_GATED_ROUTES = {
     ("DELETE", "/api/test-support/synthetic-accounts"),
     ("POST", "/api/test-support/concurrency-probe/reset"),
     ("GET", "/api/test-support/concurrency-probe"),
+}
+
+_AUTHENTICATED_SELF_SERVICE_ROUTES = {
+    ("POST", "/api/auth/password/change"),
+    ("GET", "/api/auth/sessions"),
+    ("POST", "/api/auth/sessions/revoke-others"),
+    ("POST", "/api/auth/sessions/{session_id}/revoke"),
+    ("GET", "/api/auth/login-history"),
+    ("GET", "/api/auth/security"),
 }
 
 # Routes deliberately opened to BOTH owner and technician (Phase 5.6
@@ -127,6 +147,10 @@ def test_every_business_route_is_role_gated_as_expected() -> None:
                 continue
             key = (method, path)
             if key in _NOT_ROLE_GATED_ROUTES:
+                continue
+            if key in _AUTHENTICATED_SELF_SERVICE_ROUTES:
+                if not _dependant_uses(dependant, get_current_auth_context):
+                    wrong.append(("expected authenticated self-service gate, missing", key))
                 continue
             uses_owner_or_technician = _dependant_uses(
                 dependant, require_owner_or_technician_context

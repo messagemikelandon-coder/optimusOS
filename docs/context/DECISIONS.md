@@ -4,7 +4,7 @@ Purpose: lightweight architecture decision record for verified repository choice
 Information owner: repository maintainers and owners approving architectural direction.
 Read when: changing architecture, auth, deployment, or data flow.
 Update when: a decision is made, superseded, or explicitly revisited.
-Last verified date: 2026-07-01.
+Last verified date: 2026-07-19.
 Relevant sources: `git show 060ab68 --stat --summary`, `app/main.py`, `app/auth.py`, `app/config.py`, `app/services/openai_web.py`, `app/services/optimus_chat.py`, `docker-compose.yml`, `ops/nginx/default.conf`, `alembic/versions/002_authentication_tables.py`.
 
 ## ADR-001
@@ -150,3 +150,15 @@ Relevant sources: `git show 060ab68 --stat --summary`, `app/main.py`, `app/auth.
 - Consequences: the deploy runbook's `update`-then-`migrate` ordering remains safe by design, not by luck; a genuinely unsupported schema (future revision this app predates, or a diverged history) correctly blocks readiness instead of serving unpredictable behavior. Changing which states block readiness requires updating this ADR and `docs/context/RELEASE_CHECKLIST.md` together, since the deploy runbook depends on the current tolerance boundary.
 - Files affected: `app/migration_compat.py`, `app/main.py`, `tests/test_migration_compat.py`, `tests/test_api.py`, `docs/context/RELEASE_CHECKLIST.md`.
 - Revisit if: the deploy runbook's ordering changes (e.g., migrations always run before the app restarts), which would remove the need to tolerate `behind`/`unmigrated`.
+
+## ADR-013
+
+- ID: ADR-013
+- Date: 2026-07-19
+- Status: Accepted
+- Context: The multi-shop pilot needs self-service recovery, session control, delegated invitations, durable account status, and a future MFA integration without storing reusable recovery or factor secrets in plaintext.
+- Decision: Keep authentication lifecycle state in PostgreSQL; store password-reset and invitation tokens as hashes only; enforce account and membership status together; revoke sessions and outstanding grants on security-sensitive lifecycle changes; revalidate inviter authority at acceptance; and represent MFA factors with provider-neutral external references and lifecycle metadata rather than raw shared-secret columns.
+- Alternatives considered: stateless reset/invitation tokens, application-memory lockout, trusting authority captured only when an invitation was created, or storing TOTP/shared secrets directly in the core account table.
+- Consequences: lifecycle changes are auditable and transactionally enforceable across app restarts; public token responses remain generic; concurrent provisioning paths must share database row locks; an eventual MFA provider can be integrated without a schema redesign that exposes raw factor material.
+- Files affected: `alembic/versions/029_account_lifecycle.py`, `app/account_security_store.py`, `app/auth.py`, `app/db_models.py`, `app/main.py`, `app/technician_store.py`, `tests/test_account_security_api.py`, `tests/e2e/test_account_lifecycle_concurrency.py`.
+- Revisit if: an approved identity provider becomes the system of record for accounts/sessions or requires a different factor-secret custody model.

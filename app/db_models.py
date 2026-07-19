@@ -28,6 +28,10 @@ class UserAccount(Base):
     __table_args__ = (
         UniqueConstraint("username", name="uq_user_accounts_username"),
         CheckConstraint("role IN ('owner', 'manager', 'technician')", name="ck_user_accounts_role"),
+        CheckConstraint(
+            "account_status IN ('active', 'disabled', 'suspended')",
+            name="ck_user_accounts_account_status",
+        ),
         # Partial (not a plain UniqueConstraint) because pre-existing rows
         # and technician accounts have no email at all -- NULL must stay
         # unconstrained, only a real, provided email must be unique
@@ -59,6 +63,14 @@ class UserAccount(Base):
     # NULL means "unverified" -- also true, permanently, for every account
     # with no email at all (bootstrapped owner, technicians). /goal Phase 5.
     email_verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    account_status: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="active", server_default="active"
+    )
+    failed_login_attempts: Mapped[int] = mapped_column(
+        nullable=False, default=0, server_default="0"
+    )
+    locked_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_failed_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     is_active: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=True, server_default="true"
     )
@@ -169,6 +181,94 @@ class EmailVerificationToken(Base):
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="active")
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class PasswordResetToken(Base):
+    __tablename__ = "password_reset_tokens"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('active', 'used', 'expired', 'revoked')",
+            name="ck_password_reset_tokens_status",
+        ),
+        Index("ix_password_reset_tokens_user_account_id", "user_account_id"),
+        Index("uq_password_reset_tokens_token_hash", "token_hash", unique=True),
+        Index(
+            "uq_password_reset_tokens_active_user",
+            "user_account_id",
+            unique=True,
+            sqlite_where=text("status = 'active'"),
+            postgresql_where=text("status = 'active'"),
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    user_account_id: Mapped[int] = mapped_column(
+        ForeignKey("user_accounts.id", ondelete="CASCADE"), nullable=False
+    )
+    token_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="active")
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class AuthLoginEvent(Base):
+    __tablename__ = "auth_login_events"
+    __table_args__ = (
+        CheckConstraint(
+            "event_type IN ('succeeded', 'failed', 'locked', 'blocked')",
+            name="ck_auth_login_events_type",
+        ),
+        Index("ix_auth_login_events_user_created", "user_account_id", "created_at"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    user_account_id: Mapped[int] = mapped_column(
+        ForeignKey("user_accounts.id", ondelete="CASCADE"), nullable=False
+    )
+    auth_session_id: Mapped[int | None] = mapped_column(
+        ForeignKey("auth_sessions.id", ondelete="SET NULL")
+    )
+    event_type: Mapped[str] = mapped_column(String(20), nullable=False)
+    ip_address: Mapped[str | None] = mapped_column(String(64))
+    user_agent: Mapped[str | None] = mapped_column(String(512))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class AuthMfaFactor(Base):
+    """Provider-neutral MFA metadata; no raw shared secret is stored here."""
+
+    __tablename__ = "auth_mfa_factors"
+    __table_args__ = (
+        CheckConstraint(
+            "factor_type IN ('totp', 'webauthn', 'external')",
+            name="ck_auth_mfa_factors_type",
+        ),
+        CheckConstraint(
+            "status IN ('pending', 'active', 'revoked')",
+            name="ck_auth_mfa_factors_status",
+        ),
+        Index("ix_auth_mfa_factors_user_account_id", "user_account_id"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    user_account_id: Mapped[int] = mapped_column(
+        ForeignKey("user_accounts.id", ondelete="CASCADE"), nullable=False
+    )
+    factor_type: Mapped[str] = mapped_column(String(20), nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending")
+    label: Mapped[str | None] = mapped_column(String(120))
+    external_credential_id: Mapped[str | None] = mapped_column(String(255))
+    verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
@@ -2078,11 +2178,21 @@ class ShopInvitation(Base):
         ),
         Index("ix_shop_invitations_shop_id", "shop_id"),
         Index("ix_shop_invitations_token_hash", "token_hash", unique=True),
+        Index("ix_shop_invitations_email_normalized", "email_normalized"),
+        Index(
+            "uq_shop_invitations_pending_email",
+            "shop_id",
+            "email_normalized",
+            unique=True,
+            sqlite_where=text("accepted_at IS NULL AND revoked_at IS NULL"),
+            postgresql_where=text("accepted_at IS NULL AND revoked_at IS NULL"),
+        ),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     shop_id: Mapped[int] = mapped_column(ForeignKey("shops.id", ondelete="CASCADE"), nullable=False)
     email: Mapped[str] = mapped_column(String(180), nullable=False)
+    email_normalized: Mapped[str] = mapped_column(String(180), nullable=False)
     role: Mapped[str] = mapped_column(String(20), nullable=False)
     invited_by_user_account_id: Mapped[int] = mapped_column(
         ForeignKey("user_accounts.id", ondelete="CASCADE"), nullable=False

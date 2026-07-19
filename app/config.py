@@ -79,6 +79,12 @@ class Settings(BaseSettings):
     max_email_verification_attempts_per_minute: int = Field(default=20, ge=1, le=240)
     max_email_verification_resend_attempts_per_hour: int = Field(default=5, ge=1, le=240)
     email_verification_token_ttl_hours: int = Field(default=24, ge=1, le=168)
+    password_reset_token_ttl_minutes: int = Field(default=30, ge=5, le=1440)
+    max_password_reset_attempts_per_hour: int = Field(default=5, ge=1, le=240)
+    max_invitation_acceptance_attempts_per_hour: int = Field(default=20, ge=1, le=240)
+    account_lockout_failure_threshold: int = Field(default=5, ge=3, le=50)
+    account_lockout_minutes: int = Field(default=15, ge=1, le=1440)
+    shop_invitation_token_ttl_hours: int = Field(default=72, ge=1, le=720)
     log_level: str = "INFO"
     session_ttl_hours: int = Field(default=12, ge=1, le=168)
     frontend_origin: str = "http://127.0.0.1:5173"

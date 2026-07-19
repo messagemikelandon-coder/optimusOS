@@ -6,7 +6,7 @@ from datetime import UTC, date, datetime
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from typing import TypedDict
 
-from sqlalchemy import Select, func, or_, select
+from sqlalchemy import Select, func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -21,6 +21,7 @@ from app.auth import (
 from app.config import Settings
 from app.db_models import (
     AuthSession,
+    PasswordResetToken,
     ShopMembership,
     Technician,
     TechnicianTimeEntry,
@@ -240,8 +241,13 @@ def _owner_query(db: Session, auth: AuthContext) -> Select[tuple[Technician]]:
     return select(Technician).where(Technician.shop_id == effective_shop_id(db, auth))
 
 
-def _get_technician(db: Session, auth: AuthContext, technician_id: int) -> Technician:
-    technician = db.scalar(_owner_query(db, auth).where(Technician.id == technician_id))
+def _get_technician(
+    db: Session, auth: AuthContext, technician_id: int, *, for_update: bool = False
+) -> Technician:
+    query = _owner_query(db, auth).where(Technician.id == technician_id)
+    if for_update:
+        query = query.with_for_update()
+    technician = db.scalar(query)
     if technician is None:
         raise TechnicianNotFoundError("Technician not found.")
     return technician
@@ -346,6 +352,7 @@ def archive_technician(
             )
         user, membership = linked
         user.is_active = False
+        user.account_status = "disabled"
         membership.is_active = False
         db.add(user)
         db.add(membership)
@@ -359,6 +366,14 @@ def archive_technician(
         for session in sessions:
             session.revoked_at = revoked_at
             db.add(session)
+        db.execute(
+            update(PasswordResetToken)
+            .where(
+                PasswordResetToken.user_account_id == technician.user_account_id,
+                PasswordResetToken.status == "active",
+            )
+            .values(status="revoked", revoked_at=revoked_at)
+        )
     technician.is_archived = True
     db.add(technician)
     db.commit()
@@ -429,7 +444,7 @@ def provision_login(
 ) -> TechnicianProvisionLoginResponse:
     if auth.user.role not in {"owner", "manager"}:
         raise TechnicianStoreError("Only shop owners and managers can provision logins.")
-    technician = _get_technician(db, auth, technician_id)
+    technician = _get_technician(db, auth, technician_id, for_update=True)
     if technician.user_account_id is not None:
         raise TechnicianConflictError("This technician already has a login.")
 
