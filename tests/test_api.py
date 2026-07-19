@@ -129,7 +129,7 @@ async def test_login_sets_http_only_cookie_and_me_restores_session(
     user = db_session.scalar(select(UserAccount).where(UserAccount.username == "owner"))
     assert user is not None
     raw_cookie = response.headers["set-cookie"].split("optimus_session=", 1)[1].split(";", 1)[0]
-    me = await main.auth_me(auth_context(settings, db_session, raw_cookie))
+    me = await main.auth_me(db_session, auth_context(settings, db_session, raw_cookie))
     assert me.user.username == "owner"
 
 

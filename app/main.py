@@ -52,6 +52,7 @@ from app.auth import (
     require_billing_context,
     require_owner_context,
     require_owner_or_technician_context,
+    require_support_context,
     require_verified_auth_context,
     set_session_cookie,
 )
@@ -264,6 +265,7 @@ from app.models import (
     SubscribeRequest,
     SubscriptionEventsResponse,
     SubscriptionRead,
+    SupportShopListResponse,
     SyntheticAccountResponse,
     SyntheticCleanupResponse,
     SyntheticTechnicianRequest,
@@ -410,6 +412,12 @@ from app.subscription_store import (
     refresh_subscription_from_square,
 )
 from app.subscription_store import subscribe as subscribe_shop
+from app.support_store import (
+    SupportNotFoundError,
+    end_shop_impersonation,
+    impersonate_shop_owner,
+    list_shops_for_support,
+)
 from app.technician_store import (
     TechnicianConflictError,
     TechnicianNotFoundError,
@@ -494,6 +502,7 @@ OwnerOrTechnicianAuthContextDep = Annotated[
     AuthContext, Depends(require_owner_or_technician_context)
 ]
 BillingAuthContextDep = Annotated[AuthContext, Depends(require_billing_context)]
+SupportAuthContextDep = Annotated[AuthContext, Depends(require_support_context)]
 
 app = FastAPI(
     title="Optimus Command Center | Landon Motor Works",
@@ -916,8 +925,15 @@ async def ready(settings: SettingsDep) -> dict[str, object]:
     }
 
 
-def auth_user_response(user: Any) -> AuthUser:
-    return AuthUser.model_validate(user)
+def auth_user_response(
+    user: Any, *, db: Session | None = None, session: Any | None = None
+) -> AuthUser:
+    response = AuthUser.model_validate(user)
+    if db is not None and session is not None and session.impersonated_by_user_account_id:
+        impersonator = db.get(UserAccount, session.impersonated_by_user_account_id)
+        response.is_impersonated = True
+        response.impersonated_by_username = impersonator.username if impersonator else None
+    return response
 
 
 def ensure_context_dependencies(settings: Settings) -> None:
@@ -1209,9 +1225,9 @@ async def logout(
 
 
 @app.get("/api/auth/me", response_model=AuthMeResponse)
-async def auth_me(auth: AuthContextDep) -> AuthMeResponse:
+async def auth_me(db: DbSessionDep, auth: AuthContextDep) -> AuthMeResponse:
     return AuthMeResponse(
-        user=auth_user_response(auth.user),
+        user=auth_user_response(auth.user, db=db, session=auth.session),
         expires_at=auth.session.expires_at,
     )
 
@@ -1569,6 +1585,89 @@ async def refresh_billing_subscription(
         ) from exc
     finally:
         client.close()
+
+
+@app.get("/api/support/shops", response_model=SupportShopListResponse)
+async def list_support_shops(
+    request: Request, db: DbSessionDep, auth: SupportAuthContextDep
+) -> SupportShopListResponse:
+    result = await asyncio.to_thread(list_shops_for_support, db)
+    log_security_event(
+        logger,
+        SecurityEventType.SUPPORT_DIRECTORY_VIEWED,
+        request=request,
+        level=logging.INFO,
+        user_id=auth.user.id,
+        shop_count=len(result.items),
+    )
+    return result
+
+
+@app.post("/api/support/shops/{shop_id}/impersonate", response_model=AuthSessionResponse)
+async def start_shop_impersonation(
+    shop_id: int,
+    request: Request,
+    response: Response,
+    db: DbSessionDep,
+    settings: SettingsDep,
+    auth: SupportAuthContextDep,
+) -> AuthSessionResponse:
+    try:
+        token, auth_session, owner = await asyncio.to_thread(
+            impersonate_shop_owner,
+            db,
+            auth,
+            settings=settings,
+            shop_id=shop_id,
+            request=request,
+        )
+    except SupportNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    set_session_cookie(response, settings, token, auth_session.expires_at)
+    log_security_event(
+        logger,
+        SecurityEventType.SUPPORT_IMPERSONATION_STARTED,
+        request=request,
+        level=logging.INFO,
+        support_user_id=auth.user.id,
+        shop_id=shop_id,
+        target_owner_id=owner.id,
+    )
+    return AuthSessionResponse(
+        user=auth_user_response(owner, db=db, session=auth_session),
+        expires_at=auth_session.expires_at,
+        session_expires_in_seconds=int(
+            (auth_session.expires_at - datetime.now(UTC)).total_seconds()
+        ),
+    )
+
+
+@app.post("/api/support/end-impersonation", response_model=AuthSessionResponse)
+async def end_shop_impersonation_route(
+    request: Request,
+    response: Response,
+    db: DbSessionDep,
+    settings: SettingsDep,
+    auth: AuthContextDep,
+) -> AuthSessionResponse:
+    token, auth_session, support_user = await asyncio.to_thread(
+        end_shop_impersonation, db, auth, settings=settings, request=request
+    )
+    set_session_cookie(response, settings, token, auth_session.expires_at)
+    log_security_event(
+        logger,
+        SecurityEventType.SUPPORT_IMPERSONATION_ENDED,
+        request=request,
+        level=logging.INFO,
+        support_user_id=support_user.id,
+    )
+    return AuthSessionResponse(
+        user=auth_user_response(support_user),
+        expires_at=auth_session.expires_at,
+        session_expires_in_seconds=int(
+            (auth_session.expires_at - datetime.now(UTC)).total_seconds()
+        ),
+    )
 
 
 def _require_test_support_enabled(settings: Settings) -> None:

@@ -31,6 +31,9 @@ class SecurityEventType(StrEnum):
     ACCOUNT_STATUS_CHANGED = "auth.account_status_changed"
     RATE_LIMIT_EXCEEDED = "rate_limit.exceeded"
     SQUARE_API_FAILED = "square.api_failed"
+    SUPPORT_DIRECTORY_VIEWED = "support.directory_viewed"
+    SUPPORT_IMPERSONATION_STARTED = "support.impersonation_started"
+    SUPPORT_IMPERSONATION_ENDED = "support.impersonation_ended"
 
 
 def log_security_event(

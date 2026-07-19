@@ -221,6 +221,7 @@ const viewMeta = {
   vehicles: { eyebrow: "Fleet", title: "Vehicles" },
   technicians: { eyebrow: "Staff", title: "Technicians" },
   "my-day": { eyebrow: "Technician workspace", title: "My Day" },
+  "support-directory": { eyebrow: "Platform support", title: "Shop directory" },
   "work-orders": { eyebrow: "Repair execution", title: "Work orders" },
   "approval-queue": { eyebrow: "Customer decisions", title: "Approval Queue" },
   invoices: { eyebrow: "Customer billing", title: "Invoices" },
@@ -304,18 +305,35 @@ function isTechnicianSession() {
   return state.auth.authenticated && state.auth.user?.role === "technician";
 }
 
+function isSupportSession() {
+  return state.auth.authenticated && state.auth.user?.role === "support";
+}
+
 function requiresEmailVerification(user = state.auth.user) {
   return Boolean(user?.email && !user?.email_verified_at);
 }
 
 function applyRoleNavVisibility() {
   const technician = isTechnicianSession();
+  const support = isSupportSession();
   $$("[data-owner-only]").forEach((el) => {
-    el.hidden = technician;
+    el.hidden = technician || support;
   });
   $$("[data-technician-only]").forEach((el) => {
     el.hidden = !technician;
   });
+  $$("[data-support-only]").forEach((el) => {
+    el.hidden = !support;
+  });
+  if (support) {
+    // A support account has no shop at all -- every nav destination other
+    // than the dedicated support-only one must stay hidden, including the
+    // handful of items (work-orders/chat/system/etc.) that carry no
+    // data-owner-only/data-technician-only marker and default to visible
+    // for any non-technician session.
+    $$("#sidebar [data-view]:not([data-support-only]), .mobile-bottom-nav [data-view]:not([data-support-only])")
+      .forEach((el) => { el.hidden = true; });
+  }
 }
 
 function clearAccountSecurity(message = "Sign in to load account security.") {
@@ -364,6 +382,7 @@ function setAuthState(authenticated, user = null, expiresAt = null) {
     authenticated &&
     !wasAuthenticated &&
     user?.role !== "technician" &&
+    user?.role !== "support" &&
     !requiresEmailVerification(user)
   )
     void refreshNotificationsBadge();
@@ -372,6 +391,12 @@ function setAuthState(authenticated, user = null, expiresAt = null) {
   $("system-login-link").hidden = authenticated;
   $("system-logout").hidden = !authenticated;
   $("verify-email-resend").hidden = !authenticated;
+  const impersonating = Boolean(authenticated && user?.is_impersonated);
+  $("impersonation-banner").hidden = !impersonating;
+  if (impersonating) {
+    $("impersonation-owner-name").textContent = user.display_name || user.username;
+    $("impersonation-support-name").textContent = user.impersonated_by_username || "unknown";
+  }
   ["owner", "manager"].forEach((role) => {
     const option = $("shop-invitation-role")?.querySelector(`option[value="${role}"]`);
     if (option) option.disabled = user?.role === "manager";
@@ -463,6 +488,8 @@ async function handleLoginSubmit(event) {
     }
     if (data.user.role === "technician") {
       navigate("my-day");
+    } else if (data.user.role === "support") {
+      navigate("support-directory");
     } else {
       void loadCustomerOptions();
       void restoreSelectionsFromContext();
@@ -1084,6 +1111,7 @@ function navigate(view) {
   window.scrollTo({ top: 0, behavior: "smooth" });
   if (view === "dashboard" && state.auth.authenticated) void loadDashboardSummary();
   if (view === "choose-plan" && state.auth.authenticated) void loadChoosePlanStatus();
+  if (view === "support-directory" && state.auth.authenticated) void loadSupportDirectory();
   if (view === "customers" && state.auth.authenticated) void loadCustomers();
   if (view === "vehicles" && state.auth.authenticated) void loadVehicles();
   if (view === "work-orders" && state.auth.authenticated) {
@@ -2640,6 +2668,78 @@ function initializeMyDay() {
   });
   $("my-day-clock-out").addEventListener("click", () => {
     void submitMyDayClock("out");
+  });
+}
+
+function renderSupportDirectory(items) {
+  $("support-directory-count").textContent = `${items.length} shop${items.length === 1 ? "" : "s"}`;
+  $("support-directory-list").innerHTML = items.length
+    ? items.map((shop) => {
+      const tier = shop.subscription_tier ? shop.subscription_tier.toUpperCase() : "—";
+      const seatText = shop.seat_limit === null
+        ? `${shop.seats_used} seats (unlimited)`
+        : `${shop.seats_used} / ${shop.seat_limit} seats`;
+      const suspended = shop.is_access_suspended ? " · SUSPENDED" : "";
+      const impersonateAction = shop.owner_username
+        ? `<button class="text-button" type="button" data-impersonate-shop="${shop.shop_id}" data-shop-name="${escapeHtml(shop.display_name)}">Act as owner</button>`
+        : "";
+      return `<div class="context-action"><b>${escapeHtml(tier)}</b><span><strong>${escapeHtml(shop.display_name)}</strong><small>${escapeHtml(shop.owner_display_name || "No owner on record")} · ${escapeHtml(shop.status)}${escapeHtml(suspended)} · ${escapeHtml(seatText)} · ${shop.member_count} member(s)</small></span>${impersonateAction}</div>`;
+    }).join("")
+    : '<div class="empty-card"><p>No shops yet.</p></div>';
+}
+
+async function loadSupportDirectory() {
+  $("support-directory-count").textContent = "Loading…";
+  try {
+    const response = await apiFetch("/api/support/shops");
+    const data = await readApiPayload(response);
+    if (!response.ok || !data) throw apiError(response, data, "Shop directory failed");
+    renderSupportDirectory(data.items);
+  } catch (error) {
+    $("support-directory-count").textContent = "Failed to load";
+    $("support-directory-list").innerHTML = `<div class="empty-card"><p>${escapeHtml(error.message)}</p></div>`;
+  }
+}
+
+function initializeSupportDirectory() {
+  $("support-directory-refresh").addEventListener("click", () => void loadSupportDirectory());
+  $("support-directory-list").addEventListener("click", async (event) => {
+    const button = event.target.closest("[data-impersonate-shop]");
+    if (!button) return;
+    const shopName = button.dataset.shopName || "this shop";
+    if (!window.confirm(`Act as the owner of ${shopName}? This is logged on their account's audit trail.`)) {
+      return;
+    }
+    button.disabled = true;
+    try {
+      const response = await apiFetch(
+        `/api/support/shops/${button.dataset.impersonateShop}/impersonate`,
+        { method: "POST" },
+      );
+      const data = await readApiPayload(response);
+      if (!response.ok || !data) throw apiError(response, data, "Impersonation failed");
+      setAuthState(true, data.user, data.expires_at);
+      showToast(`Now viewing as ${data.user.display_name || data.user.username}.`, "success");
+      void loadCustomerOptions();
+      void restoreSelectionsFromContext();
+      navigate("dashboard");
+    } catch (error) {
+      showToast(`Impersonation failed: ${error.message}`, "error");
+    } finally {
+      button.disabled = false;
+    }
+  });
+  $("impersonation-end").addEventListener("click", async () => {
+    try {
+      const response = await apiFetch("/api/support/end-impersonation", { method: "POST" });
+      const data = await readApiPayload(response);
+      if (!response.ok || !data) throw apiError(response, data, "Ending impersonation failed");
+      setAuthState(true, data.user, data.expires_at);
+      showToast("Impersonation ended.", "success");
+      navigate("support-directory");
+    } catch (error) {
+      showToast(`Ending impersonation failed: ${error.message}`, "error");
+    }
   });
 }
 
@@ -7710,6 +7810,7 @@ function initializeApp() {
   initializeVehicles();
   initializeTechnicians();
   initializeMyDay();
+  initializeSupportDirectory();
   initializeWorkOrders();
   initializeApprovalQueue();
   initializeInvoices();
@@ -7785,7 +7886,13 @@ function initializeApp() {
       navigate("verify-email");
       return;
     }
-    if (isTechnicianSession()) {
+    if (isSupportSession()) {
+      // Same reasoning as the technician branch below: the page's static
+      // default view is #view-dashboard, which a support session (no shop
+      // at all) must never reach -- this must fire on every load, not just
+      // the first login redirect.
+      navigate("support-directory");
+    } else if (isTechnicianSession()) {
       // Unlike the owner branch below, "my-day" is never the page's static
       // default view (the HTML ships with #view-dashboard marked
       // is-active), so this must fire on every authenticated load -- not
@@ -7811,7 +7918,7 @@ function initializeApp() {
   void loadHealth(false);
   window.setInterval(() => loadHealth(false), 60000);
   window.setInterval(() => {
-    if (state.auth.authenticated && state.auth.user?.role !== "technician") {
+    if (state.auth.authenticated && !isTechnicianSession() && !isSupportSession()) {
       void refreshNotificationsBadge();
       void refreshApprovalQueueBadge();
     }

@@ -124,6 +124,50 @@ def bootstrap_owner_account(settings: Settings | None = None, db: Session | None
             session.close()
 
 
+def _support_exists_query() -> Select[tuple[int]]:
+    return select(func.count()).select_from(UserAccount).where(UserAccount.role == "support")
+
+
+def bootstrap_support_account(settings: Settings | None = None, db: Session | None = None) -> int:
+    """/goal Phase 8: platform-side-only provisioning for the read-only
+    support role, mirroring `bootstrap_owner_account`'s idempotent shape.
+    Deliberately creates no Shop/ShopSettings/ShopMembership -- a support
+    account is not scoped to any single shop, by design."""
+    resolved_settings = settings or get_settings()
+    managed_session = db is None
+    session = db or build_session_factory(resolved_settings.database_url)()
+    try:
+        support_count = session.scalar(_support_exists_query()) or 0
+        if support_count > 0:
+            print("Support account already present.")
+            return 0
+
+        if (
+            not resolved_settings.optimus_support_username
+            or not resolved_settings.optimus_support_password
+        ):
+            print(
+                "Support bootstrap skipped: OPTIMUS_SUPPORT_USERNAME or "
+                "OPTIMUS_SUPPORT_PASSWORD missing."
+            )
+            return 1
+
+        support_user = UserAccount(
+            username=normalize_username(resolved_settings.optimus_support_username),
+            display_name="Support",
+            role="support",
+            password_hash=hash_password(resolved_settings.optimus_support_password),
+            is_active=True,
+        )
+        session.add(support_user)
+        session.commit()
+        print("Support account created.")
+        return 0
+    finally:
+        if managed_session:
+            session.close()
+
+
 def create_auth_session(
     *,
     db: Session,
@@ -143,7 +187,10 @@ def create_auth_session(
     )
     # Do not mint even a dormant session for an orphaned, deactivated, or
     # role-mismatched membership. Reactivation must require a fresh login.
-    effective_shop_id(db, AuthContext(user=user, session=auth_session))
+    # /goal Phase 8: a support account has no ShopMembership at all, by
+    # design -- exempt from this check the same way get_current_auth_context is.
+    if user.role != "support":
+        effective_shop_id(db, AuthContext(user=user, session=auth_session))
     user.last_login_at = datetime.now(UTC)
     db.add(user)
     db.add(auth_session)
@@ -151,6 +198,78 @@ def create_auth_session(
     db.refresh(auth_session)
     auth_session.expires_at = ensure_utc(auth_session.expires_at)
     return token, auth_session
+
+
+# /goal Phase 8: deliberately short-lived compared to a normal session
+# (session_ttl_hours defaults to 12) -- impersonation should require a
+# fresh, explicit start rather than lingering unattended for a full
+# workday.
+IMPERSONATION_SESSION_TTL_MINUTES = 60
+
+
+def start_impersonation_session(
+    *,
+    db: Session,
+    settings: Settings,
+    target_owner: UserAccount,
+    impersonator: UserAccount,
+    request: Request,
+) -> tuple[str, AuthSession]:
+    """Mint a brand-new session for `target_owner` (a real shop's owner
+    account), reusing `create_auth_session`'s exact mechanics so the
+    resulting session behaves identically to a normal owner login for
+    every existing route -- no new access-control branching anywhere else
+    in the app. Tagged with `impersonated_by_user_account_id` so it is
+    always auditable and time-boxed shorter than a normal session."""
+    token, auth_session = create_auth_session(
+        db=db, settings=settings, user=target_owner, request=request
+    )
+    auth_session.expires_at = datetime.now(UTC) + timedelta(
+        minutes=IMPERSONATION_SESSION_TTL_MINUTES
+    )
+    auth_session.impersonated_by_user_account_id = impersonator.id
+    db.add(auth_session)
+    db.commit()
+    db.refresh(auth_session)
+    auth_session.expires_at = ensure_utc(auth_session.expires_at)
+    return token, auth_session
+
+
+def end_impersonation_session(
+    *, db: Session, settings: Settings, auth: AuthContext, request: Request
+) -> tuple[str, AuthSession]:
+    """Revoke the current impersonated-owner session and mint a fresh
+    session for the original support account, so ending impersonation
+    returns the browser to the support directory rather than leaving it
+    signed in as the shop owner or logging it out entirely."""
+    impersonator_id = auth.session.impersonated_by_user_account_id
+    if impersonator_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="This session is not an impersonation session.",
+        )
+    # Lock the session row first (independent-review finding): without
+    # this, a concurrent double-submit -- two tabs, a client retry -- could
+    # both read revoked_at as still-None and each revoke+re-mint, producing
+    # two live support sessions and duplicate ended events.
+    locked_session = db.execute(
+        select(AuthSession).where(AuthSession.id == auth.session.id).with_for_update()
+    ).scalar_one()
+    if locked_session.revoked_at is not None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="This impersonation session has already been ended.",
+        )
+    impersonator = db.get(UserAccount, impersonator_id)
+    if impersonator is None or impersonator.role != "support" or not impersonator.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="The originating support account is no longer valid.",
+        )
+    locked_session.revoked_at = datetime.now(UTC)
+    db.add(locked_session)
+    db.commit()
+    return create_auth_session(db=db, settings=settings, user=impersonator, request=request)
 
 
 def request_metadata(request: Request) -> tuple[str | None, str | None]:
@@ -252,7 +371,11 @@ def get_current_auth_context(
         # that do not happen to load a business record. This makes membership
         # deactivation immediate and prevents an orphaned or role-mismatched
         # session from reaching chat, location, context, or account surfaces.
-        effective_shop_id(db, auth)
+        # /goal Phase 8: a support account is deliberately not scoped to any
+        # single shop -- it has no ShopMembership row at all, so it is the
+        # one role exempt from this check.
+        if user.role != "support":
+            effective_shop_id(db, auth)
         return auth
     except SQLAlchemyError as exc:
         logger.warning("Authentication lookup failed due to storage error.")
@@ -370,6 +493,20 @@ def require_verified_auth_context(
 ) -> AuthContext:
     require_verified_email_if_present(auth)
     return auth
+
+
+def is_shop_access_suspended_readonly(shop: Shop) -> bool:
+    """Pure, read-only derivation of whether `shop`'s access is currently
+    suspended -- unlike `sync_shop_access_status`, this never writes to the
+    database (no cache correction, no `ShopEvent`, no commit). Used by the
+    platform support directory (/goal Phase 8), which reads across every
+    shop on the platform and must stay genuinely read-only -- a support
+    session loading the directory must never trigger a write to a shop it
+    isn't even authenticated as."""
+    subscription = shop.subscription
+    if subscription is None:
+        return True
+    return _is_subscription_access_suspended(subscription, datetime.now(UTC))
 
 
 def _is_subscription_access_suspended(subscription: ShopSubscription, now: datetime) -> bool:
@@ -498,4 +635,66 @@ def require_billing_context(
     a payment method to restore access, or suspension would be permanent."""
     require_role(auth, "owner", "manager")
     require_verified_email_if_present(auth)
+    return auth
+
+
+def reconcile_abandoned_impersonation_sessions(db: Session, support_user_id: int) -> None:
+    """Independent-review finding: a support account that lets an
+    impersonation session merely expire (TTL) or abandons it (tab closed,
+    cookie cleared) instead of calling end-impersonation would otherwise
+    leave the target shop's audit trail with a `support_impersonation_started`
+    event and no matching end event -- no reliable way to tell "properly
+    ended" from "abandoned," nor a trustworthy end-of-access timestamp.
+
+    There is no background scheduler in this codebase, so this closes the
+    gap lazily: every time this support account is next active anywhere
+    (in practice, every support-gated request, starting with the directory
+    view it always lands on), sweep its own impersonation sessions that
+    have expired without ever being explicitly revoked and close them out
+    with a matching audit event."""
+    now = datetime.now(UTC)
+    abandoned = db.scalars(
+        select(AuthSession).where(
+            AuthSession.impersonated_by_user_account_id == support_user_id,
+            AuthSession.revoked_at.is_(None),
+            AuthSession.expires_at <= now,
+        )
+    ).all()
+    if not abandoned:
+        return
+    support_user = db.get(UserAccount, support_user_id)
+    for session in abandoned:
+        shop_id = db.scalar(
+            select(ShopMembership.shop_id).where(
+                ShopMembership.user_account_id == session.user_id,
+                ShopMembership.role == "owner",
+                ShopMembership.is_active.is_(True),
+            )
+        )
+        session.revoked_at = now
+        db.add(session)
+        if shop_id is not None:
+            db.add(
+                ShopEvent(
+                    shop_id=shop_id,
+                    event_type="support_impersonation_expired",
+                    actor_user_account_id=support_user_id,
+                    actor_name=support_user.display_name if support_user else None,
+                    event_metadata={"auth_session_id": session.id},
+                )
+            )
+    db.commit()
+
+
+def require_support_context(
+    db: DbSessionDep,
+    auth: Annotated[AuthContext, Depends(get_current_auth_context)],
+) -> AuthContext:
+    """Route dependency for the platform-side, read-only support directory
+    (/goal Phase 8). Support-only, and deliberately does not call
+    `require_shop_access_active`/`effective_shop_id` at all -- a support
+    account has no single shop to be scoped to; its whole purpose is
+    reading across every shop."""
+    require_role(auth, "support")
+    reconcile_abandoned_impersonation_sessions(db, auth.user.id)
     return auth
