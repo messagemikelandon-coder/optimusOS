@@ -10,9 +10,23 @@ from sqlalchemy import Select, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.auth import AuthContext, effective_owner_id, ensure_utc, hash_password, normalize_username
+from app.auth import (
+    AuthContext,
+    effective_shop_id,
+    effective_shop_owner_id,
+    ensure_utc,
+    hash_password,
+    normalize_username,
+)
 from app.config import Settings
-from app.db_models import Technician, TechnicianTimeEntry, UserAccount, WorkOrder
+from app.db_models import (
+    AuthSession,
+    ShopMembership,
+    Technician,
+    TechnicianTimeEntry,
+    UserAccount,
+    WorkOrder,
+)
 from app.models import (
     TechnicianArchiveResponse,
     TechnicianClockResponse,
@@ -153,6 +167,7 @@ def _technician_computed_fields(db: Session, technician: Technician) -> _Technic
             .select_from(TechnicianTimeEntry)
             .where(
                 TechnicianTimeEntry.technician_id == technician.id,
+                TechnicianTimeEntry.shop_id == technician.shop_id,
                 TechnicianTimeEntry.clock_out_at.is_(None),
             )
         )
@@ -164,6 +179,7 @@ def _technician_computed_fields(db: Session, technician: Technician) -> _Technic
             .select_from(WorkOrder)
             .where(
                 WorkOrder.assigned_technician_id == technician.id,
+                WorkOrder.shop_id == technician.shop_id,
                 WorkOrder.is_comeback.is_(True),
             )
         )
@@ -220,12 +236,12 @@ def _entry_to_read(entry: TechnicianTimeEntry) -> TechnicianTimeEntryRead:
     )
 
 
-def _owner_query(auth: AuthContext) -> Select[tuple[Technician]]:
-    return select(Technician).where(Technician.owner_user_id == effective_owner_id(auth))
+def _owner_query(db: Session, auth: AuthContext) -> Select[tuple[Technician]]:
+    return select(Technician).where(Technician.shop_id == effective_shop_id(db, auth))
 
 
 def _get_technician(db: Session, auth: AuthContext, technician_id: int) -> Technician:
-    technician = db.scalar(_owner_query(auth).where(Technician.id == technician_id))
+    technician = db.scalar(_owner_query(db, auth).where(Technician.id == technician_id))
     if technician is None:
         raise TechnicianNotFoundError("Technician not found.")
     return technician
@@ -235,8 +251,14 @@ def get_technician_model(*, db: Session, auth: AuthContext, technician_id: int) 
     return _get_technician(db, auth, technician_id)
 
 
-def get_technician_for_user(db: Session, user_id: int) -> Technician | None:
-    return db.scalar(select(Technician).where(Technician.user_account_id == user_id))
+def get_technician_for_user(db: Session, auth: AuthContext) -> Technician | None:
+    return db.scalar(
+        select(Technician).where(
+            Technician.user_account_id == auth.user.id,
+            Technician.shop_id == effective_shop_id(db, auth),
+            Technician.is_archived.is_(False),
+        )
+    )
 
 
 def create_technician(
@@ -247,7 +269,9 @@ def create_technician(
 ) -> TechnicianRead:
     normalized = normalize_technician_fields(payload)
     technician = Technician(
-        owner_user_id=effective_owner_id(auth), shop_id=resolve_shop_id(db, auth), **normalized
+        owner_user_id=effective_shop_owner_id(db, auth),
+        shop_id=resolve_shop_id(db, auth),
+        **normalized,
     )
     db.add(technician)
     db.commit()
@@ -303,6 +327,38 @@ def archive_technician(
     technician_id: int,
 ) -> TechnicianArchiveResponse:
     technician = _get_technician(db, auth, technician_id)
+    if technician.user_account_id is not None:
+        linked = db.execute(
+            select(UserAccount, ShopMembership)
+            .join(ShopMembership, ShopMembership.user_account_id == UserAccount.id)
+            .where(
+                UserAccount.id == technician.user_account_id,
+                UserAccount.role == "technician",
+                ShopMembership.user_account_id == technician.user_account_id,
+                ShopMembership.shop_id == technician.shop_id,
+                ShopMembership.role == "technician",
+                ShopMembership.is_active.is_(True),
+            )
+        ).one_or_none()
+        if linked is None:
+            raise TechnicianStoreError(
+                "This technician's login is not valid for the same active Shop membership."
+            )
+        user, membership = linked
+        user.is_active = False
+        membership.is_active = False
+        db.add(user)
+        db.add(membership)
+        sessions = db.scalars(
+            select(AuthSession).where(
+                AuthSession.user_id == technician.user_account_id,
+                AuthSession.revoked_at.is_(None),
+            )
+        ).all()
+        revoked_at = datetime.now(UTC)
+        for session in sessions:
+            session.revoked_at = revoked_at
+            db.add(session)
     technician.is_archived = True
     db.add(technician)
     db.commit()
@@ -327,7 +383,7 @@ def list_technicians(
     if page < 1:
         raise TechnicianStoreError("Page must be 1 or greater.")
 
-    query = _owner_query(auth).where(Technician.is_archived == archived)
+    query = _owner_query(db, auth).where(Technician.is_archived == archived)
     if search:
         lowered_tokens = [token for token in search.strip().lower().split() if token]
         if lowered_tokens:
@@ -371,14 +427,16 @@ def provision_login(
     technician_id: int,
     payload: TechnicianProvisionLoginRequest,
 ) -> TechnicianProvisionLoginResponse:
+    if auth.user.role not in {"owner", "manager"}:
+        raise TechnicianStoreError("Only shop owners and managers can provision logins.")
     technician = _get_technician(db, auth, technician_id)
     if technician.user_account_id is not None:
         raise TechnicianConflictError("This technician already has a login.")
 
-    owner_id = effective_owner_id(auth)
+    owner_id = effective_shop_owner_id(db, auth)
     # Security-review-mandated check (Phase 5.6 sub-phase 1 finding): a
     # technician's shop_owner_id must reference a real owner row, never
-    # another technician or a nonexistent id, or effective_owner_id() would
+    # another technician or a nonexistent id, or effective_shop_owner_id() would
     # start scoping chained/self-referencing technicians unpredictably.
     owner = db.get(UserAccount, owner_id)
     if owner is None or owner.role != "owner":
@@ -404,6 +462,14 @@ def provision_login(
     db.add(user)
     try:
         db.flush()
+        db.add(
+            ShopMembership(
+                shop_id=resolve_shop_id(db, auth),
+                user_account_id=user.id,
+                role="technician",
+            )
+        )
+        db.flush()
     except IntegrityError:
         db.rollback()
         raise TechnicianConflictError("That username is already taken.") from None
@@ -417,7 +483,7 @@ def provision_login(
 
 
 def _require_own_technician(db: Session, auth: AuthContext) -> Technician:
-    technician = get_technician_for_user(db, auth.user.id)
+    technician = get_technician_for_user(db, auth)
     if technician is None:
         raise TechnicianNotFoundError("No technician profile is linked to this login.")
     return technician
@@ -428,6 +494,7 @@ def clock_in(*, db: Session, auth: AuthContext) -> TechnicianClockResponse:
     open_entry = db.scalar(
         select(TechnicianTimeEntry).where(
             TechnicianTimeEntry.technician_id == technician.id,
+            TechnicianTimeEntry.shop_id == technician.shop_id,
             TechnicianTimeEntry.clock_out_at.is_(None),
         )
     )
@@ -454,6 +521,7 @@ def clock_out(*, db: Session, auth: AuthContext) -> TechnicianClockResponse:
     entry = db.scalar(
         select(TechnicianTimeEntry).where(
             TechnicianTimeEntry.technician_id == technician.id,
+            TechnicianTimeEntry.shop_id == technician.shop_id,
             TechnicianTimeEntry.clock_out_at.is_(None),
         )
     )
@@ -470,13 +538,17 @@ def get_my_technician_profile(*, db: Session, auth: AuthContext) -> TechnicianMe
     technician = _require_own_technician(db, auth)
     recent_entries = db.scalars(
         select(TechnicianTimeEntry)
-        .where(TechnicianTimeEntry.technician_id == technician.id)
+        .where(
+            TechnicianTimeEntry.technician_id == technician.id,
+            TechnicianTimeEntry.shop_id == technician.shop_id,
+        )
         .order_by(TechnicianTimeEntry.clock_in_at.desc())
         .limit(10)
     ).all()
     assigned_ids = db.scalars(
         select(WorkOrder.id).where(
             WorkOrder.assigned_technician_id == technician.id,
+            WorkOrder.shop_id == technician.shop_id,
             WorkOrder.status.notin_(["completed", "cancelled"]),
         )
     ).all()

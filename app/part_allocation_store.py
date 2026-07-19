@@ -3,7 +3,7 @@ from __future__ import annotations
 from sqlalchemy import Select, select
 from sqlalchemy.orm import Session
 
-from app.auth import AuthContext, effective_owner_id, ensure_utc
+from app.auth import AuthContext, effective_shop_id, effective_shop_owner_id, ensure_utc
 from app.db_models import Part, PartAllocation, PartAllocationEvent, WorkOrder
 from app.models import (
     PartAllocationAllocateRequest,
@@ -29,16 +29,17 @@ class PartAllocationNotFoundError(PartAllocationStoreError):
 
 
 def _owner_query(db: Session, auth: AuthContext) -> Select[tuple[PartAllocation]]:
-    query = select(PartAllocation).where(PartAllocation.owner_user_id == effective_owner_id(auth))
+    query = select(PartAllocation).where(PartAllocation.shop_id == effective_shop_id(db, auth))
     if auth.user.role == "technician":
         # Same pattern as work_order_store._work_order_query and Phase 6 Part
         # E's diagnostics/inspections carve-out: a technician only sees
         # allocations tied to one of their own assigned work orders.
-        technician = get_technician_for_user(db, auth.user.id)
+        technician = get_technician_for_user(db, auth)
         if technician is None:
             return query.where(PartAllocation.id.is_(None))
         assigned_work_order_ids = select(WorkOrder.id).where(
-            WorkOrder.assigned_technician_id == technician.id
+            WorkOrder.assigned_technician_id == technician.id,
+            WorkOrder.shop_id == technician.shop_id,
         )
         query = query.where(PartAllocation.work_order_id.in_(assigned_work_order_ids))
     return query
@@ -55,13 +56,13 @@ def _validate_work_order_access(db: Session, auth: AuthContext, work_order_id: i
     work_order = db.scalar(
         select(WorkOrder).where(
             WorkOrder.id == work_order_id,
-            WorkOrder.owner_user_id == effective_owner_id(auth),
+            WorkOrder.shop_id == effective_shop_id(db, auth),
         )
     )
     if work_order is None:
         raise PartAllocationStoreError("Selected work order was not found.")
     if auth.user.role == "technician":
-        technician = get_technician_for_user(db, auth.user.id)
+        technician = get_technician_for_user(db, auth)
         if technician is None or work_order.assigned_technician_id != technician.id:
             raise PartAllocationStoreError("Selected work order is not assigned to you.")
     return work_order
@@ -69,7 +70,7 @@ def _validate_work_order_access(db: Session, auth: AuthContext, work_order_id: i
 
 def _require_part(db: Session, auth: AuthContext, part_id: int) -> Part:
     part = db.scalar(
-        select(Part).where(Part.id == part_id, Part.owner_user_id == effective_owner_id(auth))
+        select(Part).where(Part.id == part_id, Part.shop_id == effective_shop_id(db, auth))
     )
     if part is None:
         raise PartAllocationStoreError("Selected part was not found.")
@@ -79,6 +80,8 @@ def _require_part(db: Session, auth: AuthContext, part_id: int) -> Part:
 def _to_read(
     allocation: PartAllocation, auth: AuthContext
 ) -> PartAllocationRead | PartAllocationTechnicianRead:
+    if allocation.part.shop_id != allocation.shop_id:
+        raise PartAllocationStoreError("Part allocation has an invalid cross-shop part link.")
     if auth.user.role == "technician":
         # `unit_cost_snapshot` is an internal cost-basis field that feeds the
         # owner's Gross Profit calculation -- omitted entirely for a
@@ -152,7 +155,7 @@ def create_part_allocation(
             f"Part {part.part_number} is archived and cannot be allocated."
         )
     allocation = PartAllocation(
-        owner_user_id=effective_owner_id(auth),
+        owner_user_id=effective_shop_owner_id(db, auth),
         shop_id=resolve_shop_id(db, auth),
         work_order_id=work_order_id,
         part_id=payload.part_id,
@@ -198,14 +201,17 @@ def allocate_part(
     # read stale pre-lock quantities despite correctly holding the lock.
     allocation = db.scalar(
         select(PartAllocation)
-        .where(PartAllocation.id == allocation.id)
+        .where(
+            PartAllocation.id == allocation.id,
+            PartAllocation.shop_id == effective_shop_id(db, auth),
+        )
         .with_for_update()
         .execution_options(populate_existing=True)
     )
     assert allocation is not None
     part = db.scalar(
         select(Part)
-        .where(Part.id == allocation.part_id)
+        .where(Part.id == allocation.part_id, Part.shop_id == allocation.shop_id)
         .with_for_update()
         .execution_options(populate_existing=True)
     )
@@ -251,7 +257,10 @@ def use_part_allocation(
     allocation = _get_allocation(db, auth, allocation_id)
     allocation = db.scalar(
         select(PartAllocation)
-        .where(PartAllocation.id == allocation.id)
+        .where(
+            PartAllocation.id == allocation.id,
+            PartAllocation.shop_id == effective_shop_id(db, auth),
+        )
         .with_for_update()
         .execution_options(populate_existing=True)
     )
@@ -277,14 +286,17 @@ def return_part_allocation(
     allocation = _get_allocation(db, auth, allocation_id)
     allocation = db.scalar(
         select(PartAllocation)
-        .where(PartAllocation.id == allocation.id)
+        .where(
+            PartAllocation.id == allocation.id,
+            PartAllocation.shop_id == effective_shop_id(db, auth),
+        )
         .with_for_update()
         .execution_options(populate_existing=True)
     )
     assert allocation is not None
     part = db.scalar(
         select(Part)
-        .where(Part.id == allocation.part_id)
+        .where(Part.id == allocation.part_id, Part.shop_id == allocation.shop_id)
         .with_for_update()
         .execution_options(populate_existing=True)
     )
@@ -314,7 +326,10 @@ def list_part_allocation_events(
     allocation = _get_allocation(db, auth, allocation_id)
     events = db.scalars(
         select(PartAllocationEvent)
-        .where(PartAllocationEvent.allocation_id == allocation.id)
+        .where(
+            PartAllocationEvent.allocation_id == allocation.id,
+            PartAllocationEvent.shop_id == allocation.shop_id,
+        )
         .order_by(PartAllocationEvent.created_at.asc(), PartAllocationEvent.id.asc())
     ).all()
     return PartAllocationEventsResponse(

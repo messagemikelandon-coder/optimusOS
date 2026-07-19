@@ -3,7 +3,7 @@ from __future__ import annotations
 from sqlalchemy import Select, select
 from sqlalchemy.orm import Session
 
-from app.auth import AuthContext, effective_owner_id, ensure_utc
+from app.auth import AuthContext, effective_shop_id, effective_shop_owner_id, ensure_utc
 from app.db_models import Invoice, InvoicePayment
 from app.invoice_store import (
     InvoiceNotFoundError,
@@ -41,9 +41,11 @@ class PaymentNotFoundError(InvoiceStoreError):
     pass
 
 
-def _payment_query(invoice_id: int, auth: AuthContext) -> Select[tuple[InvoicePayment]]:
+def _payment_query(
+    db: Session, invoice_id: int, auth: AuthContext
+) -> Select[tuple[InvoicePayment]]:
     return select(InvoicePayment).where(
-        InvoicePayment.owner_user_id == effective_owner_id(auth),
+        InvoicePayment.shop_id == effective_shop_id(db, auth),
         InvoicePayment.invoice_id == invoice_id,
     )
 
@@ -78,7 +80,7 @@ def record_payment(
 
     recorded_at = ensure_utc(payload.recorded_at) if payload.recorded_at else now
     payment = InvoicePayment(
-        owner_user_id=effective_owner_id(auth),
+        owner_user_id=effective_shop_owner_id(db, auth),
         shop_id=resolve_shop_id(db, auth),
         invoice_id=invoice.id,
         amount=amount,
@@ -143,13 +145,15 @@ def void_payment(
     payload: InvoicePaymentVoidRequest,
 ) -> InvoiceRead:
     invoice = _require_invoice(db, auth, invoice_id)
-    payment = db.scalar(_payment_query(invoice.id, auth).where(InvoicePayment.id == payment_id))
+    payment = db.scalar(_payment_query(db, invoice.id, auth).where(InvoicePayment.id == payment_id))
     if payment is None:
         raise PaymentNotFoundError("Payment not found.")
     if payment.reversal_of_payment_id is not None:
         raise InvoiceStoreError("Cannot void a reversal row.")
     already_voided = db.scalar(
-        _payment_query(invoice.id, auth).where(InvoicePayment.reversal_of_payment_id == payment.id)
+        _payment_query(db, invoice.id, auth).where(
+            InvoicePayment.reversal_of_payment_id == payment.id
+        )
     )
     if already_voided is not None:
         raise InvoiceStoreError("Payment has already been voided.")
@@ -157,7 +161,7 @@ def void_payment(
     now = now_utc()
     reversal_amount = -_money(payment.amount)
     reversal = InvoicePayment(
-        owner_user_id=effective_owner_id(auth),
+        owner_user_id=effective_shop_owner_id(db, auth),
         shop_id=resolve_shop_id(db, auth),
         invoice_id=invoice.id,
         amount=reversal_amount,

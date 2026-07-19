@@ -5,7 +5,7 @@ import re
 from sqlalchemy import Select, func, or_, select
 from sqlalchemy.orm import Session
 
-from app.auth import AuthContext, effective_owner_id, ensure_utc
+from app.auth import AuthContext, effective_shop_id, effective_shop_owner_id, ensure_utc
 from app.config import Settings
 from app.customer_store import create_customer
 from app.db_models import IntakeRequest
@@ -66,12 +66,12 @@ def normalize_phone(value: str | None) -> tuple[str, str] | None:
     return display, digits
 
 
-def _owner_query(auth: AuthContext) -> Select[tuple[IntakeRequest]]:
-    return select(IntakeRequest).where(IntakeRequest.owner_user_id == effective_owner_id(auth))
+def _owner_query(db: Session, auth: AuthContext) -> Select[tuple[IntakeRequest]]:
+    return select(IntakeRequest).where(IntakeRequest.shop_id == effective_shop_id(db, auth))
 
 
 def _get_intake_request(db: Session, auth: AuthContext, intake_request_id: int) -> IntakeRequest:
-    intake_request = db.scalar(_owner_query(auth).where(IntakeRequest.id == intake_request_id))
+    intake_request = db.scalar(_owner_query(db, auth).where(IntakeRequest.id == intake_request_id))
     if intake_request is None:
         raise IntakeRequestNotFoundError("Intake request not found.")
     return intake_request
@@ -101,7 +101,7 @@ def create_intake_request(
     email = normalize_email(payload.email)
     phone = normalize_phone(payload.phone)
     intake_request = IntakeRequest(
-        owner_user_id=effective_owner_id(auth),
+        owner_user_id=effective_shop_owner_id(db, auth),
         shop_id=resolve_shop_id(db, auth),
         customer_name=payload.customer_name,
         phone=phone[0] if phone else None,
@@ -182,7 +182,7 @@ def list_intake_requests(
     if page < 1:
         raise IntakeStoreError("Page must be 1 or greater.")
 
-    query = _owner_query(auth)
+    query = _owner_query(db, auth)
     if status_filter:
         query = query.where(IntakeRequest.status == status_filter)
     if search:

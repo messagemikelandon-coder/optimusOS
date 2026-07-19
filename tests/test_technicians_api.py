@@ -5,11 +5,12 @@ from typing import TypedDict, Unpack
 import pytest
 from fastapi import HTTPException
 from pydantic import ValidationError
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 import app.main as main
 from app.auth import AuthContext, hash_password
-from app.db_models import UserAccount
+from app.db_models import ShopMembership, Technician, UserAccount
 from app.models import (
     EstimatePaymentOptionCode,
     TechnicianCreate,
@@ -107,6 +108,27 @@ async def test_archive_technician(settings, db_session: Session) -> None:
         db_session, settings, auth, page=1, page_size=20, search=None, archived=True
     )
     assert [item.id for item in archived_list.items] == [created.id]
+
+
+async def test_archive_rejects_profile_linked_to_privileged_account(
+    settings, db_session: Session
+) -> None:
+    _, response = await login_as(settings, db_session)
+    owner_auth = auth_context(settings, db_session, raw_cookie_from_response(response))
+    created = await main.create_technician_record(technician_payload(), db_session, owner_auth)
+    technician = await main.get_technician_record(created.id, db_session, owner_auth)
+    stored = db_session.get(Technician, technician.id)
+    assert stored is not None
+    stored.user_account_id = owner_auth.user.id
+    db_session.commit()
+
+    with pytest.raises(HTTPException) as excinfo:
+        await main.archive_technician_record(created.id, db_session, owner_auth)
+    assert excinfo.value.status_code == 422
+    db_session.refresh(owner_auth.user)
+    assert owner_auth.user.is_active is True
+    db_session.refresh(owner_auth.session)
+    assert owner_auth.session.revoked_at is None
 
 
 async def test_list_search_and_pagination(settings, db_session: Session) -> None:
@@ -222,6 +244,40 @@ async def test_provision_login_success_and_technician_can_log_in(
         "hourly_cost is an owner-visible wage/cost field and must never appear on the"
         " technician's own self-service view"
     )
+
+
+async def test_archiving_technician_revokes_account_membership_and_sessions(
+    settings, db_session: Session
+) -> None:
+    _, response = await login_as(settings, db_session)
+    owner_auth = auth_context(settings, db_session, raw_cookie_from_response(response))
+    created = await main.create_technician_record(technician_payload(), db_session, owner_auth)
+    tech_auth = await _provision_and_login(
+        settings, db_session, owner_auth, created.id, username="archived.tech"
+    )
+
+    await main.archive_technician_record(created.id, db_session, owner_auth)
+
+    db_session.refresh(tech_auth.user)
+    membership = db_session.scalar(
+        select(ShopMembership).where(ShopMembership.user_account_id == tech_auth.user.id)
+    )
+    assert tech_auth.user.is_active is False
+    assert membership is not None and membership.is_active is False
+    db_session.refresh(tech_auth.session)
+    assert tech_auth.session.revoked_at is not None
+
+    with pytest.raises(HTTPException) as existing_session:
+        await main.get_my_technician_record(db_session, tech_auth)
+    assert existing_session.value.status_code == 403
+    with pytest.raises(HTTPException) as fresh_login:
+        await login_as(
+            settings,
+            db_session,
+            username="archived.tech",
+            password="tech-login-pass-123",
+        )
+    assert fresh_login.value.status_code == 401
 
 
 async def test_provision_login_rejects_double_provisioning(settings, db_session: Session) -> None:

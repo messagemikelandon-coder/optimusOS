@@ -5,7 +5,7 @@ from decimal import Decimal
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.auth import AuthContext, effective_owner_id
+from app.auth import AuthContext, effective_shop_id
 from app.customer_store import (
     CustomerNotFoundError,
     CustomerStoreError,
@@ -83,15 +83,15 @@ def get_customer_history(
     customer = get_customer_model(db=db, auth=auth, customer_id=customer_id)
 
     estimate_where = (
-        Estimate.owner_user_id == effective_owner_id(auth),
+        Estimate.shop_id == effective_shop_id(db, auth),
         Estimate.customer_id == customer.id,
     )
     work_order_where = (
-        WorkOrder.owner_user_id == effective_owner_id(auth),
+        WorkOrder.shop_id == effective_shop_id(db, auth),
         WorkOrder.customer_id == customer.id,
     )
     invoice_where = (
-        Invoice.owner_user_id == effective_owner_id(auth),
+        Invoice.shop_id == effective_shop_id(db, auth),
         Invoice.customer_id == customer.id,
     )
 

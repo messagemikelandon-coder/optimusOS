@@ -5,7 +5,7 @@ import re
 from sqlalchemy import Select, func, or_, select
 from sqlalchemy.orm import Session
 
-from app.auth import AuthContext, effective_owner_id, ensure_utc
+from app.auth import AuthContext, effective_shop_id, effective_shop_owner_id, ensure_utc
 from app.config import Settings
 from app.db_models import Part, Vendor
 from app.models import (
@@ -76,12 +76,12 @@ def normalize_vendor_fields(payload: VendorCreate | VendorUpdate) -> dict[str, o
     }
 
 
-def _owner_query(auth: AuthContext) -> Select[tuple[Vendor]]:
-    return select(Vendor).where(Vendor.owner_user_id == effective_owner_id(auth))
+def _owner_query(db: Session, auth: AuthContext) -> Select[tuple[Vendor]]:
+    return select(Vendor).where(Vendor.shop_id == effective_shop_id(db, auth))
 
 
 def _get_vendor(db: Session, auth: AuthContext, vendor_id: int) -> Vendor:
-    vendor = db.scalar(_owner_query(auth).where(Vendor.id == vendor_id))
+    vendor = db.scalar(_owner_query(db, auth).where(Vendor.id == vendor_id))
     if vendor is None:
         raise VendorNotFoundError("Vendor not found.")
     return vendor
@@ -118,7 +118,9 @@ def _to_read(db: Session, vendor: Vendor) -> VendorRead:
 def create_vendor(*, db: Session, auth: AuthContext, payload: VendorCreate) -> VendorRead:
     normalized = normalize_vendor_fields(payload)
     vendor = Vendor(
-        owner_user_id=effective_owner_id(auth), shop_id=resolve_shop_id(db, auth), **normalized
+        owner_user_id=effective_shop_owner_id(db, auth),
+        shop_id=resolve_shop_id(db, auth),
+        **normalized,
     )
     db.add(vendor)
     db.commit()
@@ -188,7 +190,7 @@ def list_vendors(
     if page < 1:
         raise VendorStoreError("Page must be 1 or greater.")
 
-    query = _owner_query(auth).where(Vendor.is_archived == archived)
+    query = _owner_query(db, auth).where(Vendor.is_archived == archived)
     if search:
         lowered_tokens = [token for token in search.strip().lower().split() if token]
         for token in lowered_tokens:

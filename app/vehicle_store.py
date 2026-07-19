@@ -5,7 +5,7 @@ import re
 from sqlalchemy import Select, String, and_, cast, func, or_, select
 from sqlalchemy.orm import Session
 
-from app.auth import AuthContext, effective_owner_id, ensure_utc
+from app.auth import AuthContext, effective_shop_id, effective_shop_owner_id, ensure_utc
 from app.config import Settings
 from app.customer_store import display_name as customer_display_name
 from app.customer_store import get_customer_model
@@ -121,12 +121,12 @@ def _to_read(vehicle: Vehicle) -> VehicleRead:
     )
 
 
-def _owner_query(auth: AuthContext) -> Select[tuple[Vehicle]]:
-    return select(Vehicle).where(Vehicle.owner_user_id == effective_owner_id(auth))
+def _owner_query(db: Session, auth: AuthContext) -> Select[tuple[Vehicle]]:
+    return select(Vehicle).where(Vehicle.shop_id == effective_shop_id(db, auth))
 
 
 def _get_vehicle(db: Session, auth: AuthContext, vehicle_id: int) -> Vehicle:
-    vehicle = db.scalar(_owner_query(auth).where(Vehicle.id == vehicle_id))
+    vehicle = db.scalar(_owner_query(db, auth).where(Vehicle.id == vehicle_id))
     if vehicle is None:
         raise VehicleNotFoundError("Vehicle not found.")
     return vehicle
@@ -145,7 +145,7 @@ def _ensure_unique_active_vin(
 ) -> None:
     if vin is None:
         return
-    query = _owner_query(auth).where(Vehicle.vin == vin).where(Vehicle.is_archived.is_(False))
+    query = _owner_query(db, auth).where(Vehicle.vin == vin).where(Vehicle.is_archived.is_(False))
     if ignore_vehicle_id is not None:
         query = query.where(Vehicle.id != ignore_vehicle_id)
     if db.scalar(query) is not None:
@@ -165,7 +165,7 @@ def create_vehicle(
     vin = normalize_vin(payload.vin)
     _ensure_unique_active_vin(db, auth, vin)
     vehicle = Vehicle(
-        owner_user_id=effective_owner_id(auth),
+        owner_user_id=effective_shop_owner_id(db, auth),
         shop_id=resolve_shop_id(db, auth),
         customer_id=customer.id,
         **normalized,
@@ -237,7 +237,7 @@ def list_vehicles(
     if customer_id is not None:
         get_customer_model(db=db, auth=auth, customer_id=customer_id)
 
-    query = _owner_query(auth).where(Vehicle.is_archived == archived)
+    query = _owner_query(db, auth).where(Vehicle.is_archived == archived)
     if customer_id is not None:
         query = query.where(Vehicle.customer_id == customer_id)
     if search:

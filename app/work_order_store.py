@@ -6,7 +6,7 @@ from sqlalchemy import Select, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.auth import AuthContext, effective_owner_id, ensure_utc
+from app.auth import AuthContext, effective_shop_id, effective_shop_owner_id, ensure_utc
 from app.config import Settings
 from app.customer_store import display_name as customer_display_name
 from app.db_models import Estimate, Technician, WorkOrder, WorkOrderNote, WorkOrderStatusEvent
@@ -78,12 +78,12 @@ class WorkOrderNotFoundError(WorkOrderStoreError):
 
 
 def _work_order_query(db: Session, auth: AuthContext) -> Select[tuple[WorkOrder]]:
-    query = select(WorkOrder).where(WorkOrder.owner_user_id == effective_owner_id(auth))
+    query = select(WorkOrder).where(WorkOrder.shop_id == effective_shop_id(db, auth))
     if auth.user.role == "technician":
         # Sub-phase 1 gated work orders fully owner-only; this sub-phase
         # opens them to a technician, but only their own assigned rows --
         # every other technician-facing route stays owner-only for now.
-        technician = get_technician_for_user(db, auth.user.id)
+        technician = get_technician_for_user(db, auth)
         if technician is None:
             return query.where(WorkOrder.id.is_(None))
         query = query.where(WorkOrder.assigned_technician_id == technician.id)
@@ -100,7 +100,7 @@ def _require_work_order(db: Session, auth: AuthContext, work_order_id: int) -> W
 def _require_approved_estimate(db: Session, auth: AuthContext, estimate_id: int) -> Estimate:
     estimate = db.scalar(
         select(Estimate).where(
-            Estimate.owner_user_id == effective_owner_id(auth), Estimate.id == estimate_id
+            Estimate.shop_id == effective_shop_id(db, auth), Estimate.id == estimate_id
         )
     )
     if estimate is None:
@@ -182,6 +182,17 @@ def _note_to_read(note: WorkOrderNote) -> WorkOrderNoteRead:
 
 
 def _to_read(work_order: WorkOrder) -> WorkOrderRead:
+    related_rows = [work_order.customer, work_order.vehicle, work_order.revision]
+    if work_order.invoice is not None:
+        related_rows.append(work_order.invoice)
+    if work_order.assigned_technician is not None:
+        related_rows.append(work_order.assigned_technician)
+    if any(row.shop_id != work_order.shop_id for row in related_rows):
+        raise WorkOrderStoreError("Work order has an invalid cross-shop relationship.")
+    if any(event.shop_id != work_order.shop_id for event in work_order.status_events):
+        raise WorkOrderStoreError("Work order has an invalid cross-shop status event.")
+    if any(note.shop_id != work_order.shop_id for note in work_order.notes):
+        raise WorkOrderStoreError("Work order has an invalid cross-shop note.")
     revision: EstimateRevisionRead = _revision_to_read(work_order.revision)
     return WorkOrderRead(
         id=work_order.id,
@@ -234,7 +245,7 @@ def _append_status_event(
     db.add(
         WorkOrderStatusEvent(
             work_order_id=work_order.id,
-            owner_user_id=effective_owner_id(auth),
+            owner_user_id=effective_shop_owner_id(db, auth),
             shop_id=work_order.shop_id,
             from_status=from_status.value if from_status else None,
             to_status=to_status.value,
@@ -269,7 +280,7 @@ def create_work_order_from_estimate(
         else WorkOrderStatus.READY_TO_SCHEDULE
     )
     work_order = WorkOrder(
-        owner_user_id=effective_owner_id(auth),
+        owner_user_id=effective_shop_owner_id(db, auth),
         shop_id=resolve_shop_id(db, auth),
         estimate_id=estimate.id,
         estimate_revision_id=revision.id,
@@ -408,7 +419,7 @@ def assign_technician(
         technician = db.scalar(
             select(Technician).where(
                 Technician.id == payload.technician_id,
-                Technician.owner_user_id == effective_owner_id(auth),
+                Technician.shop_id == effective_shop_id(db, auth),
             )
         )
         if technician is None:
@@ -497,7 +508,7 @@ def add_work_order_note(
     db.add(
         WorkOrderNote(
             work_order_id=work_order.id,
-            owner_user_id=effective_owner_id(auth),
+            owner_user_id=effective_shop_owner_id(db, auth),
             shop_id=work_order.shop_id,
             visibility=payload.visibility.value,
             note=payload.note,

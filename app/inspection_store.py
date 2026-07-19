@@ -5,7 +5,7 @@ from datetime import UTC, datetime
 from sqlalchemy import Select, func, select
 from sqlalchemy.orm import Session
 
-from app.auth import AuthContext, effective_owner_id, ensure_utc
+from app.auth import AuthContext, effective_shop_id, effective_shop_owner_id, ensure_utc
 from app.config import Settings
 from app.db_models import Inspection, InspectionEvent, Technician, Vehicle, WorkOrder
 from app.models import (
@@ -33,14 +33,14 @@ class InspectionNotFoundError(InspectionStoreError):
 
 
 def _owner_query(db: Session, auth: AuthContext) -> Select[tuple[Inspection]]:
-    query = select(Inspection).where(Inspection.owner_user_id == effective_owner_id(auth))
+    query = select(Inspection).where(Inspection.shop_id == effective_shop_id(db, auth))
     if auth.user.role == "technician":
         # Same pattern as work_order_store._work_order_query: a technician
         # only sees inspections tied to one of their own assigned work
         # orders, not every inspection for the shop -- do not rely on the
         # inspection's own (client-settable) technician_id field for this
         # boundary.
-        technician = get_technician_for_user(db, auth.user.id)
+        technician = get_technician_for_user(db, auth)
         if technician is None:
             return query.where(Inspection.id.is_(None))
         assigned_work_order_ids = select(WorkOrder.id).where(
@@ -60,7 +60,7 @@ def _get_inspection(db: Session, auth: AuthContext, inspection_id: int) -> Inspe
 def _validate_vehicle(db: Session, auth: AuthContext, vehicle_id: int) -> None:
     vehicle = db.scalar(
         select(Vehicle).where(
-            Vehicle.id == vehicle_id, Vehicle.owner_user_id == effective_owner_id(auth)
+            Vehicle.id == vehicle_id, Vehicle.shop_id == effective_shop_id(db, auth)
         )
     )
     if vehicle is None:
@@ -73,7 +73,7 @@ def _validate_technician(db: Session, auth: AuthContext, technician_id: int | No
     technician = db.scalar(
         select(Technician).where(
             Technician.id == technician_id,
-            Technician.owner_user_id == effective_owner_id(auth),
+            Technician.shop_id == effective_shop_id(db, auth),
         )
     )
     if technician is None:
@@ -96,13 +96,13 @@ def _validate_work_order(
     work_order = db.scalar(
         select(WorkOrder).where(
             WorkOrder.id == work_order_id,
-            WorkOrder.owner_user_id == effective_owner_id(auth),
+            WorkOrder.shop_id == effective_shop_id(db, auth),
         )
     )
     if work_order is None:
         raise InspectionStoreError("Selected work order was not found.")
     if auth.user.role == "technician":
-        technician = get_technician_for_user(db, auth.user.id)
+        technician = get_technician_for_user(db, auth)
         if technician is None or work_order.assigned_technician_id != technician.id:
             raise InspectionStoreError("Selected work order is not assigned to you.")
         if vehicle_id is not None and work_order.vehicle_id != vehicle_id:
@@ -116,8 +116,22 @@ def _items_to_dicts(items: list[InspectionItem]) -> list[dict[str, object]]:
 
 
 def _to_read(db: Session, inspection: Inspection) -> InspectionRead:
-    vehicle = db.get(Vehicle, inspection.vehicle_id)
-    technician = db.get(Technician, inspection.technician_id) if inspection.technician_id else None
+    vehicle = db.scalar(
+        select(Vehicle).where(
+            Vehicle.id == inspection.vehicle_id,
+            Vehicle.shop_id == inspection.shop_id,
+        )
+    )
+    technician = (
+        db.scalar(
+            select(Technician).where(
+                Technician.id == inspection.technician_id,
+                Technician.shop_id == inspection.shop_id,
+            )
+        )
+        if inspection.technician_id
+        else None
+    )
     items = [InspectionItem.model_validate(item) for item in inspection.items]
     return InspectionRead(
         id=inspection.id,
@@ -159,7 +173,7 @@ def create_inspection(
     _validate_technician(db, auth, payload.technician_id)
     _validate_work_order(db, auth, payload.work_order_id, vehicle_id=payload.vehicle_id)
     inspection = Inspection(
-        owner_user_id=effective_owner_id(auth),
+        owner_user_id=effective_shop_owner_id(db, auth),
         shop_id=resolve_shop_id(db, auth),
         vehicle_id=payload.vehicle_id,
         work_order_id=payload.work_order_id,
@@ -233,7 +247,10 @@ def list_inspection_events(
     inspection = _get_inspection(db, auth, inspection_id)
     events = db.scalars(
         select(InspectionEvent)
-        .where(InspectionEvent.inspection_id == inspection.id)
+        .where(
+            InspectionEvent.inspection_id == inspection.id,
+            InspectionEvent.shop_id == inspection.shop_id,
+        )
         .order_by(InspectionEvent.created_at.asc(), InspectionEvent.id.asc())
     ).all()
     return InspectionEventsResponse(

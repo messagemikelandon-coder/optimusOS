@@ -2,11 +2,17 @@ from __future__ import annotations
 
 import re
 
+from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.auth import AuthContext, effective_owner_id, hash_password, normalize_username
+from app.auth import (
+    AuthContext,
+    effective_shop_id,
+    hash_password,
+    normalize_username,
+)
 from app.config import Settings
 from app.db_models import Shop, ShopEvent, ShopMembership, ShopSettings, UserAccount
 from app.models import (
@@ -121,24 +127,14 @@ def signup_shop_owner(db: Session, settings: Settings, payload: ShopSignupReques
 def _shop_for_owner(db: Session, auth: AuthContext) -> Shop:
     """Resolve the Shop the authenticated user belongs to.
 
-    Phase 3 slice 1 only creates one shop per pre-existing owner (via the
-    migration backfill) and does not yet move business-table scoping onto
-    `shop_id` -- this bridges the pre-existing `effective_owner_id`
-    tenant boundary to the new Shop model via the owner's own
-    `ShopMembership` row, without changing how any other store module
-    scopes data yet. That migration is a later, separate slice.
+    Active Shop membership is the tenant boundary for owners, managers, and
+    technicians. The legacy owner pointer is not consulted.
     """
-    owner_id = effective_owner_id(auth)
-    shop = db.scalar(
-        select(Shop)
-        .join(ShopMembership, ShopMembership.shop_id == Shop.id)
-        .where(
-            ShopMembership.user_account_id == owner_id,
-            ShopMembership.role == ShopRole.OWNER.value,
-            ShopMembership.is_active.is_(True),
-        )
-        .order_by(Shop.id)
-    )
+    try:
+        shop_id = effective_shop_id(db, auth)
+    except HTTPException as exc:
+        raise ShopNotFoundError("No shop is associated with this account.") from exc
+    shop = db.get(Shop, shop_id)
     if shop is None:
         raise ShopNotFoundError("No shop is associated with this account.")
     return shop
@@ -181,10 +177,9 @@ def resolve_shop_id_for_owner(db: Session, owner_id: int) -> int | None:
     )
 
 
-def resolve_shop_id(db: Session, auth: AuthContext) -> int | None:
-    """`resolve_shop_id_for_owner` for the common case where an `AuthContext`
-    (rather than an already-resolved owner id) is what the caller has."""
-    return resolve_shop_id_for_owner(db, effective_owner_id(auth))
+def resolve_shop_id(db: Session, auth: AuthContext) -> int:
+    """Resolve the authenticated account's active membership boundary."""
+    return effective_shop_id(db, auth)
 
 
 def _to_read(shop: Shop) -> ShopRead:

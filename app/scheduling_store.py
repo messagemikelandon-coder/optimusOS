@@ -7,7 +7,7 @@ from zoneinfo import ZoneInfo
 from sqlalchemy import Select, and_, func, or_, select
 from sqlalchemy.orm import Session
 
-from app.auth import AuthContext, effective_owner_id, ensure_utc
+from app.auth import AuthContext, effective_shop_id, effective_shop_owner_id, ensure_utc
 from app.config import Settings
 from app.customer_store import display_name as customer_display_name
 from app.db_models import (
@@ -96,7 +96,7 @@ class SchedulingConflictError(SchedulingStoreError):
 def _validate_customer(db: Session, auth: AuthContext, customer_id: int) -> Customer:
     customer = db.scalar(
         select(Customer).where(
-            Customer.id == customer_id, Customer.owner_user_id == effective_owner_id(auth)
+            Customer.id == customer_id, Customer.shop_id == effective_shop_id(db, auth)
         )
     )
     if customer is None:
@@ -107,7 +107,7 @@ def _validate_customer(db: Session, auth: AuthContext, customer_id: int) -> Cust
 def _validate_vehicle(db: Session, auth: AuthContext, vehicle_id: int, customer_id: int) -> Vehicle:
     vehicle = db.scalar(
         select(Vehicle).where(
-            Vehicle.id == vehicle_id, Vehicle.owner_user_id == effective_owner_id(auth)
+            Vehicle.id == vehicle_id, Vehicle.shop_id == effective_shop_id(db, auth)
         )
     )
     if vehicle is None:
@@ -120,7 +120,7 @@ def _validate_vehicle(db: Session, auth: AuthContext, vehicle_id: int, customer_
 def _validate_technician(db: Session, auth: AuthContext, technician_id: int) -> Technician:
     technician = db.scalar(
         select(Technician).where(
-            Technician.id == technician_id, Technician.owner_user_id == effective_owner_id(auth)
+            Technician.id == technician_id, Technician.shop_id == effective_shop_id(db, auth)
         )
     )
     if technician is None:
@@ -131,9 +131,7 @@ def _validate_technician(db: Session, auth: AuthContext, technician_id: int) -> 
 def _validate_bay(db: Session, auth: AuthContext, bay_id: int | None) -> Bay | None:
     if bay_id is None:
         return None
-    bay = db.scalar(
-        select(Bay).where(Bay.id == bay_id, Bay.owner_user_id == effective_owner_id(auth))
-    )
+    bay = db.scalar(select(Bay).where(Bay.id == bay_id, Bay.shop_id == effective_shop_id(db, auth)))
     if bay is None:
         raise SchedulingStoreError("Selected bay was not found.")
     return bay
@@ -145,7 +143,7 @@ def _validate_work_order(db: Session, auth: AuthContext, work_order_id: int | No
     work_order = db.scalar(
         select(WorkOrder).where(
             WorkOrder.id == work_order_id,
-            WorkOrder.owner_user_id == effective_owner_id(auth),
+            WorkOrder.shop_id == effective_shop_id(db, auth),
         )
     )
     if work_order is None:
@@ -155,12 +153,12 @@ def _validate_work_order(db: Session, auth: AuthContext, work_order_id: int | No
 # ---- Bays ----
 
 
-def _bay_owner_query(auth: AuthContext) -> Select[tuple[Bay]]:
-    return select(Bay).where(Bay.owner_user_id == effective_owner_id(auth))
+def _bay_owner_query(db: Session, auth: AuthContext) -> Select[tuple[Bay]]:
+    return select(Bay).where(Bay.shop_id == effective_shop_id(db, auth))
 
 
 def _get_bay(db: Session, auth: AuthContext, bay_id: int) -> Bay:
-    bay = db.scalar(_bay_owner_query(auth).where(Bay.id == bay_id))
+    bay = db.scalar(_bay_owner_query(db, auth).where(Bay.id == bay_id))
     if bay is None:
         raise SchedulingNotFoundError("Bay not found.")
     return bay
@@ -179,7 +177,7 @@ def _bay_to_read(bay: Bay) -> BayRead:
 
 def create_bay(*, db: Session, auth: AuthContext, payload: BayCreate) -> BayRead:
     bay = Bay(
-        owner_user_id=effective_owner_id(auth),
+        owner_user_id=effective_shop_owner_id(db, auth),
         shop_id=resolve_shop_id(db, auth),
         name=payload.name,
         notes=payload.notes,
@@ -232,7 +230,7 @@ def list_bays(
     if page < 1:
         raise SchedulingStoreError("Page must be 1 or greater.")
 
-    query = _bay_owner_query(auth).where(Bay.is_archived == archived)
+    query = _bay_owner_query(db, auth).where(Bay.is_archived == archived)
     total = db.scalar(select(func.count()).select_from(query.subquery())) or 0
     offset = (page - 1) * page_size
     bays = db.scalars(
@@ -254,7 +252,7 @@ def _get_working_hours(db: Session, auth: AuthContext, working_hours_id: int) ->
     row = db.scalar(
         select(WorkingHours).where(
             WorkingHours.id == working_hours_id,
-            WorkingHours.owner_user_id == effective_owner_id(auth),
+            WorkingHours.shop_id == effective_shop_id(db, auth),
         )
     )
     if row is None:
@@ -279,7 +277,7 @@ def create_working_hours(
 ) -> WorkingHoursRead:
     _validate_technician(db, auth, payload.technician_id)
     row = WorkingHours(
-        owner_user_id=effective_owner_id(auth),
+        owner_user_id=effective_shop_owner_id(db, auth),
         shop_id=resolve_shop_id(db, auth),
         technician_id=payload.technician_id,
         day_of_week=payload.day_of_week,
@@ -332,7 +330,7 @@ def list_working_hours(
     rows = db.scalars(
         select(WorkingHours)
         .where(
-            WorkingHours.owner_user_id == effective_owner_id(auth),
+            WorkingHours.shop_id == effective_shop_id(db, auth),
             WorkingHours.technician_id == technician_id,
         )
         .order_by(WorkingHours.day_of_week.asc(), WorkingHours.start_minute.asc())
@@ -347,7 +345,7 @@ def _get_schedule_block(db: Session, auth: AuthContext, block_id: int) -> Schedu
     block = db.scalar(
         select(ScheduleBlock).where(
             ScheduleBlock.id == block_id,
-            ScheduleBlock.owner_user_id == effective_owner_id(auth),
+            ScheduleBlock.shop_id == effective_shop_id(db, auth),
         )
     )
     if block is None:
@@ -362,7 +360,7 @@ def _schedule_block_to_read(
         db.scalar(
             select(Technician).where(
                 Technician.id == block.technician_id,
-                Technician.owner_user_id == effective_owner_id(auth),
+                Technician.shop_id == effective_shop_id(db, auth),
             )
         )
         if block.technician_id is not None
@@ -370,7 +368,7 @@ def _schedule_block_to_read(
     )
     bay = (
         db.scalar(
-            select(Bay).where(Bay.id == block.bay_id, Bay.owner_user_id == effective_owner_id(auth))
+            select(Bay).where(Bay.id == block.bay_id, Bay.shop_id == effective_shop_id(db, auth))
         )
         if block.bay_id is not None
         else None
@@ -398,7 +396,7 @@ def create_schedule_block(
     if payload.bay_id is not None:
         _validate_bay(db, auth, payload.bay_id)
     block = ScheduleBlock(
-        owner_user_id=effective_owner_id(auth),
+        owner_user_id=effective_shop_owner_id(db, auth),
         shop_id=resolve_shop_id(db, auth),
         technician_id=payload.technician_id,
         bay_id=payload.bay_id,
@@ -484,7 +482,7 @@ def list_schedule_blocks(
     if page < 1:
         raise SchedulingStoreError("Page must be 1 or greater.")
 
-    query = select(ScheduleBlock).where(ScheduleBlock.owner_user_id == effective_owner_id(auth))
+    query = select(ScheduleBlock).where(ScheduleBlock.shop_id == effective_shop_id(db, auth))
     if technician_id is not None:
         query = query.where(ScheduleBlock.technician_id == technician_id)
     if bay_id is not None:
@@ -532,7 +530,7 @@ def _technician_conflicts(
     exclude_appointment_id: int | None,
 ) -> list[Appointment]:
     query = select(Appointment).where(
-        Appointment.owner_user_id == effective_owner_id(auth),
+        Appointment.shop_id == effective_shop_id(db, auth),
         Appointment.technician_id == technician_id,
         Appointment.status.in_([status.value for status in _ACTIVE_STATUSES]),
         Appointment.start_time < end_time + _CONFLICT_QUERY_PAD,
@@ -563,7 +561,7 @@ def _bay_conflicts(
     if bay_id is None:
         return []
     query = select(Appointment).where(
-        Appointment.owner_user_id == effective_owner_id(auth),
+        Appointment.shop_id == effective_shop_id(db, auth),
         Appointment.bay_id == bay_id,
         Appointment.status.in_([status.value for status in _ACTIVE_STATUSES]),
         Appointment.start_time < end_time,
@@ -584,7 +582,7 @@ def _schedule_block_conflicts(
     end_time: datetime,
 ) -> list[ScheduleBlock]:
     query = select(ScheduleBlock).where(
-        ScheduleBlock.owner_user_id == effective_owner_id(auth),
+        ScheduleBlock.shop_id == effective_shop_id(db, auth),
         ScheduleBlock.start_time < end_time,
         ScheduleBlock.end_time > start_time,
     )
@@ -608,7 +606,7 @@ def _working_hours_conflict(
         select(func.count())
         .select_from(WorkingHours)
         .where(
-            WorkingHours.owner_user_id == effective_owner_id(auth),
+            WorkingHours.shop_id == effective_shop_id(db, auth),
             WorkingHours.technician_id == technician_id,
         )
     )
@@ -631,7 +629,7 @@ def _working_hours_conflict(
     day_of_week = start_local.weekday()
     windows = db.scalars(
         select(WorkingHours).where(
-            WorkingHours.owner_user_id == effective_owner_id(auth),
+            WorkingHours.shop_id == effective_shop_id(db, auth),
             WorkingHours.technician_id == technician_id,
             WorkingHours.day_of_week == day_of_week,
         )
@@ -742,12 +740,14 @@ def _validate_slot(
 # ---- Appointments ----
 
 
-def _appointment_owner_query(auth: AuthContext) -> Select[tuple[Appointment]]:
-    return select(Appointment).where(Appointment.owner_user_id == effective_owner_id(auth))
+def _appointment_owner_query(db: Session, auth: AuthContext) -> Select[tuple[Appointment]]:
+    return select(Appointment).where(Appointment.shop_id == effective_shop_id(db, auth))
 
 
 def _get_appointment(db: Session, auth: AuthContext, appointment_id: int) -> Appointment:
-    appointment = db.scalar(_appointment_owner_query(auth).where(Appointment.id == appointment_id))
+    appointment = db.scalar(
+        _appointment_owner_query(db, auth).where(Appointment.id == appointment_id)
+    )
     if appointment is None:
         raise SchedulingNotFoundError("Appointment not found.")
     return appointment
@@ -756,10 +756,31 @@ def _get_appointment(db: Session, auth: AuthContext, appointment_id: int) -> App
 def _appointment_to_read(
     db: Session, auth: AuthContext, appointment: Appointment
 ) -> AppointmentRead:
-    customer = db.get(Customer, appointment.customer_id)
-    vehicle = db.get(Vehicle, appointment.vehicle_id)
-    technician = db.get(Technician, appointment.technician_id)
-    bay = db.get(Bay, appointment.bay_id) if appointment.bay_id is not None else None
+    customer = db.scalar(
+        select(Customer).where(
+            Customer.id == appointment.customer_id,
+            Customer.shop_id == appointment.shop_id,
+        )
+    )
+    vehicle = db.scalar(
+        select(Vehicle).where(
+            Vehicle.id == appointment.vehicle_id,
+            Vehicle.shop_id == appointment.shop_id,
+        )
+    )
+    technician = db.scalar(
+        select(Technician).where(
+            Technician.id == appointment.technician_id,
+            Technician.shop_id == appointment.shop_id,
+        )
+    )
+    bay = (
+        db.scalar(
+            select(Bay).where(Bay.id == appointment.bay_id, Bay.shop_id == appointment.shop_id)
+        )
+        if appointment.bay_id is not None
+        else None
+    )
     return AppointmentRead(
         id=appointment.id,
         customer_id=appointment.customer_id,
@@ -807,7 +828,7 @@ def create_appointment(
     )
 
     appointment = Appointment(
-        owner_user_id=effective_owner_id(auth),
+        owner_user_id=effective_shop_owner_id(db, auth),
         shop_id=resolve_shop_id(db, auth),
         customer_id=payload.customer_id,
         vehicle_id=payload.vehicle_id,
@@ -1029,7 +1050,7 @@ def list_appointments(
     if page < 1:
         raise SchedulingStoreError("Page must be 1 or greater.")
 
-    query = _appointment_owner_query(auth)
+    query = _appointment_owner_query(db, auth)
     if date_from is not None:
         query = query.where(Appointment.end_time > date_from)
     if date_to is not None:
@@ -1085,7 +1106,7 @@ def get_availability(
     while day_cursor < end_local:
         day_rows = db.scalars(
             select(WorkingHours).where(
-                WorkingHours.owner_user_id == effective_owner_id(auth),
+                WorkingHours.shop_id == effective_shop_id(db, auth),
                 WorkingHours.technician_id == technician_id,
                 WorkingHours.day_of_week == day_cursor.weekday(),
             )
@@ -1104,7 +1125,7 @@ def get_availability(
 
     busy_rows = db.scalars(
         select(Appointment).where(
-            Appointment.owner_user_id == effective_owner_id(auth),
+            Appointment.shop_id == effective_shop_id(db, auth),
             Appointment.technician_id == technician_id,
             Appointment.status.in_([status.value for status in _ACTIVE_STATUSES]),
             Appointment.start_time < date_to,
@@ -1127,7 +1148,7 @@ def get_availability(
         applicability_clauses.append(ScheduleBlock.bay_id == bay_id)
     block_rows = db.scalars(
         select(ScheduleBlock).where(
-            ScheduleBlock.owner_user_id == effective_owner_id(auth),
+            ScheduleBlock.shop_id == effective_shop_id(db, auth),
             ScheduleBlock.start_time < date_to,
             ScheduleBlock.end_time > date_from,
             or_(*applicability_clauses),

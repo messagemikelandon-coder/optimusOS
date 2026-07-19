@@ -5,7 +5,7 @@ from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from sqlalchemy import Select, func, or_, select
 from sqlalchemy.orm import Session
 
-from app.auth import AuthContext, effective_owner_id, ensure_utc
+from app.auth import AuthContext, effective_shop_id, effective_shop_owner_id, ensure_utc
 from app.config import Settings
 from app.db_models import Part, Vendor
 from app.models import PartArchiveResponse, PartCreate, PartListResponse, PartRead, PartUpdate
@@ -36,9 +36,7 @@ def _validate_vendor(db: Session, auth: AuthContext, vendor_id: int | None) -> N
     if vendor_id is None:
         return
     vendor = db.scalar(
-        select(Vendor).where(
-            Vendor.id == vendor_id, Vendor.owner_user_id == effective_owner_id(auth)
-        )
+        select(Vendor).where(Vendor.id == vendor_id, Vendor.shop_id == effective_shop_id(db, auth))
     )
     if vendor is None:
         raise PartStoreError("Selected vendor was not found.")
@@ -59,12 +57,12 @@ def normalize_part_fields(payload: PartCreate | PartUpdate) -> dict[str, object]
     }
 
 
-def _owner_query(auth: AuthContext) -> Select[tuple[Part]]:
-    return select(Part).where(Part.owner_user_id == effective_owner_id(auth))
+def _owner_query(db: Session, auth: AuthContext) -> Select[tuple[Part]]:
+    return select(Part).where(Part.shop_id == effective_shop_id(db, auth))
 
 
 def _get_part(db: Session, auth: AuthContext, part_id: int) -> Part:
-    part = db.scalar(_owner_query(auth).where(Part.id == part_id))
+    part = db.scalar(_owner_query(db, auth).where(Part.id == part_id))
     if part is None:
         raise PartNotFoundError("Part not found.")
     return part
@@ -75,7 +73,7 @@ def _to_read(db: Session, auth: AuthContext, part: Part) -> PartRead:
     if part.vendor_id is not None:
         vendor_name = db.scalar(
             select(Vendor.name).where(
-                Vendor.id == part.vendor_id, Vendor.owner_user_id == effective_owner_id(auth)
+                Vendor.id == part.vendor_id, Vendor.shop_id == effective_shop_id(db, auth)
             )
         )
     below_threshold = (
@@ -105,7 +103,9 @@ def create_part(*, db: Session, auth: AuthContext, payload: PartCreate) -> PartR
     _validate_vendor(db, auth, payload.vendor_id)
     normalized = normalize_part_fields(payload)
     part = Part(
-        owner_user_id=effective_owner_id(auth), shop_id=resolve_shop_id(db, auth), **normalized
+        owner_user_id=effective_shop_owner_id(db, auth),
+        shop_id=resolve_shop_id(db, auth),
+        **normalized,
     )
     db.add(part)
     db.commit()
@@ -173,7 +173,7 @@ def list_parts(
     if page < 1:
         raise PartStoreError("Page must be 1 or greater.")
 
-    query = _owner_query(auth).where(Part.is_archived == archived)
+    query = _owner_query(db, auth).where(Part.is_archived == archived)
     if vendor_id is not None:
         query = query.where(Part.vendor_id == vendor_id)
     if below_reorder_threshold_only:

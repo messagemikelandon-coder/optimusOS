@@ -10,7 +10,7 @@ from sqlalchemy import Select, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.auth import AuthContext, effective_owner_id, ensure_utc
+from app.auth import AuthContext, effective_shop_id, effective_shop_owner_id, ensure_utc
 from app.config import Settings
 from app.db_models import Invoice, InvoiceLineItem, InvoicePayment, PaymentSchedule, WorkOrder
 from app.estimate_store import _revision_to_approval_view
@@ -114,12 +114,12 @@ def _payment_summary(invoice: Invoice, *, now: datetime) -> tuple[Decimal, Invoi
     return total_paid, effective_status, is_overdue
 
 
-def _invoice_query(auth: AuthContext) -> Select[tuple[Invoice]]:
-    return select(Invoice).where(Invoice.owner_user_id == effective_owner_id(auth))
+def _invoice_query(db: Session, auth: AuthContext) -> Select[tuple[Invoice]]:
+    return select(Invoice).where(Invoice.shop_id == effective_shop_id(db, auth))
 
 
 def _require_invoice(db: Session, auth: AuthContext, invoice_id: int) -> Invoice:
-    invoice = db.scalar(_invoice_query(auth).where(Invoice.id == invoice_id))
+    invoice = db.scalar(_invoice_query(db, auth).where(Invoice.id == invoice_id))
     if invoice is None:
         raise InvoiceNotFoundError("Invoice not found.")
     return invoice
@@ -293,7 +293,7 @@ def ensure_draft_invoice_for_work_order(
         raise InvoiceStoreError("Only completed work orders can generate invoices.")
 
     revision_view = _revision_view_for_invoice(work_order)
-    existing = db.scalar(_invoice_query(auth).where(Invoice.work_order_id == work_order.id))
+    existing = db.scalar(_invoice_query(db, auth).where(Invoice.work_order_id == work_order.id))
     if existing is not None:
         return _to_read(existing)
 
@@ -302,7 +302,7 @@ def ensure_draft_invoice_for_work_order(
     customer = revision_view.customer
     vehicle = revision_view.vehicle
     invoice = Invoice(
-        owner_user_id=effective_owner_id(auth),
+        owner_user_id=effective_shop_owner_id(db, auth),
         shop_id=resolve_shop_id(db, auth),
         work_order_id=work_order.id,
         estimate_id=work_order.estimate_id,
@@ -326,7 +326,7 @@ def ensure_draft_invoice_for_work_order(
         db.flush()
     except IntegrityError:
         db.rollback()
-        existing = db.scalar(_invoice_query(auth).where(Invoice.work_order_id == work_order.id))
+        existing = db.scalar(_invoice_query(db, auth).where(Invoice.work_order_id == work_order.id))
         if existing is None:
             raise
         return _to_read(existing)
@@ -366,7 +366,7 @@ def list_invoices(
         )
     if page < 1:
         raise InvoiceStoreError("Page must be 1 or greater.")
-    query = _invoice_query(auth)
+    query = _invoice_query(db, auth)
     if status is not None:
         query = query.where(Invoice.status == status.value)
     if search:

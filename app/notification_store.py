@@ -5,7 +5,7 @@ from datetime import UTC, datetime
 from sqlalchemy import Select, func, select
 from sqlalchemy.orm import Session
 
-from app.auth import AuthContext, effective_owner_id
+from app.auth import AuthContext, effective_shop_id
 from app.config import Settings
 from app.db_models import Notification
 from app.models import (
@@ -72,8 +72,8 @@ def record_notification(
     )
 
 
-def _notification_query(auth: AuthContext) -> Select[tuple[Notification]]:
-    return select(Notification).where(Notification.owner_user_id == effective_owner_id(auth))
+def _notification_query(db: Session, auth: AuthContext) -> Select[tuple[Notification]]:
+    return select(Notification).where(Notification.shop_id == effective_shop_id(db, auth))
 
 
 def _to_read(notification: Notification) -> NotificationRead:
@@ -95,7 +95,7 @@ def _unread_count(db: Session, auth: AuthContext) -> int:
             select(func.count())
             .select_from(Notification)
             .where(
-                Notification.owner_user_id == effective_owner_id(auth),
+                Notification.shop_id == effective_shop_id(db, auth),
                 Notification.read_at.is_(None),
             )
         )
@@ -118,7 +118,7 @@ def list_notifications(
         )
     if page < 1:
         raise NotificationStoreError("Page must be 1 or greater.")
-    query = _notification_query(auth)
+    query = _notification_query(db, auth)
     if unread_only:
         query = query.where(Notification.read_at.is_(None))
     total = db.scalar(select(func.count()).select_from(query.subquery())) or 0
@@ -144,7 +144,9 @@ def mark_notification_read(
     auth: AuthContext,
     notification_id: int,
 ) -> NotificationMarkReadResponse:
-    notification = db.scalar(_notification_query(auth).where(Notification.id == notification_id))
+    notification = db.scalar(
+        _notification_query(db, auth).where(Notification.id == notification_id)
+    )
     if notification is None:
         raise NotificationNotFoundError("Notification not found.")
     if notification.read_at is None:
@@ -159,7 +161,7 @@ def mark_all_notifications_read(
     db: Session,
     auth: AuthContext,
 ) -> NotificationMarkReadResponse:
-    unread = db.scalars(_notification_query(auth).where(Notification.read_at.is_(None))).all()
+    unread = db.scalars(_notification_query(db, auth).where(Notification.read_at.is_(None))).all()
     stamp = now_utc()
     for notification in unread:
         notification.read_at = stamp
