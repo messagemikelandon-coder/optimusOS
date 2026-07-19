@@ -23,6 +23,7 @@ from app.models import (
     ShopSignupRequest,
     ShopStatus,
 )
+from app.subscription_store import grandfather_subscription, start_trial
 
 _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
@@ -266,7 +267,12 @@ def create_shop_for_new_owner(
     explicit `display_name` instead -- a new shop must never inherit the
     one hardcoded business name meant for the original pilot shop.
     `created_via` only affects the audit event's `actor_name`, letting
-    the resulting `ShopEvent` distinguish how the shop came to exist.
+    the resulting `ShopEvent` distinguish how the shop came to exist. It
+    also decides the new shop's subscription (/goal Phase 7): only
+    `self_service_signup` starts a real 14-day trial -- bootstrap and
+    synthetic-owner creation grandfather an unlimited-seat, already-active
+    subscription instead, so an existing real business (or a test fixture)
+    is never put on a countdown it did not agree to.
     """
     shop = Shop(display_name=display_name or settings.business_name, status=ShopStatus.ACTIVE.value)
     db.add(shop)
@@ -296,6 +302,10 @@ def create_shop_for_new_owner(
             event_metadata={"owner_user_account_id": owner.id},
         )
     )
+    if created_via == "self_service_signup":
+        start_trial(db, shop_id=shop.id)
+    else:
+        grandfather_subscription(db, shop_id=shop.id, actor_name=created_via)
     db.flush()
     return shop
 

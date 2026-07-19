@@ -170,10 +170,19 @@ def test_backfill_creates_one_shop_per_real_owner_and_excludes_synthetic_account
         assert membership_by_user == {owner_id: "owner", real_technician_id: "technician"}
 
         events = connection.execute(
-            text("SELECT event_type FROM shop_events WHERE shop_id = :shop_id"),
+            text(
+                "SELECT event_type FROM shop_events WHERE shop_id = :shop_id "
+                "ORDER BY created_at, id"
+            ),
             {"shop_id": shop_id},
         ).fetchall()
-        assert [row.event_type for row in events] == ["shop_backfilled_from_existing_owner"]
+        # This test upgrades to `head`, so later migrations that add their
+        # own shop_events row (migration 031's subscription-grandfathering
+        # backfill, /goal Phase 7) legitimately extend this list.
+        assert [row.event_type for row in events] == [
+            "shop_backfilled_from_existing_owner",
+            "subscription_grandfathered",
+        ]
     engine.dispose()
 
 

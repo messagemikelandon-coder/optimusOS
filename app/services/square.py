@@ -26,10 +26,11 @@ class SquareApiError(RuntimeError):
         super().__init__(f"Square API call failed ({status_code}): {', '.join(codes) or 'unknown'}")
 
 
-class SquareInvoiceClient:
-    """Thin dict-in/dict-out client for the six Square REST calls this phase
-    needs. Mirrors OptimusChatService's injectable-client shape: tests pass a
-    stub `client`, production builds a real httpx.Client lazily."""
+class _SquareClient:
+    """Shared connection/request plumbing for every Square REST client in
+    this codebase. Mirrors OptimusChatService's injectable-client shape:
+    tests pass a stub `client`, production builds a real httpx.Client
+    lazily."""
 
     def __init__(self, settings: Settings, client: httpx.Client | Any | None = None) -> None:
         if not settings.square_configured and client is None:
@@ -72,6 +73,11 @@ class SquareInvoiceClient:
             ]
             raise SquareApiError(status_code=response.status_code, codes=codes)
         return body
+
+
+class SquareInvoiceClient(_SquareClient):
+    """Thin dict-in/dict-out client for the six Square REST calls this phase
+    needs."""
 
     def search_customer_by_email(self, email: str) -> dict[str, Any] | None:
         body = self._request(
@@ -163,3 +169,76 @@ class SquareInvoiceClient:
 
     def get_invoice(self, square_invoice_id: str) -> dict[str, Any]:
         return self._request("GET", f"/v2/invoices/{square_invoice_id}")["invoice"]
+
+
+class SquareSubscriptionClient(_SquareClient):
+    """Square Subscriptions REST calls for billing a *shop's* own OptimusOS
+    subscription (distinct from `SquareInvoiceClient`, which bills a shop's
+    customers). Reuses `search_customer_by_email`/`create_customer`'s exact
+    request shape rather than duplicating a second customer-creation path --
+    a Square Customer created here is a real record of the shop owner, not
+    a customer of the shop."""
+
+    def search_customer_by_email(self, email: str) -> dict[str, Any] | None:
+        body = self._request(
+            "POST",
+            "/v2/customers/search",
+            {"query": {"filter": {"email_address": {"exact": email}}}},
+        )
+        customers = body.get("customers") or []
+        return customers[0] if customers else None
+
+    def create_customer(
+        self, *, idempotency_key: str, given_name: str, email: str
+    ) -> dict[str, Any]:
+        return self._request(
+            "POST",
+            "/v2/customers",
+            {
+                "idempotency_key": idempotency_key,
+                "given_name": given_name,
+                "email_address": email,
+            },
+        )["customer"]
+
+    def create_card(
+        self, *, idempotency_key: str, source_id: str, customer_id: str
+    ) -> dict[str, Any]:
+        return self._request(
+            "POST",
+            "/v2/cards",
+            {
+                "idempotency_key": idempotency_key,
+                "source_id": source_id,
+                "card": {"customer_id": customer_id},
+            },
+        )["card"]
+
+    def create_subscription(
+        self,
+        *,
+        idempotency_key: str,
+        location_id: str,
+        customer_id: str,
+        card_id: str,
+        plan_variation_id: str,
+    ) -> dict[str, Any]:
+        return self._request(
+            "POST",
+            "/v2/subscriptions",
+            {
+                "idempotency_key": idempotency_key,
+                "location_id": location_id,
+                "customer_id": customer_id,
+                "card_id": card_id,
+                "plan_variation_id": plan_variation_id,
+            },
+        )["subscription"]
+
+    def cancel_subscription(self, square_subscription_id: str) -> dict[str, Any]:
+        return self._request("POST", f"/v2/subscriptions/{square_subscription_id}/cancel", {})[
+            "subscription"
+        ]
+
+    def get_subscription(self, square_subscription_id: str) -> dict[str, Any]:
+        return self._request("GET", f"/v2/subscriptions/{square_subscription_id}")["subscription"]

@@ -16,7 +16,14 @@ from sqlalchemy.orm import Session
 
 from app.config import Settings, get_settings
 from app.db import build_session_factory, get_db_session
-from app.db_models import AuthSession, ShopMembership, UserAccount
+from app.db_models import (
+    AuthSession,
+    Shop,
+    ShopEvent,
+    ShopMembership,
+    ShopSubscription,
+    UserAccount,
+)
 
 SettingsDep = Annotated[Settings, Depends(get_settings)]
 DbSessionDep = Annotated[Session, Depends(get_db_session)]
@@ -365,8 +372,91 @@ def require_verified_auth_context(
     return auth
 
 
+def _is_subscription_access_suspended(subscription: ShopSubscription, now: datetime) -> bool:
+    # Every writer of "trialing"/"past_due" also sets the matching expiry
+    # timestamp in the same write (start_trial, refresh_subscription_from_square),
+    # so a missing one here should never happen in practice -- but a status
+    # naming an expiry with no expiry set is treated as suspended, not as
+    # unrestricted access, matching this function's fail-closed contract for
+    # every other unexpected case (see the final `return True` below).
+    status_value = subscription.billing_status
+    if status_value == "active":
+        return False
+    if status_value == "trialing":
+        return subscription.trial_ends_at is None or now > ensure_utc(subscription.trial_ends_at)
+    if status_value == "past_due":
+        return subscription.grace_period_ends_at is None or now > ensure_utc(
+            subscription.grace_period_ends_at
+        )
+    if status_value == "canceled":
+        if subscription.current_period_end is None:
+            return True
+        return now > ensure_utc(subscription.current_period_end)
+    return True
+
+
+def sync_shop_access_status(db: Session, shop: Shop) -> bool:
+    """Recompute whether `shop` should be suspended right now from its
+    subscription's real timestamps -- never trust the cached `Shop.status`
+    alone, matching this codebase's existing derived-field convention for
+    invoice status/balance. Corrects the cache (and logs a `ShopEvent`) only
+    when the derived state actually changed. Returns True if access is
+    currently suspended.
+
+    Called on every business-route request via `require_shop_access_active`
+    below, so a trial or grace period expiring is enforced immediately
+    without needing a background job to notice it first.
+    """
+    subscription = shop.subscription
+    if subscription is None:
+        # Every shop-creation path in this codebase creates a subscription
+        # row in the same transaction as the shop itself (a real trial for
+        # self-service signup, a grandfathered row for bootstrap/synthetic
+        # owners, migration 031's backfill for pre-existing shops) -- this
+        # should never happen. Fail closed rather than silently granting
+        # access to a shop this code cannot account for.
+        return True
+    now = datetime.now(UTC)
+    suspended = _is_subscription_access_suspended(subscription, now)
+    if suspended:
+        new_status = "cancelled" if subscription.billing_status == "canceled" else "suspended"
+    else:
+        new_status = "active"
+    if shop.status != new_status:
+        old_status = shop.status
+        shop.status = new_status
+        db.add(shop)
+        db.add(
+            ShopEvent(
+                shop_id=shop.id,
+                event_type="shop_suspended" if suspended else "shop_reactivated",
+                event_metadata={
+                    "from_status": old_status,
+                    "to_status": new_status,
+                    "billing_status": subscription.billing_status,
+                },
+            )
+        )
+        db.commit()
+    return suspended
+
+
+def require_shop_access_active(db: Session, auth: AuthContext) -> None:
+    shop_id = effective_shop_id(db, auth)
+    shop = db.get(Shop, shop_id)
+    if shop is None or sync_shop_access_status(db, shop):
+        raise HTTPException(
+            status_code=status.HTTP_402_PAYMENT_REQUIRED,
+            detail=(
+                "This shop's OptimusOS subscription is not active. An owner or "
+                "manager must resolve billing to restore access."
+            ),
+        )
+
+
 def require_owner_context(
     auth: Annotated[AuthContext, Depends(get_current_auth_context)],
+    db: DbSessionDep,
 ) -> AuthContext:
     """Route dependency for endpoints available to Shop operators.
 
@@ -378,11 +468,13 @@ def require_owner_context(
     """
     require_role(auth, "owner", "manager")
     require_verified_email_if_present(auth)
+    require_shop_access_active(db, auth)
     return auth
 
 
 def require_owner_or_technician_context(
     auth: Annotated[AuthContext, Depends(get_current_auth_context)],
+    db: DbSessionDep,
 ) -> AuthContext:
     """Route dependency for routes Shop operators and technicians can reach.
 
@@ -392,5 +484,18 @@ def require_owner_or_technician_context(
     `effective_shop_id` plus explicit `assigned_technician_id` checks.
     """
     require_role(auth, "owner", "manager", "technician")
+    require_verified_email_if_present(auth)
+    require_shop_access_active(db, auth)
+    return auth
+
+
+def require_billing_context(
+    auth: Annotated[AuthContext, Depends(get_current_auth_context)],
+) -> AuthContext:
+    """Route dependency for the billing surface itself: owners and managers
+    only, but deliberately does *not* call `require_shop_access_active` --
+    a suspended shop must still be able to view its billing status and add
+    a payment method to restore access, or suspension would be permanent."""
+    require_role(auth, "owner", "manager")
     require_verified_email_if_present(auth)
     return auth

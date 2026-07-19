@@ -2074,6 +2074,9 @@ class Shop(Base):
     workflow_gaps: Mapped[list[WorkflowGap]] = relationship(
         back_populates="shop", cascade="all, delete-orphan"
     )
+    subscription: Mapped[ShopSubscription | None] = relationship(
+        back_populates="shop", cascade="all, delete-orphan", uselist=False
+    )
 
 
 class ShopSettings(Base):
@@ -2319,3 +2322,59 @@ class WorkflowGapEvent(Base):
     )
 
     workflow_gap: Mapped[WorkflowGap] = relationship(back_populates="events")
+
+
+class ShopSubscription(Base):
+    """/goal Phase 7: one row per Shop tracking the shop's own platform
+    subscription (billing OptimusOS itself -- unrelated to `Square`'s
+    customer-facing invoice integration in `square_store.py`, which bills
+    the shop's *customers*, not the shop).
+
+    `billing_status` is a cached, informational snapshot of what Square
+    last reported; the real access decision (`app/auth.py`'s
+    `require_shop_access_active`) is always recomputed from the
+    timestamps below at request time, matching this codebase's existing
+    derived-field convention for invoice status/balance. `Shop.status`
+    (pilot/active/suspended/cancelled) is the actual access-gate cache,
+    updated whenever that recomputation changes it.
+
+    `seat_limit` is a snapshot taken when the tier was selected, not a
+    live lookup against `SUBSCRIPTION_TIERS` -- so a future price/limit
+    change to the tier table never silently changes what an existing
+    subscriber already agreed to.
+    """
+
+    __tablename__ = "shop_subscriptions"
+    __table_args__ = (
+        UniqueConstraint("shop_id", name="uq_shop_subscriptions_shop_id"),
+        CheckConstraint(
+            "tier IN ('solo', 'team', 'shop')",
+            name="ck_shop_subscriptions_tier",
+        ),
+        CheckConstraint(
+            "billing_status IN ('trialing', 'active', 'past_due', 'canceled')",
+            name="ck_shop_subscriptions_billing_status",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    shop_id: Mapped[int] = mapped_column(ForeignKey("shops.id", ondelete="CASCADE"), nullable=False)
+    tier: Mapped[str] = mapped_column(String(20), nullable=False)
+    billing_status: Mapped[str] = mapped_column(String(20), nullable=False)
+    seat_limit: Mapped[int | None] = mapped_column()
+    trial_ends_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    current_period_start: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    current_period_end: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    grace_period_ends_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    canceled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    square_customer_id: Mapped[str | None] = mapped_column(String(120))
+    square_card_id: Mapped[str | None] = mapped_column(String(120))
+    square_subscription_id: Mapped[str | None] = mapped_column(String(120))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+
+    shop: Mapped[Shop] = relationship(back_populates="subscription")

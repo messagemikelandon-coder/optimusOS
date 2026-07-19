@@ -48,6 +48,7 @@ from app.models import (
     ShopRole,
 )
 from app.services.email import EmailAdapter, EmailMessage
+from app.technician_store import TechnicianConflictError, enforce_technician_seat_limit
 
 _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 _GENERIC_RESET_ERROR = "This password-reset code is invalid or has expired."
@@ -637,6 +638,16 @@ def accept_invitation(db: Session, payload: ShopInvitationAccept) -> UserAccount
                 profile.user_account_id = user.id
                 db.add(profile)
             else:
+                # /goal Phase 7 security-review finding: this is the other
+                # code path (besides technician_store.create_technician)
+                # that can create a brand-new Technician row -- it must be
+                # seat-limit-gated too, or invitations silently bypass the
+                # subscription's paid seat count entirely.
+                try:
+                    enforce_technician_seat_limit(db, invitation.shop_id)
+                except TechnicianConflictError:
+                    db.rollback()
+                    raise InvitationConflictError(_GENERIC_INVITATION_ERROR) from None
                 db.add(
                     Technician(
                         owner_user_id=owner_id,

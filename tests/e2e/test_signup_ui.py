@@ -59,6 +59,12 @@ def test_signup_form_creates_shop_and_logs_in_via_real_browser(
     with page.expect_response(re.compile(r"/api/auth/verify-email$")) as verify_response_info:
         page.click("#verify-email-submit")
     assert verify_response_info.value.status == 200
+    # /goal Phase 7: a fresh signup lands on the "choose your plan" onboarding
+    # step (14-day trial already running) before the dashboard, not straight
+    # into it.
+    expect(page.locator("#view-choose-plan")).to_be_visible()
+    expect(page.locator("#choose-plan-status-title")).to_contain_text("No payment method")
+    page.click("#choose-plan-skip")
     expect(page.locator("#view-dashboard")).to_be_visible()
 
     # The signup form's own session cookie (not injected state) authenticates
