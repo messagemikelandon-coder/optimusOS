@@ -9,9 +9,11 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 import app.main as main
+from app.account_security_store import MemberManagementError, update_member_status
 from app.auth import AuthContext, hash_password
 from app.db_models import ShopMembership, Technician, UserAccount
 from app.models import (
+    AccountStatusUpdate,
     EstimatePaymentOptionCode,
     TechnicianCreate,
     TechnicianProvisionLoginRequest,
@@ -263,6 +265,7 @@ async def test_archiving_technician_revokes_account_membership_and_sessions(
         select(ShopMembership).where(ShopMembership.user_account_id == tech_auth.user.id)
     )
     assert tech_auth.user.is_active is False
+    assert tech_auth.user.account_status == "disabled"
     assert membership is not None and membership.is_active is False
     db_session.refresh(tech_auth.session)
     assert tech_auth.session.revoked_at is not None
@@ -278,6 +281,13 @@ async def test_archiving_technician_revokes_account_membership_and_sessions(
             password="tech-login-pass-123",
         )
     assert fresh_login.value.status_code == 401
+    with pytest.raises(MemberManagementError):
+        update_member_status(
+            db_session,
+            owner_auth,
+            tech_auth.user.id,
+            AccountStatusUpdate(status="active"),
+        )
 
 
 async def test_provision_login_rejects_double_provisioning(settings, db_session: Session) -> None:

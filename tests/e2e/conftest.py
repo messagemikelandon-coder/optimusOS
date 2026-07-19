@@ -94,6 +94,10 @@ def live_server() -> Generator[LiveServer, None, None]:
             "OPTIMUS_TEST_ACCOUNT_PROVISIONING": "true",
             "OPENAI_API_KEY": "e2e-test-placeholder",
             "FRONTEND_ORIGIN": f"http://127.0.0.1:{_APP_PORT}",
+            # The server is session-scoped and every synthetic browser/API
+            # login comes from 127.0.0.1. Keep the production default intact,
+            # but prevent unrelated E2E cases from exhausting one shared key.
+            "MAX_LOGIN_ATTEMPTS_PER_MINUTE": "240",
         }
         subprocess.run(["uv", "run", "alembic", "upgrade", "head"], check=True, env=env)
 

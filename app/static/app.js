@@ -196,6 +196,7 @@ const state = {
     workingHoursTechnicianId: null,
     workingHours: [],
   },
+  accountSecurity: { generation: 0 },
   currentView: "dashboard",
   health: null,
   lastEstimate: null,
@@ -205,6 +206,9 @@ const viewMeta = {
   login: { eyebrow: "Authentication", title: "Sign in" },
   signup: { eyebrow: "Onboarding", title: "Create your shop" },
   "verify-email": { eyebrow: "Account security", title: "Verify your email" },
+  "forgot-password": { eyebrow: "Account recovery", title: "Request password reset" },
+  "reset-password": { eyebrow: "Account recovery", title: "Set a new password" },
+  "accept-invitation": { eyebrow: "Shop access", title: "Accept invitation" },
   dashboard: { eyebrow: "Operations", title: "Overview" },
   customers: { eyebrow: "Records", title: "Customers" },
   vehicles: { eyebrow: "Fleet", title: "Vehicles" },
@@ -234,7 +238,10 @@ function allowsAnonymousView(view) {
     view === "login" ||
     view === "approval" ||
     view === "signup" ||
-    view === "verify-email"
+    view === "verify-email" ||
+    view === "forgot-password" ||
+    view === "reset-password" ||
+    view === "accept-invitation"
   );
 }
 
@@ -303,9 +310,21 @@ function applyRoleNavVisibility() {
   });
 }
 
+function clearAccountSecurity(message = "Sign in to load account security.") {
+  state.accountSecurity.generation += 1;
+  const empty = `<div class="empty-card"><p>${escapeHtml(message)}</p></div>`;
+  ["account-session-list", "account-login-history", "shop-invitation-list", "shop-member-list"]
+    .forEach((id) => {
+      if ($(id)) $(id).innerHTML = empty;
+    });
+  if ($("account-mfa-status")) $("account-mfa-status").textContent = "MFA-ready";
+}
+
 function setAuthState(authenticated, user = null, expiresAt = null) {
   const wasAuthenticated = state.auth.authenticated;
+  const previousUserId = state.auth.user?.id;
   state.auth = { authenticated, user, expiresAt };
+  if (!authenticated || previousUserId !== user?.id) clearAccountSecurity();
   applyRoleNavVisibility();
   if (
     authenticated &&
@@ -319,6 +338,10 @@ function setAuthState(authenticated, user = null, expiresAt = null) {
   $("system-login-link").hidden = authenticated;
   $("system-logout").hidden = !authenticated;
   $("verify-email-resend").hidden = !authenticated;
+  ["owner", "manager"].forEach((role) => {
+    const option = $("shop-invitation-role")?.querySelector(`option[value="${role}"]`);
+    if (option) option.disabled = user?.role === "manager";
+  });
 
   if (authenticated && user) {
     $("operator-name").textContent = user.display_name || user.username;
@@ -502,6 +525,290 @@ async function resendEmailVerification() {
   }
 }
 
+async function handleForgotPasswordSubmit(event) {
+  event.preventDefault();
+  const submit = $("forgot-password-submit");
+  submit.disabled = true;
+  try {
+    const response = await apiFetch("/api/auth/password/reset-request", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email: $("forgot-password-email").value.trim() }),
+    });
+    const data = await readApiPayload(response);
+    if (!response.ok || !data) throw apiError(response, data, "Reset request failed");
+    showToast("If that verified account exists, a reset code was prepared.", "success");
+    navigate("reset-password");
+  } catch (error) {
+    showToast(`Reset request failed: ${error.message}`, "error");
+  } finally {
+    submit.disabled = false;
+  }
+}
+
+async function handleResetPasswordSubmit(event) {
+  event.preventDefault();
+  const submit = $("reset-password-submit");
+  submit.disabled = true;
+  try {
+    const response = await apiFetch("/api/auth/password/reset-confirm", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        token: $("reset-password-token").value.trim(),
+        new_password: $("reset-password-new").value,
+      }),
+    });
+    const data = await readApiPayload(response);
+    if (!response.ok || !data) throw apiError(response, data, "Password reset failed");
+    $("reset-password-token").value = "";
+    $("reset-password-new").value = "";
+    setAuthState(false);
+    showToast("Password reset. Sign in with the new password.", "success");
+    navigate("login");
+  } catch (error) {
+    showToast(`Password reset failed: ${error.message}`, "error");
+  } finally {
+    submit.disabled = false;
+  }
+}
+
+async function handleAcceptInvitationSubmit(event) {
+  event.preventDefault();
+  const submit = $("accept-invitation-submit");
+  submit.disabled = true;
+  try {
+    const response = await apiFetch("/api/invitations/accept", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        token: $("accept-invitation-token").value.trim(),
+        display_name: $("accept-invitation-name").value.trim(),
+        username: $("accept-invitation-username").value.trim(),
+        password: $("accept-invitation-password").value,
+      }),
+    });
+    const data = await readApiPayload(response);
+    if (!response.ok || !data) throw apiError(response, data, "Invitation acceptance failed");
+    $("accept-invitation-token").value = "";
+    $("accept-invitation-password").value = "";
+    showToast(`Invitation accepted for ${data.user.display_name}. Sign in to continue.`, "success");
+    navigate("login");
+  } catch (error) {
+    showToast(`Invitation acceptance failed: ${error.message}`, "error");
+  } finally {
+    submit.disabled = false;
+  }
+}
+
+async function accountApi(path, options = {}) {
+  const response = await apiFetch(path, options);
+  const data = await readApiPayload(response);
+  if (!response.ok || !data) throw apiError(response, data, "Account security request failed");
+  return data;
+}
+
+function renderAccountSessions(sessions) {
+  $("account-session-list").innerHTML = sessions.length
+    ? sessions.map((session) => `
+      <div class="context-action">
+        <b>${session.current ? "THIS" : "LIVE"}</b>
+        <span><strong>${escapeHtml(session.user_agent || "Unknown browser")}</strong><small>${escapeHtml(session.ip_address || "Unknown address")} · seen ${new Date(session.last_seen_at || session.created_at).toLocaleString()}</small></span>
+        <button class="text-button" type="button" data-revoke-session="${session.id}">${session.current ? "Sign out" : "Revoke"}</button>
+      </div>`).join("")
+    : '<div class="empty-card"><p>No active sessions.</p></div>';
+}
+
+function renderLoginHistory(events) {
+  $("account-login-history").innerHTML = events.length
+    ? events.slice(0, 12).map((event) => `
+      <div class="context-action"><b>${escapeHtml(event.event_type.toUpperCase())}</b><span><strong>${new Date(event.created_at).toLocaleString()}</strong><small>${escapeHtml(event.ip_address || "Unknown address")} · ${escapeHtml(event.user_agent || "Unknown browser")}</small></span></div>`).join("")
+    : '<div class="empty-card"><p>No login events recorded yet.</p></div>';
+}
+
+function invitationStatus(invitation) {
+  if (invitation.accepted_at) return "Accepted";
+  if (invitation.revoked_at) return "Revoked";
+  if (new Date(invitation.expires_at) <= new Date()) return "Expired";
+  return "Pending";
+}
+
+function renderShopInvitations(invitations) {
+  $("shop-invitation-list").innerHTML = invitations.length
+    ? invitations.map((invitation) => {
+      const statusLabel = invitationStatus(invitation);
+      const action = statusLabel === "Pending"
+        ? `<button class="text-button" type="button" data-revoke-invitation="${invitation.id}">Revoke</button>`
+        : "";
+      return `<div class="context-action"><b>${escapeHtml(invitation.role.toUpperCase())}</b><span><strong>${escapeHtml(invitation.email)}</strong><small>${statusLabel} · expires ${new Date(invitation.expires_at).toLocaleString()}</small></span>${action}</div>`;
+    }).join("")
+    : '<div class="empty-card"><p>No invitations yet.</p></div>';
+}
+
+function renderShopMembers(members) {
+  $("shop-member-list").innerHTML = members.length
+    ? members.map((member) => {
+      const manageable = member.user_account_id !== state.auth.user?.id && member.role !== "owner" &&
+        (state.auth.user?.role === "owner" || member.role === "technician");
+      const control = manageable ? `<select data-member-status="${member.user_account_id}" aria-label="Status for ${escapeHtml(member.display_name)}"><option value="active"${member.account_status === "active" ? " selected" : ""}>Active</option><option value="suspended"${member.account_status === "suspended" ? " selected" : ""}>Suspended</option><option value="disabled"${member.account_status === "disabled" ? " selected" : ""}>Disabled</option></select>` : "";
+      return `<div class="context-action"><b>${escapeHtml(member.role.toUpperCase())}</b><span><strong>${escapeHtml(member.display_name)}</strong><small>${escapeHtml(member.email || member.username)} · ${escapeHtml(member.account_status)}</small></span>${control}</div>`;
+    }).join("")
+    : '<div class="empty-card"><p>No Shop members.</p></div>';
+}
+
+async function loadAccountSecurity() {
+  if (!state.auth.authenticated) return;
+  const userId = state.auth.user?.id;
+  const generation = state.accountSecurity.generation + 1;
+  state.accountSecurity.generation = generation;
+  const loading = '<div class="empty-card"><p>Loading account security…</p></div>';
+  ["account-session-list", "account-login-history", "shop-invitation-list", "shop-member-list"]
+    .forEach((id) => { $(id).innerHTML = loading; });
+  try {
+    const [security, sessions, history] = await Promise.all([
+      accountApi("/api/auth/security"),
+      accountApi("/api/auth/sessions"),
+      accountApi("/api/auth/login-history"),
+    ]);
+    if (
+      generation !== state.accountSecurity.generation ||
+      !state.auth.authenticated ||
+      state.auth.user?.id !== userId
+    ) return;
+    $("account-mfa-status").textContent = security.active_mfa_factor_count
+      ? `${security.active_mfa_factor_count} MFA factor(s)`
+      : "MFA-ready";
+    renderAccountSessions(sessions.sessions);
+    renderLoginHistory(history.events);
+    if (!isTechnicianSession()) {
+      const [invitations, members] = await Promise.all([
+        accountApi("/api/shop/invitations"),
+        accountApi("/api/shop/members"),
+      ]);
+      if (
+        generation !== state.accountSecurity.generation ||
+        !state.auth.authenticated ||
+        state.auth.user?.id !== userId
+      ) return;
+      renderShopInvitations(invitations);
+      renderShopMembers(members);
+    } else {
+      $("shop-invitation-list").innerHTML = '<div class="empty-card"><p>Shop administration is unavailable for technician accounts.</p></div>';
+      $("shop-member-list").innerHTML = '<div class="empty-card"><p>Shop administration is unavailable for technician accounts.</p></div>';
+    }
+  } catch (error) {
+    if (generation !== state.accountSecurity.generation) return;
+    clearAccountSecurity("Account security could not be loaded.");
+    showToast(`Account security failed to load: ${error.message}`, "error");
+  }
+}
+
+async function handlePasswordChange(event) {
+  event.preventDefault();
+  const submit = $("account-password-submit");
+  submit.disabled = true;
+  try {
+    await accountApi("/api/auth/password/change", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        current_password: $("account-current-password").value,
+        new_password: $("account-new-password").value,
+      }),
+    });
+    $("account-current-password").value = "";
+    $("account-new-password").value = "";
+    showToast("Password changed and other sessions revoked.", "success");
+    await loadAccountSecurity();
+  } catch (error) {
+    showToast(`Password change failed: ${error.message}`, "error");
+  } finally {
+    submit.disabled = false;
+  }
+}
+
+async function handleInvitationCreate(event) {
+  event.preventDefault();
+  const submit = $("shop-invitation-submit");
+  submit.disabled = true;
+  try {
+    await accountApi("/api/shop/invitations", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        email: $("shop-invitation-email").value.trim(),
+        role: $("shop-invitation-role").value,
+      }),
+    });
+    $("shop-invitation-email").value = "";
+    showToast("Invitation code prepared through the non-sending email adapter.", "success");
+    await loadAccountSecurity();
+  } catch (error) {
+    showToast(`Invitation failed: ${error.message}`, "error");
+  } finally {
+    submit.disabled = false;
+  }
+}
+
+function initializeAccountSecurity() {
+  $("forgot-password-form").addEventListener("submit", (event) => void handleForgotPasswordSubmit(event));
+  $("reset-password-form").addEventListener("submit", (event) => void handleResetPasswordSubmit(event));
+  $("accept-invitation-form").addEventListener("submit", (event) => void handleAcceptInvitationSubmit(event));
+  $("account-password-form").addEventListener("submit", (event) => void handlePasswordChange(event));
+  $("shop-invitation-form").addEventListener("submit", (event) => void handleInvitationCreate(event));
+  $("account-revoke-others").addEventListener("click", async () => {
+    try {
+      const data = await accountApi("/api/auth/sessions/revoke-others", { method: "POST" });
+      showToast(`${data.revoked} other session(s) revoked.`, "success");
+      await loadAccountSecurity();
+    } catch (error) {
+      showToast(`Session revocation failed: ${error.message}`, "error");
+    }
+  });
+  $("account-session-list").addEventListener("click", async (event) => {
+    const button = event.target.closest("[data-revoke-session]");
+    if (!button) return;
+    try {
+      const data = await accountApi(`/api/auth/sessions/${button.dataset.revokeSession}/revoke`, { method: "POST" });
+      if (data.current_session) {
+        setAuthState(false);
+        navigate("login");
+        return;
+      }
+      await loadAccountSecurity();
+    } catch (error) {
+      showToast(`Session revocation failed: ${error.message}`, "error");
+    }
+  });
+  $("shop-invitation-list").addEventListener("click", async (event) => {
+    const button = event.target.closest("[data-revoke-invitation]");
+    if (!button) return;
+    try {
+      await accountApi(`/api/shop/invitations/${button.dataset.revokeInvitation}/revoke`, { method: "POST" });
+      showToast("Invitation revoked.", "success");
+      await loadAccountSecurity();
+    } catch (error) {
+      showToast(`Invitation revocation failed: ${error.message}`, "error");
+    }
+  });
+  $("shop-member-list").addEventListener("change", async (event) => {
+    const select = event.target.closest("[data-member-status]");
+    if (!select) return;
+    try {
+      await accountApi(`/api/shop/members/${select.dataset.memberStatus}/status`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: select.value }),
+      });
+      showToast("Member status updated.", "success");
+      await loadAccountSecurity();
+    } catch (error) {
+      showToast(`Member status failed: ${error.message}`, "error");
+      await loadAccountSecurity();
+    }
+  });
+}
+
 async function performLogout() {
   try {
     const response = await apiFetch("/api/auth/logout", { method: "POST" });
@@ -563,11 +870,17 @@ function navigate(view) {
   if (view === "login") history.replaceState(null, "", "/login");
   else if (view === "signup") history.replaceState(null, "", "/signup");
   else if (view === "verify-email") history.replaceState(null, "", "/verify-email");
+  else if (view === "forgot-password") history.replaceState(null, "", "/forgot-password");
+  else if (view === "reset-password") history.replaceState(null, "", "/reset-password");
+  else if (view === "accept-invitation") history.replaceState(null, "", "/accept-invitation");
   else if (view === "approval") history.replaceState(null, "", "/approval" + window.location.hash);
   else if (
     window.location.pathname === "/login" ||
     window.location.pathname === "/signup" ||
-    window.location.pathname === "/verify-email"
+    window.location.pathname === "/verify-email" ||
+    window.location.pathname === "/forgot-password" ||
+    window.location.pathname === "/reset-password" ||
+    window.location.pathname === "/accept-invitation"
   )
     history.replaceState(null, "", "/");
   window.scrollTo({ top: 0, behavior: "smooth" });
@@ -596,12 +909,16 @@ function navigate(view) {
   if (view === "technicians" && state.auth.authenticated) void loadTechnicians();
   if (view === "scheduling" && state.auth.authenticated) void loadScheduling();
   if (view === "my-day" && state.auth.authenticated) void loadMyDay();
+  if (view === "system" && state.auth.authenticated) void loadAccountSecurity();
   if (view === "chat") {
     renderChatContextSummary();
     window.setTimeout(() => $("chat-message").focus(), 180);
   }
   if (view === "login") window.setTimeout(() => $("login-username").focus(), 180);
   if (view === "signup") window.setTimeout(() => $("signup-business-name").focus(), 180);
+  if (view === "forgot-password") window.setTimeout(() => $("forgot-password-email").focus(), 180);
+  if (view === "reset-password") window.setTimeout(() => $("reset-password-token").focus(), 180);
+  if (view === "accept-invitation") window.setTimeout(() => $("accept-invitation-token").focus(), 180);
 }
 
 function renderChatContextSummary() {
@@ -7005,13 +7322,17 @@ function initializeApp() {
   initializeEstimate();
   initializeSystem();
   initializeAuth();
+  initializeAccountSecurity();
   // Auth and approval routes are never the marketing landing
   // page, regardless of auth state. Cleared here (not an inline <script>)
   // so it stays compliant with the app's script-src 'self' CSP.
   if (
     window.location.pathname === "/login" || window.location.pathname === "/approval" ||
     window.location.pathname === "/signup" ||
-    window.location.pathname === "/verify-email"
+    window.location.pathname === "/verify-email" ||
+    window.location.pathname === "/forgot-password" ||
+    window.location.pathname === "/reset-password" ||
+    window.location.pathname === "/accept-invitation"
   ) {
     document.body.classList.remove("marketing-mode");
   }
@@ -7024,6 +7345,12 @@ function initializeApp() {
     navigate("signup");
   } else if (window.location.pathname === "/verify-email") {
     navigate("verify-email");
+  } else if (window.location.pathname === "/forgot-password") {
+    navigate("forgot-password");
+  } else if (window.location.pathname === "/reset-password") {
+    navigate("reset-password");
+  } else if (window.location.pathname === "/accept-invitation") {
+    navigate("accept-invitation");
   }
   void loadSession().then((authenticated) => {
     if (!authenticated) {
@@ -7035,7 +7362,10 @@ function initializeApp() {
         window.location.pathname !== "/approval" &&
         window.location.pathname !== "/" &&
         window.location.pathname !== "/signup" &&
-        window.location.pathname !== "/verify-email"
+        window.location.pathname !== "/verify-email" &&
+        window.location.pathname !== "/forgot-password" &&
+        window.location.pathname !== "/reset-password" &&
+        window.location.pathname !== "/accept-invitation"
       )
         navigate("login");
       return;

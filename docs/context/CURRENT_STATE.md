@@ -10,10 +10,10 @@ Relevant sources: `git status --short --branch`, `git rev-parse HEAD`, `env UV_C
 ## `/goal` Multi-Shop Pilot Program (in progress)
 
 - Full requirement-by-requirement status lives in `docs/context/GOAL_EVIDENCE_MATRIX.md` — not duplicated here to avoid drift between two copies of the same table.
-- Synced `main` HEAD: `2e99c7b` (PR #60, secure email verification). Phases 0-4 and the first Phase 5 security slice are merged.
-- Active isolated worktree: `.claude/worktrees/tenant-boundary`, branch `agent/codex/phase3-tenant-boundary`, based on `2e99c7b`.
-- Publication-ready in the current slice: final Phase 3 authorization cutover. Migration head `028_membership_tenant_boundary`; Manager is a first-class account role, every authenticated request validates one active role-matching membership, every business-store read/query filters by `shop_id`, and technician provisioning creates the membership transactionally. Final proof is green: full fast suite, 36 focused boundary tests, 4 real-Postgres tenant migration tests, 21 complete E2E tests, static/type/format gates, and three independent PASS reviews.
-- Remaining engineering work after this slice: the rest of Phase 5 account lifecycle/security, then Phases 6-17. The authoritative requirement-by-requirement status is the evidence matrix, not older completion prose below.
+- Synced `main` HEAD: `506aff5` (PR #61, membership-derived tenant authorization). Phases 0-4, email verification, and the tenant-boundary cutover are merged.
+- Active isolated worktree: `.claude/worktrees/account-lifecycle`, branch `agent/codex/phase5-account-lifecycle`, based on `506aff5`.
+- Publication-ready in the current slice: the remaining Phase 5 account lifecycle/security surface. Migration head `029_account_lifecycle`; password change/reset, session inventory/revocation, persistent lockout/login history, all-role invitations, member suspension/reactivation, and provider-neutral MFA metadata are implemented. Final local proof is green: 449 fast tests passed with 2 skips, 26 complete real-Postgres/Chromium E2E tests passed, and UI/correctness/security reviews all returned PASS.
+- Remaining engineering work after this slice: Phases 6-17. The authoritative requirement-by-requirement status is the evidence matrix, not older completion prose below.
 
 ## Operational Snapshot
 

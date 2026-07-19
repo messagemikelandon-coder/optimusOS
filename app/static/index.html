@@ -429,7 +429,7 @@
                     Sign in
                   </button>
                 </div>
-                <p class="form-footnote">New shop? <button class="text-button" type="button" data-view="signup">Create one</button></p>
+                <p class="form-footnote">New shop? <button class="text-button" type="button" data-view="signup">Create one</button> <button class="text-button" type="button" data-view="forgot-password">Forgot password?</button></p>
               </form>
             </section>
 
@@ -524,6 +524,45 @@
                 </div>
               </section>
             </aside>
+          </div>
+        </section>
+
+        <section class="app-view" id="view-forgot-password" data-view-panel="forgot-password" hidden>
+          <div class="chat-layout">
+            <section class="panel chat-workbench">
+              <div class="panel-heading chat-heading"><div class="heading-with-avatar"><div class="optimus-avatar"><span class="avatar-core"></span></div><div><span class="section-kicker"><i></i> Account recovery</span><h2>Request a password reset</h2><p>Enter your verified email address. The response is intentionally identical whether or not an account exists.</p></div></div></div>
+              <form id="forgot-password-form" class="estimate-form-panel">
+                <fieldset><legend><span>01</span> Verified email</legend><label class="field full">Email <input id="forgot-password-email" type="email" maxlength="180" autocomplete="email" required></label></fieldset>
+                <div class="estimate-submit-row"><div><strong>Private by design</strong><span>No account details are disclosed.</span></div><button class="primary-button large" type="submit" id="forgot-password-submit">Prepare reset</button></div>
+                <p class="form-footnote"><button class="text-button" type="button" data-view="reset-password">Already have a code?</button> <button class="text-button" type="button" data-view="login">Return to sign in</button></p>
+              </form>
+            </section>
+          </div>
+        </section>
+
+        <section class="app-view" id="view-reset-password" data-view-panel="reset-password" hidden>
+          <div class="chat-layout">
+            <section class="panel chat-workbench">
+              <div class="panel-heading chat-heading"><div class="heading-with-avatar"><div class="optimus-avatar"><span class="avatar-core"></span></div><div><span class="section-kicker"><i></i> Account recovery</span><h2>Set a new password</h2><p>Reset codes are hashed at rest, expire after 30 minutes, and can be used only once.</p></div></div></div>
+              <form id="reset-password-form" class="estimate-form-panel">
+                <fieldset><legend><span>01</span> Reset credentials</legend><div class="form-grid two"><label class="field">One-time code <input id="reset-password-token" maxlength="256" autocomplete="one-time-code" required></label><label class="field">New password <input id="reset-password-new" type="password" minlength="8" maxlength="256" autocomplete="new-password" required></label></div></fieldset>
+                <div class="estimate-submit-row"><div><strong>All sessions will end</strong><span>Sign in again after the reset succeeds.</span></div><button class="primary-button large" type="submit" id="reset-password-submit">Reset password</button></div>
+                <p class="form-footnote"><button class="text-button" type="button" data-view="forgot-password">Request another code</button> <button class="text-button" type="button" data-view="login">Return to sign in</button></p>
+              </form>
+            </section>
+          </div>
+        </section>
+
+        <section class="app-view" id="view-accept-invitation" data-view-panel="accept-invitation" hidden>
+          <div class="chat-layout">
+            <section class="panel chat-workbench">
+              <div class="panel-heading chat-heading"><div class="heading-with-avatar"><div class="optimus-avatar"><span class="avatar-core"></span></div><div><span class="section-kicker"><i></i> Shop access</span><h2>Accept your invitation</h2><p>Create a new OptimusOS account for the role and Shop encoded in your one-time invitation.</p></div></div></div>
+              <form id="accept-invitation-form" class="estimate-form-panel">
+                <fieldset><legend><span>01</span> Invitation and profile</legend><label class="field full">Invitation code <input id="accept-invitation-token" maxlength="256" autocomplete="one-time-code" required></label><div class="form-grid three"><label class="field">Display name <input id="accept-invitation-name" maxlength="120" autocomplete="name" required></label><label class="field">Username <input id="accept-invitation-username" maxlength="120" autocomplete="username" required></label><label class="field">Password <input id="accept-invitation-password" type="password" minlength="8" maxlength="256" autocomplete="new-password" required></label></div></fieldset>
+                <div class="estimate-submit-row"><div><strong>Single-use access</strong><span>Acceptance verifies the invited email and creates one Shop membership.</span></div><button class="primary-button large" type="submit" id="accept-invitation-submit">Accept invitation</button></div>
+                <p class="form-footnote"><button class="text-button" type="button" data-view="login">Return to sign in</button></p>
+              </form>
+            </section>
           </div>
         </section>
 
@@ -2552,6 +2591,38 @@
                 <a class="secondary-button compact" id="system-login-link" href="/login">Open sign-in</a>
                 <button class="secondary-button compact" id="system-logout" type="button" hidden>Sign out</button>
               </div>
+            </section>
+
+            <section class="panel access-panel">
+              <div class="panel-heading"><div><span class="section-kicker"><i></i> Password</span><h3>Change password</h3></div><span class="security-badge">Argon2</span></div>
+              <form id="account-password-form" class="estimate-form-panel">
+                <div class="form-grid two"><label class="field">Current password <input id="account-current-password" type="password" autocomplete="current-password" required></label><label class="field">New password <input id="account-new-password" type="password" minlength="8" maxlength="256" autocomplete="new-password" required></label></div>
+                <button class="secondary-button compact" id="account-password-submit" type="submit">Change and revoke other sessions</button>
+              </form>
+            </section>
+
+            <section class="panel access-panel">
+              <div class="panel-heading"><div><span class="section-kicker"><i></i> Devices</span><h3>Active sessions</h3></div><button class="secondary-button compact" id="account-revoke-others" type="button">Revoke others</button></div>
+              <div id="account-session-list" class="stacked-actions"><div class="empty-card"><p>Open System bay to load active sessions.</p></div></div>
+            </section>
+
+            <section class="panel access-panel">
+              <div class="panel-heading"><div><span class="section-kicker"><i></i> Sign-in audit</span><h3>Recent login activity</h3></div><span class="security-badge" id="account-mfa-status">MFA-ready</span></div>
+              <div id="account-login-history" class="stacked-actions"><div class="empty-card"><p>Recent events load here.</p></div></div>
+            </section>
+
+            <section class="panel access-panel" data-owner-only="true">
+              <div class="panel-heading"><div><span class="section-kicker"><i></i> Team access</span><h3>Invite Shop members</h3></div><span class="security-badge">Hashed code</span></div>
+              <form id="shop-invitation-form" class="estimate-form-panel">
+                <div class="form-grid two"><label class="field">Email <input id="shop-invitation-email" type="email" maxlength="180" autocomplete="email" required></label><label class="field">Role <select id="shop-invitation-role"><option value="technician">Technician</option><option value="manager">Manager</option><option value="owner">Owner</option></select></label></div>
+                <button class="secondary-button compact" id="shop-invitation-submit" type="submit">Prepare invitation</button>
+              </form>
+              <div id="shop-invitation-list" class="stacked-actions"><div class="empty-card"><p>No invitations loaded.</p></div></div>
+            </section>
+
+            <section class="panel access-panel" data-owner-only="true">
+              <div class="panel-heading"><div><span class="section-kicker"><i></i> Team status</span><h3>Shop members</h3></div><span class="security-badge">Session revocation</span></div>
+              <div id="shop-member-list" class="stacked-actions"><div class="empty-card"><p>No members loaded.</p></div></div>
             </section>
 
             <section class="panel location-panel">

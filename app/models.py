@@ -342,6 +342,53 @@ class VerifyEmailRequest(BaseModel):
     token: NonBlank = Field(max_length=256)
 
 
+class PasswordChangeRequest(BaseModel):
+    current_password: Password
+    new_password: Password
+
+
+class PasswordResetRequest(BaseModel):
+    email: NonBlank = Field(max_length=180)
+
+
+class PasswordResetConfirmRequest(BaseModel):
+    token: NonBlank = Field(max_length=256)
+    new_password: Password
+
+
+class AuthSessionRead(BaseModel):
+    id: int
+    current: bool
+    created_at: datetime
+    last_seen_at: datetime | None = None
+    expires_at: datetime
+    ip_address: str | None = None
+    user_agent: str | None = None
+
+
+class AuthSessionListResponse(BaseModel):
+    sessions: list[AuthSessionRead]
+
+
+class AuthLoginEventRead(BaseModel):
+    id: int
+    event_type: Literal["succeeded", "failed", "locked", "blocked"]
+    ip_address: str | None = None
+    user_agent: str | None = None
+    created_at: datetime
+
+
+class AuthLoginHistoryResponse(BaseModel):
+    events: list[AuthLoginEventRead]
+
+
+class AccountSecurityRead(BaseModel):
+    account_status: Literal["active", "disabled", "suspended"]
+    locked_until: datetime | None = None
+    mfa_architecture_ready: bool = True
+    active_mfa_factor_count: int = 0
+
+
 class AuthUser(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -351,6 +398,7 @@ class AuthUser(BaseModel):
     role: str
     email: str | None = None
     email_verified_at: datetime | None = None
+    account_status: Literal["active", "disabled", "suspended"] = "active"
 
 
 class AuthSessionResponse(BaseModel):
@@ -2722,6 +2770,37 @@ class ShopInvitationRead(BaseModel):
     accepted_at: datetime | None = None
     revoked_at: datetime | None = None
     created_at: datetime
+
+
+class ShopInvitationCreate(BaseModel):
+    email: NonBlank = Field(max_length=180)
+    role: ShopRole
+
+
+class ShopInvitationAccept(BaseModel):
+    token: NonBlank = Field(max_length=256)
+    display_name: NonBlank = Field(max_length=120)
+    username: NonBlank = Field(max_length=120)
+    password: Password
+
+
+class ShopInvitationAcceptResponse(BaseModel):
+    accepted: bool = True
+    user: AuthUser
+
+
+class AccountStatusUpdate(BaseModel):
+    status: Literal["active", "disabled", "suspended"]
+
+
+class ShopMemberRead(BaseModel):
+    user_account_id: int
+    display_name: str
+    username: str
+    email: str | None = None
+    role: ShopRole
+    account_status: Literal["active", "disabled", "suspended"]
+    membership_active: bool
 
 
 class ShopEventRead(BaseModel):

@@ -318,6 +318,48 @@ def test_ui_preserves_connected_workflows() -> None:
     assert 'apiFetch("/health"' in javascript
 
 
+def test_account_lifecycle_ui_is_connected_without_browser_token_storage() -> None:
+    html = (STATIC / "index.html").read_text(encoding="utf-8")
+    javascript = (STATIC / "app.js").read_text(encoding="utf-8")
+    for element_id in (
+        "view-forgot-password",
+        "forgot-password-form",
+        "view-reset-password",
+        "reset-password-form",
+        "view-accept-invitation",
+        "accept-invitation-form",
+        "account-password-form",
+        "account-session-list",
+        "account-login-history",
+        "shop-invitation-form",
+        "shop-invitation-list",
+        "shop-member-list",
+    ):
+        assert f'id="{element_id}"' in html
+    for path in (
+        "/api/auth/password/reset-request",
+        "/api/auth/password/reset-confirm",
+        "/api/invitations/accept",
+        "/api/auth/password/change",
+        "/api/auth/sessions",
+        "/api/auth/login-history",
+        "/api/auth/security",
+        "/api/shop/invitations",
+        "/api/shop/members",
+    ):
+        assert path in javascript
+    assert 'window.location.pathname === "/forgot-password"' in javascript
+    assert 'window.location.pathname === "/reset-password"' in javascript
+    assert 'window.location.pathname === "/accept-invitation"' in javascript
+    assert (
+        "localStorage.setItem" not in javascript
+        or "password"
+        not in "".join(
+            line for line in javascript.splitlines() if "localStorage.setItem" in line
+        ).lower()
+    )
+
+
 def test_local_launcher_opens_login_url_without_credentials_in_fragment() -> None:
     launcher = (ROOT / "local.bat").read_text(encoding="utf-8")
     opener = (ROOT / "scripts" / "open_when_ready.ps1").read_text(encoding="utf-8")
