@@ -203,6 +203,7 @@ const state = {
 
 const viewMeta = {
   login: { eyebrow: "Authentication", title: "Sign in" },
+  signup: { eyebrow: "Onboarding", title: "Create your shop" },
   dashboard: { eyebrow: "Operations", title: "Overview" },
   customers: { eyebrow: "Records", title: "Customers" },
   vehicles: { eyebrow: "Fleet", title: "Vehicles" },
@@ -228,7 +229,7 @@ const viewMeta = {
 };
 
 function allowsAnonymousView(view) {
-  return view === "login" || view === "approval";
+  return view === "login" || view === "approval" || view === "signup";
 }
 
 function showToast(message, type = "info") {
@@ -384,6 +385,40 @@ async function handleLoginSubmit(event) {
   }
 }
 
+async function handleSignupSubmit(event) {
+  event.preventDefault();
+  const submit = $("signup-submit");
+  submit.disabled = true;
+  submit.textContent = "Creating shop…";
+  try {
+    const response = await apiFetch("/api/signup", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        business_name: $("signup-business-name").value.trim(),
+        owner_display_name: $("signup-owner-display-name").value.trim(),
+        username: $("signup-username").value.trim(),
+        email: $("signup-email").value.trim(),
+        password: $("signup-password").value,
+      }),
+    });
+    const data = await readApiPayload(response);
+    if (!response.ok || !data) throw apiError(response, data, "Could not create your shop");
+    setAuthState(true, data.user, data.expires_at);
+    $("signup-password").value = "";
+    showToast("Shop created. You're signed in.", "success");
+    void loadCustomerOptions();
+    void restoreSelectionsFromContext();
+    navigate("dashboard");
+  } catch (error) {
+    setAuthState(false);
+    showToast(`Sign-up failed: ${error.message}`, "error");
+  } finally {
+    submit.disabled = false;
+    submit.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14m-7-7h14" stroke="currentColor" stroke-width="2" fill="none"/></svg> Create shop';
+  }
+}
+
 async function performLogout() {
   try {
     const response = await apiFetch("/api/auth/logout", { method: "POST" });
@@ -434,8 +469,10 @@ function navigate(view) {
   $("sidebar").classList.remove("is-open");
   $("mobile-menu").setAttribute("aria-expanded", "false");
   if (view === "login") history.replaceState(null, "", "/login");
+  else if (view === "signup") history.replaceState(null, "", "/signup");
   else if (view === "approval") history.replaceState(null, "", "/approval" + window.location.hash);
-  else if (window.location.pathname === "/login") history.replaceState(null, "", "/");
+  else if (window.location.pathname === "/login" || window.location.pathname === "/signup")
+    history.replaceState(null, "", "/");
   window.scrollTo({ top: 0, behavior: "smooth" });
   if (view === "dashboard" && state.auth.authenticated) void loadDashboardSummary();
   if (view === "customers" && state.auth.authenticated) void loadCustomers();
@@ -467,6 +504,7 @@ function navigate(view) {
     window.setTimeout(() => $("chat-message").focus(), 180);
   }
   if (view === "login") window.setTimeout(() => $("login-username").focus(), 180);
+  if (view === "signup") window.setTimeout(() => $("signup-business-name").focus(), 180);
 }
 
 function renderChatContextSummary() {
@@ -6151,6 +6189,9 @@ function initializeAuth() {
   $("login-form").addEventListener("submit", (event) => {
     void handleLoginSubmit(event);
   });
+  $("signup-form").addEventListener("submit", (event) => {
+    void handleSignupSubmit(event);
+  });
 }
 
 // --- Overview dashboard --------------------------------------------------
@@ -6868,10 +6909,13 @@ function initializeApp() {
   initializeEstimate();
   initializeSystem();
   initializeAuth();
-  // "/login" and "/approval" are never the marketing landing page, regardless
-  // of auth state. Cleared here (not an inline <script>) so it stays
-  // compliant with the app's script-src 'self' CSP.
-  if (window.location.pathname === "/login" || window.location.pathname === "/approval") {
+  // "/login", "/approval", and "/signup" are never the marketing landing
+  // page, regardless of auth state. Cleared here (not an inline <script>)
+  // so it stays compliant with the app's script-src 'self' CSP.
+  if (
+    window.location.pathname === "/login" || window.location.pathname === "/approval" ||
+    window.location.pathname === "/signup"
+  ) {
     document.body.classList.remove("marketing-mode");
   }
   if (window.location.pathname === "/approval") {
@@ -6879,12 +6923,21 @@ function initializeApp() {
     void loadPublicApprovalPage();
   } else if (window.location.pathname === "/login") {
     navigate("login");
+  } else if (window.location.pathname === "/signup") {
+    navigate("signup");
   }
   void loadSession().then((authenticated) => {
     if (!authenticated) {
       // Unauthenticated visitors to "/" see the marketing landing page
       // (default body state) instead of being forced to the login view.
-      if (window.location.pathname !== "/approval" && window.location.pathname !== "/") navigate("login");
+      // "/signup" is also left alone -- that's exactly the expected state
+      // for a visitor there.
+      if (
+        window.location.pathname !== "/approval" &&
+        window.location.pathname !== "/" &&
+        window.location.pathname !== "/signup"
+      )
+        navigate("login");
       return;
     }
     document.body.classList.remove("marketing-mode");
@@ -6903,7 +6956,8 @@ function initializeApp() {
       void restoreSelectionsFromContext();
       void loadDashboardSummary();
       void refreshApprovalQueueBadge();
-      if (window.location.pathname === "/login") navigate("dashboard");
+      if (window.location.pathname === "/login" || window.location.pathname === "/signup")
+        navigate("dashboard");
     }
   });
   void loadHealth(false);
