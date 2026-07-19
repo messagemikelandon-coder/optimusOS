@@ -2071,6 +2071,9 @@ class Shop(Base):
     events: Mapped[list[ShopEvent]] = relationship(
         back_populates="shop", cascade="all, delete-orphan"
     )
+    workflow_gaps: Mapped[list[WorkflowGap]] = relationship(
+        back_populates="shop", cascade="all, delete-orphan"
+    )
 
 
 class ShopSettings(Base):
@@ -2234,3 +2237,85 @@ class ShopEvent(Base):
     )
 
     shop: Mapped[Shop] = relationship(back_populates="events")
+
+
+class WorkflowGap(Base):
+    __tablename__ = "workflow_gaps"
+    __table_args__ = (
+        CheckConstraint(
+            "severity IN ('low', 'medium', 'high', 'critical')",
+            name="ck_workflow_gaps_severity",
+        ),
+        CheckConstraint(
+            "status IN ('open', 'investigating', 'planned', 'resolved', 'wont_fix')",
+            name="ck_workflow_gaps_status",
+        ),
+        CheckConstraint("occurrence_count > 0", name="ck_workflow_gaps_occurrence_count"),
+        Index("ix_workflow_gaps_shop_status_updated", "shop_id", "status", "updated_at"),
+        Index("ix_workflow_gaps_shop_severity", "shop_id", "severity"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    shop_id: Mapped[int] = mapped_column(ForeignKey("shops.id", ondelete="CASCADE"), nullable=False)
+    created_by_user_account_id: Mapped[int | None] = mapped_column(
+        ForeignKey("user_accounts.id", ondelete="SET NULL")
+    )
+    updated_by_user_account_id: Mapped[int | None] = mapped_column(
+        ForeignKey("user_accounts.id", ondelete="SET NULL")
+    )
+    title: Mapped[str] = mapped_column(String(200), nullable=False)
+    description: Mapped[str] = mapped_column(Text, nullable=False)
+    workflow_area: Mapped[str] = mapped_column(String(80), nullable=False)
+    severity: Mapped[str] = mapped_column(String(20), nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="open")
+    workaround: Mapped[str | None] = mapped_column(Text)
+    occurrence_count: Mapped[int] = mapped_column(nullable=False, default=1)
+    first_reported_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    last_reported_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+
+    shop: Mapped[Shop] = relationship(back_populates="workflow_gaps")
+    events: Mapped[list[WorkflowGapEvent]] = relationship(
+        back_populates="workflow_gap", cascade="all, delete-orphan"
+    )
+
+
+class WorkflowGapEvent(Base):
+    __tablename__ = "workflow_gap_events"
+    __table_args__ = (
+        CheckConstraint(
+            "event_type IN ('created', 'updated', 'status_changed', 'occurrence_recorded')",
+            name="ck_workflow_gap_events_type",
+        ),
+        Index("ix_workflow_gap_events_gap_created", "workflow_gap_id", "created_at"),
+        Index("ix_workflow_gap_events_shop_id", "shop_id"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    workflow_gap_id: Mapped[int] = mapped_column(
+        ForeignKey("workflow_gaps.id", ondelete="CASCADE"), nullable=False
+    )
+    shop_id: Mapped[int] = mapped_column(ForeignKey("shops.id", ondelete="CASCADE"), nullable=False)
+    actor_user_account_id: Mapped[int | None] = mapped_column(
+        ForeignKey("user_accounts.id", ondelete="SET NULL")
+    )
+    actor_name: Mapped[str | None] = mapped_column(String(200))
+    event_type: Mapped[str] = mapped_column(String(30), nullable=False)
+    from_status: Mapped[str | None] = mapped_column(String(20))
+    to_status: Mapped[str | None] = mapped_column(String(20))
+    event_metadata: Mapped[dict | None] = mapped_column(JSON)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    workflow_gap: Mapped[WorkflowGap] = relationship(back_populates="events")
