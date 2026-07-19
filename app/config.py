@@ -75,6 +75,7 @@ class Settings(BaseSettings):
     redis_url: str = Field(default="redis://redis:6379/0", repr=False)
     max_estimates_per_minute: int = Field(default=20, ge=1, le=240)
     max_login_attempts_per_minute: int = Field(default=10, ge=1, le=240)
+    max_signup_attempts_per_minute: int = Field(default=5, ge=1, le=240)
     log_level: str = "INFO"
     session_ttl_hours: int = Field(default=12, ge=1, le=168)
     frontend_origin: str = "http://127.0.0.1:5173"

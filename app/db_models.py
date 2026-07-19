@@ -28,6 +28,17 @@ class UserAccount(Base):
     __table_args__ = (
         UniqueConstraint("username", name="uq_user_accounts_username"),
         CheckConstraint("role IN ('owner', 'technician')", name="ck_user_accounts_role"),
+        # Partial (not a plain UniqueConstraint) because pre-existing rows
+        # and technician accounts have no email at all -- NULL must stay
+        # unconstrained, only a real, provided email must be unique
+        # platform-wide (/goal Phase 4 self-service signup).
+        Index(
+            "uq_user_accounts_email_normalized",
+            "email_normalized",
+            unique=True,
+            sqlite_where=text("email_normalized IS NOT NULL"),
+            postgresql_where=text("email_normalized IS NOT NULL"),
+        ),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
@@ -39,6 +50,12 @@ class UserAccount(Base):
         nullable=True,
     )
     password_hash: Mapped[str] = mapped_column(Text, nullable=False)
+    # Nullable: no email exists anywhere in this codebase before /goal Phase 4
+    # -- the bootstrapped owner and every technician account predate this
+    # column and have none. Only self-service signup (Phase 4) and,
+    # eventually, an owner-editable profile field populate it.
+    email: Mapped[str | None] = mapped_column(String(180))
+    email_normalized: Mapped[str | None] = mapped_column(String(180))
     is_active: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=True, server_default="true"
     )

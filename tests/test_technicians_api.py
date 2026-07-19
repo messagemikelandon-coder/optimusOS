@@ -263,6 +263,17 @@ async def test_provision_login_rejects_duplicate_username(settings, db_session: 
     assert excinfo.value.status_code == 409
 
 
+def test_provision_login_rejects_a_password_shorter_than_eight_characters() -> None:
+    """Regression test (found while building /goal Phase 4's signup
+    endpoint): `NonBlank = Field(min_length=8, ...)` never actually
+    enforced 8 characters here -- see the identical regression test on
+    `AuthLoginRequest` in `tests/test_auth.py` for the full root-cause
+    explanation. Fixed by the same `Password` type. This must keep
+    failing."""
+    with pytest.raises(ValidationError):
+        TechnicianProvisionLoginRequest(username="jordan.reyes", password="short")
+
+
 async def test_provision_login_rejects_chained_non_owner_shop_owner_id(
     settings, db_session: Session
 ) -> None:
