@@ -53,6 +53,7 @@ from app.api.deps import (
 from app.api.routers import context as context_router
 from app.api.routers import notifications as notifications_router
 from app.api.routers import parts as parts_router
+from app.api.routers import vendors as vendors_router
 
 # AuthContext and get_current_auth_context are re-exported (the redundant
 # `as` alias marks them intentional) for backward compatibility: many tests
@@ -277,12 +278,7 @@ from app.models import (
     VehicleListResponse,
     VehicleRead,
     VehicleUpdate,
-    VendorArchiveResponse,
-    VendorCreate,
-    VendorListResponse,
     VendorPurchasingReportResponse,
-    VendorRead,
-    VendorUpdate,
     VerifyEmailRequest,
     WorkflowGapCreate,
     WorkflowGapEventsResponse,
@@ -437,15 +433,6 @@ from app.vehicle_store import (
     list_vehicles,
     update_vehicle,
 )
-from app.vendor_store import (
-    VendorNotFoundError,
-    VendorStoreError,
-    archive_vendor,
-    create_vendor,
-    get_vendor,
-    list_vendors,
-    update_vendor,
-)
 from app.work_order_store import (
     WorkOrderNotFoundError,
     WorkOrderStoreError,
@@ -528,6 +515,16 @@ list_part_records = parts_router.list_part_records
 get_part_record = parts_router.get_part_record
 update_part_record = parts_router.update_part_record
 archive_part_record = parts_router.archive_part_record
+
+# Phase 2C Step 4: the /api/vendors routes live in app/api/routers/vendors.py.
+# Same identical-contract mount + handler re-export pattern; the five handlers
+# are re-exported because tests call them via app.main.
+app.include_router(vendors_router.router)
+create_vendor_record = vendors_router.create_vendor_record
+list_vendor_records = vendors_router.list_vendor_records
+get_vendor_record = vendors_router.get_vendor_record
+update_vendor_record = vendors_router.update_vendor_record
+archive_vendor_record = vendors_router.archive_vendor_record
 # All seven rate limiters share one registry (app/rate_limit.py) instead of
 # the seven copy-pasted lazy-singleton blocks this used to be. Each concern
 # below keeps its own limit, window, per-request key format, and client-facing
@@ -2233,116 +2230,14 @@ async def provision_technician_login_record(
         ) from exc
 
 
-@app.post("/api/vendors", response_model=VendorRead)
-async def create_vendor_record(
-    payload: VendorCreate,
-    db: DbSessionDep,
-    auth: OwnerAuthContextDep,
-) -> VendorRead:
-    try:
-        return await asyncio.to_thread(create_vendor, db=db, auth=auth, payload=payload)
-    except VendorStoreError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-    except SQLAlchemyError as exc:
-        logger.warning("Vendor creation failed due to storage error.")
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Vendor storage is unavailable.",
-        ) from exc
-
-
-@app.get("/api/vendors", response_model=VendorListResponse)
-async def list_vendor_records(
-    db: DbSessionDep,
-    settings: SettingsDep,
-    auth: OwnerAuthContextDep,
-    page: int = Query(default=1),
-    page_size: int = Query(default=20),
-    search: str | None = Query(default=None, max_length=120),
-    archived: bool = False,
-) -> VendorListResponse:
-    try:
-        return await asyncio.to_thread(
-            list_vendors,
-            db=db,
-            auth=auth,
-            settings=settings,
-            page=page,
-            page_size=page_size,
-            archived=archived,
-            search=search,
-        )
-    except VendorStoreError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-    except SQLAlchemyError as exc:
-        logger.warning("Vendor listing failed due to storage error.")
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Vendor storage is unavailable.",
-        ) from exc
-
-
-@app.get("/api/vendors/{vendor_id}", response_model=VendorRead)
-async def get_vendor_record(
-    vendor_id: int,
-    db: DbSessionDep,
-    auth: OwnerAuthContextDep,
-) -> VendorRead:
-    try:
-        return await asyncio.to_thread(get_vendor, db=db, auth=auth, vendor_id=vendor_id)
-    except VendorNotFoundError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    except VendorStoreError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-    except SQLAlchemyError as exc:
-        logger.warning("Vendor retrieval failed due to storage error.")
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Vendor storage is unavailable.",
-        ) from exc
-
-
-@app.patch("/api/vendors/{vendor_id}", response_model=VendorRead)
-async def update_vendor_record(
-    vendor_id: int,
-    payload: VendorUpdate,
-    db: DbSessionDep,
-    auth: OwnerAuthContextDep,
-) -> VendorRead:
-    try:
-        return await asyncio.to_thread(
-            update_vendor, db=db, auth=auth, vendor_id=vendor_id, payload=payload
-        )
-    except VendorNotFoundError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    except VendorStoreError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-    except SQLAlchemyError as exc:
-        logger.warning("Vendor update failed due to storage error.")
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Vendor storage is unavailable.",
-        ) from exc
-
-
-@app.delete("/api/vendors/{vendor_id}", response_model=VendorArchiveResponse)
-async def archive_vendor_record(
-    vendor_id: int,
-    db: DbSessionDep,
-    auth: OwnerAuthContextDep,
-) -> VendorArchiveResponse:
-    try:
-        return await asyncio.to_thread(archive_vendor, db=db, auth=auth, vendor_id=vendor_id)
-    except VendorNotFoundError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    except VendorStoreError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-    except SQLAlchemyError as exc:
-        logger.warning("Vendor archive failed due to storage error.")
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Vendor storage is unavailable.",
-        ) from exc
+# The /api/vendors routes were extracted verbatim to
+# app/api/routers/vendors.py (Phase 2C Step 4). They are mounted via
+# app.include_router(vendors_router.router) near app assembly, and the handler
+# functions are re-exported there so existing callers
+# (main.create_vendor_record, main.get_vendor_record, etc., across
+# test_vendors_and_parts_api / test_part_allocations_api /
+# test_purchase_orders_api / test_reports_api / test_shop_id_populated_on_create)
+# keep working.
 
 
 # The /api/parts routes were extracted verbatim to app/api/routers/parts.py
