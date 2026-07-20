@@ -27,7 +27,15 @@ from starlette.requests import Request
 import app.main as main
 
 
-def _request(path: str, *, client_host: str = "203.0.113.7") -> Request:
+def _request(
+    path: str,
+    *,
+    client_host: str = "203.0.113.7",
+    extra_headers: list[tuple[bytes, bytes]] | None = None,
+) -> Request:
+    headers: list[tuple[bytes, bytes]] = [(b"user-agent", b"pytest")]
+    if extra_headers:
+        headers.extend(extra_headers)
     return Request(
         {
             "type": "http",
@@ -37,7 +45,7 @@ def _request(path: str, *, client_host: str = "203.0.113.7") -> Request:
             "path": path,
             "raw_path": path.encode("utf-8"),
             "query_string": b"",
-            "headers": [(b"user-agent", b"pytest")],
+            "headers": headers,
             "client": (client_host, 50000),
             "server": ("testserver", 80),
         }
@@ -148,3 +156,50 @@ async def test_limiter_is_keyed_per_client_host_not_shared_across_ips(settings, 
 
     # A different client host has its own independent budget.
     await main.enforce_login_rate_limit(second_ip, limited)
+
+
+@pytest.mark.anyio
+async def test_forwarded_headers_do_not_bypass_the_login_limiter(settings, caplog) -> None:  # type: ignore[no-untyped-def]
+    """A caller must not be able to escape their rate-limit budget by
+    spoofing X-Forwarded-For / X-Real-IP: the limiter keys on the real
+    transport peer (request.client.host), not a client-supplied header, so
+    the same connection stays in one bucket no matter what it forwards."""
+    limited = settings.model_copy(update={"max_login_attempts_per_minute": 1})
+
+    first = _request(
+        "/api/auth/login",
+        client_host="203.0.113.9",
+        extra_headers=[(b"x-forwarded-for", b"10.0.0.1"), (b"x-real-ip", b"10.0.0.1")],
+    )
+    second = _request(
+        "/api/auth/login",
+        client_host="203.0.113.9",  # same real peer
+        extra_headers=[(b"x-forwarded-for", b"10.0.0.2"), (b"x-real-ip", b"10.0.0.2")],
+    )
+
+    await main.enforce_login_rate_limit(first, limited)
+    with pytest.raises(HTTPException) as excinfo:
+        # Different forwarded headers, same peer -- must still be limited.
+        await main.enforce_login_rate_limit(second, limited)
+    assert excinfo.value.status_code == 429
+
+
+@pytest.mark.anyio
+async def test_general_limiter_is_keyed_per_path_so_one_endpoint_cannot_drain_another(  # type: ignore[no-untyped-def]
+    settings, caplog
+) -> None:
+    """The general limiter keys on request path + host, so exhausting one
+    endpoint's budget from an IP does not pre-emptively 429 a different
+    endpoint for that same IP. Confirms the alternate-endpoint dimension of
+    the key is intact after centralization."""
+    limited = settings.model_copy(update={"max_estimates_per_minute": 1})
+
+    chat = _request("/api/chat", client_host="203.0.113.5")
+    estimates = _request("/api/estimates", client_host="203.0.113.5")
+
+    await main.enforce_rate_limit(chat, limited)
+    with pytest.raises(HTTPException):
+        await main.enforce_rate_limit(chat, limited)
+
+    # A different path for the same client is an independent bucket.
+    await main.enforce_rate_limit(estimates, limited)

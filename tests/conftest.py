@@ -55,30 +55,15 @@ def _reset_rate_limiter_singletons() -> None:
     requests) -- without a reset, their in-process fallback state
     accumulates across every test in a single pytest run, since nearly
     every test authenticates via the same fake client host from
-    `request_for()`. Without this fixture, tests unrelated to rate
-    limiting can start failing with a real 429 purely because enough
-    *other* tests logged in earlier in the same process. Resetting to
-    None forces a fresh limiter (and empty fallback event history) per
-    test -- this only affects test isolation, not production behavior,
-    since a real process never resets these between requests either."""
-    main._rate_limiter = None
-    main._rate_limiter_redis_url = None
-    main._login_rate_limiter = None
-    main._login_rate_limiter_redis_url = None
-    main._signup_rate_limiter = None
-    main._signup_rate_limiter_redis_url = None
-    main._email_verification_resend_rate_limiter = None
-    main._email_verification_resend_rate_limiter_redis_url = None
-    main._email_verification_rate_limiter = None
-    main._email_verification_rate_limiter_redis_url = None
-    # The password-reset and invitation-acceptance limiters were previously
-    # omitted here; reset all seven so no limiter's in-process fallback state
-    # leaks across tests (see tests/test_rate_limit_endpoints.py, which
-    # deliberately drives each limiter to its 429 threshold).
-    main._password_reset_rate_limiter = None
-    main._password_reset_rate_limiter_redis_url = None
-    main._invitation_acceptance_rate_limiter = None
-    main._invitation_acceptance_rate_limiter_redis_url = None
+    `request_for()`. Without this reset, tests unrelated to rate limiting
+    can start failing with a real 429 purely because enough *other* tests
+    logged in earlier in the same process. Clearing the registry forces a
+    fresh limiter (and empty fallback event history) per test -- this only
+    affects test isolation, not production behavior, since a real process
+    never clears the registry between requests. Covers all seven limiters
+    in one call, replacing the fourteen hand-maintained module globals this
+    used to reset."""
+    main._rate_limiters.clear()
 
 
 @pytest.fixture
