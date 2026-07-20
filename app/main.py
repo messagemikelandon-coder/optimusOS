@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Annotated, Any
 from urllib.parse import urlparse
 
-from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response, status
+from fastapi import FastAPI, HTTPException, Query, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -42,18 +42,33 @@ from app.account_security_store import (
     security_summary,
     update_member_status,
 )
+from app.api.deps import (
+    AuthContextDep,
+    BillingAuthContextDep,
+    CurrentUserDep,
+    DbSessionDep,
+    OwnerAuthContextDep,
+    OwnerOrTechnicianAuthContextDep,
+    SettingsDep,
+    SupportAuthContextDep,
+    VerifiedAuthContextDep,
+)
+from app.api.routers import notifications as notifications_router
+
+# AuthContext and get_current_auth_context are re-exported (the redundant
+# `as` alias marks them intentional) for backward compatibility: many tests
+# reference them via app.main even though main's own code now obtains its
+# dependencies through the app/api/deps.py aliases.
 from app.auth import (
-    AuthContext,
+    AuthContext as AuthContext,
+)
+from app.auth import (
     clear_session_cookie,
     create_auth_session,
-    get_current_auth_context,
-    require_authenticated_user,
-    require_billing_context,
-    require_owner_context,
-    require_owner_or_technician_context,
-    require_support_context,
-    require_verified_auth_context,
     set_session_cookie,
+)
+from app.auth import (
+    get_current_auth_context as get_current_auth_context,
 )
 from app.config import Settings, get_settings
 from app.context_store import (
@@ -75,7 +90,7 @@ from app.customer_store import (
     update_customer,
 )
 from app.dashboard_store import get_dashboard_summary
-from app.db import get_db_session, get_engine
+from app.db import get_engine
 from app.db_models import UserAccount
 from app.diagnostics_store import (
     DiagnosticFindingNotFoundError,
@@ -224,8 +239,6 @@ from app.models import (
     InvoiceRead,
     InvoiceStatus,
     LocationInput,
-    NotificationListResponse,
-    NotificationMarkReadResponse,
     PartAllocationAllocateRequest,
     PartAllocationCreate,
     PartAllocationEventsResponse,
@@ -309,13 +322,6 @@ from app.models import (
     WorkOrderStatus,
     WorkOrderStatusUpdate,
     WorkOrderUpdate,
-)
-from app.notification_store import (
-    NotificationNotFoundError,
-    NotificationStoreError,
-    list_notifications,
-    mark_all_notifications_read,
-    mark_notification_read,
 )
 from app.observability import configure_structured_logging, install_request_context_middleware
 from app.orchestrator import OptimusResearchOrchestrator
@@ -496,17 +502,10 @@ STATIC_DIR = Path(__file__).parent / "static"
 # for a local `uv run uvicorn` dev process that didn't go through a build.
 _GIT_COMMIT = os.environ.get("GIT_COMMIT", "unknown")
 _APP_MIGRATION_HEAD = get_app_migration_head()
-SettingsDep = Annotated[Settings, Depends(get_settings)]
-DbSessionDep = Annotated[Session, Depends(get_db_session)]
-AuthContextDep = Annotated[AuthContext, Depends(get_current_auth_context)]
-VerifiedAuthContextDep = Annotated[AuthContext, Depends(require_verified_auth_context)]
-CurrentUserDep = Annotated[UserAccount, Depends(require_authenticated_user)]
-OwnerAuthContextDep = Annotated[AuthContext, Depends(require_owner_context)]
-OwnerOrTechnicianAuthContextDep = Annotated[
-    AuthContext, Depends(require_owner_or_technician_context)
-]
-BillingAuthContextDep = Annotated[AuthContext, Depends(require_billing_context)]
-SupportAuthContextDep = Annotated[AuthContext, Depends(require_support_context)]
+# Dependency-injection aliases (SettingsDep, DbSessionDep, the *AuthContextDep
+# set) are defined once in app/api/deps.py and imported at the top of this
+# module, so extracted APIRouter modules (Phase 2C) can share them without
+# importing app.main. Every existing route below uses the identical aliases.
 
 app = FastAPI(
     title="Optimus Command Center | Landon Motor Works",
@@ -523,6 +522,16 @@ app.add_middleware(
 )
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 install_request_context_middleware(app, logger)
+
+# Phase 2C Step 1: the /api/notifications routes live in
+# app/api/routers/notifications.py. Mount them here (identical paths,
+# methods, response models, auth, and OpenAPI as before) and re-export the
+# handler functions into this module's namespace so existing direct callers
+# -- e.g. tests calling main.list_notification_records(...) -- keep working.
+app.include_router(notifications_router.router)
+list_notification_records = notifications_router.list_notification_records
+mark_notification_read_record = notifications_router.mark_notification_read_record
+mark_all_notifications_read_record = notifications_router.mark_all_notifications_read_record
 # All seven rate limiters share one registry (app/rate_limit.py) instead of
 # the seven copy-pasted lazy-singleton blocks this used to be. Each concern
 # below keeps its own limit, window, per-request key format, and client-facing
@@ -4295,72 +4304,11 @@ async def refresh_square_invoice_record(
         client.close()
 
 
-@app.get("/api/notifications", response_model=NotificationListResponse)
-async def list_notification_records(
-    db: DbSessionDep,
-    settings: SettingsDep,
-    auth: OwnerAuthContextDep,
-    page: int = Query(default=1),
-    page_size: int = Query(default=20),
-    unread: bool = Query(default=False),
-) -> NotificationListResponse:
-    try:
-        return await asyncio.to_thread(
-            list_notifications,
-            db=db,
-            auth=auth,
-            settings=settings,
-            page=page,
-            page_size=page_size,
-            unread_only=unread,
-        )
-    except NotificationStoreError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-    except SQLAlchemyError as exc:
-        logger.warning("Notification listing failed due to storage error.")
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Notification storage is unavailable.",
-        ) from exc
-
-
-@app.post("/api/notifications/{notification_id}/read", response_model=NotificationMarkReadResponse)
-async def mark_notification_read_record(
-    notification_id: int,
-    db: DbSessionDep,
-    auth: OwnerAuthContextDep,
-) -> NotificationMarkReadResponse:
-    try:
-        return await asyncio.to_thread(
-            mark_notification_read, db=db, auth=auth, notification_id=notification_id
-        )
-    except NotificationNotFoundError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    except NotificationStoreError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-    except SQLAlchemyError as exc:
-        logger.warning("Notification mark-read failed due to storage error.")
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Notification storage is unavailable.",
-        ) from exc
-
-
-@app.post("/api/notifications/read-all", response_model=NotificationMarkReadResponse)
-async def mark_all_notifications_read_record(
-    db: DbSessionDep,
-    auth: OwnerAuthContextDep,
-) -> NotificationMarkReadResponse:
-    try:
-        return await asyncio.to_thread(mark_all_notifications_read, db=db, auth=auth)
-    except NotificationStoreError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-    except SQLAlchemyError as exc:
-        logger.warning("Notification mark-all-read failed due to storage error.")
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Notification storage is unavailable.",
-        ) from exc
+# The /api/notifications routes were extracted verbatim to
+# app/api/routers/notifications.py (Phase 2C Step 1). They are mounted via
+# app.include_router(notifications.router) below, and the handler functions
+# are re-exported near the bottom of this module so existing callers
+# (main.list_notification_records, etc.) keep working unchanged.
 
 
 @app.get("/api/dashboard/summary", response_model=DashboardSummaryResponse)
