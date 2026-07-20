@@ -194,6 +194,61 @@ def test_store_authorization_queries_do_not_compare_legacy_owner_user_id() -> No
     assert violations == []
 
 
+# The canonical tenant-scoping primitives. A store that runs tenant-scoped
+# queries must resolve the boundary through one of these (never by ad-hoc
+# comparison, which the negative test above already forbids).
+_TENANT_PRIMITIVES = frozenset({"effective_shop_id", "effective_shop_owner_id", "resolve_shop_id"})
+
+# Store modules that legitimately reference no tenant primitive, each with the
+# reason it is safe. This allowlist is deliberately tiny and must carry a
+# justification for every entry -- a NEW store that scopes on neither a tenant
+# primitive nor a documented delegation will fail the positive test below,
+# which is the point (it closes the blind spot the Phase 1 inventory found:
+# the negative AST test forbids the legacy pattern but did not require every
+# store to scope on *something*).
+_TENANT_PRIMITIVE_EXEMPT: dict[str, str] = {
+    # Operates strictly on one already-identified UserAccount (resolved from a
+    # hashed token), never a cross-tenant resource listing -- identity-scoped,
+    # not shop-scoped.
+    "email_verification_store.py": "user/account-scoped by user_account_id, no cross-tenant query",
+    # Every entry point resolves its target invoice through
+    # invoice_store._require_invoice(db, auth, ...), which is itself
+    # tenant-scoped -- square_store delegates scoping rather than re-deriving it.
+    "square_store.py": "delegates tenant scoping to invoice_store._require_invoice",
+}
+
+
+def test_every_store_resolves_tenant_scope_through_a_primitive_or_is_documented_exempt() -> None:
+    """Positive counterpart to the negative legacy-owner test: assert every
+    store module either references a canonical tenant primitive or is on the
+    small, justified exemption allowlist. Prevents a future store from
+    silently scoping on neither (the gap the inventory flagged)."""
+    unaccounted: list[str] = []
+    for path in sorted(Path("app").glob("*_store.py")):
+        if path.name == "test_support_store.py":
+            continue
+        source = path.read_text()
+        names_used = {node.id for node in ast.walk(ast.parse(source)) if isinstance(node, ast.Name)}
+        if names_used & _TENANT_PRIMITIVES:
+            continue
+        if path.name in _TENANT_PRIMITIVE_EXEMPT:
+            continue
+        unaccounted.append(path.name)
+    assert unaccounted == [], (
+        "these store modules reference no tenant primitive and are not on the "
+        f"documented exemption allowlist: {unaccounted}. Either scope their "
+        "queries through effective_shop_id()/effective_shop_owner_id(), or add "
+        "them to _TENANT_PRIMITIVE_EXEMPT with a justification."
+    )
+
+
+def test_tenant_primitive_exemptions_are_still_real_store_files() -> None:
+    """Guards the allowlist itself: a stale exemption (e.g. a renamed or
+    deleted store) must not silently mask a future gap."""
+    for name in _TENANT_PRIMITIVE_EXEMPT:
+        assert (Path("app") / name).exists(), f"exempt store {name} no longer exists; prune it"
+
+
 def test_inactive_membership_cannot_mint_a_dormant_session(
     settings: Settings, db_session: Session
 ) -> None:
