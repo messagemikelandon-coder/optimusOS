@@ -388,7 +388,7 @@ from app.scheduling_store import (
     update_schedule_block,
     update_working_hours,
 )
-from app.security_events import SecurityEventType, log_security_event
+from app.security_events import ActorType, SecurityEventType, log_security_event
 from app.services.email import LoggingEmailAdapter
 from app.services.http import SafeHttpClient
 from app.services.location import LocationService
@@ -1462,6 +1462,9 @@ async def add_billing_payment_method(
         log_security_event(
             logger,
             SecurityEventType.SQUARE_API_FAILED,
+            actor_type=ActorType.USER,
+            actor_id=auth.user.id,
+            actor_label=auth.user.username,
             operation="add_payment_method",
             error=str(exc),
         )
@@ -1495,7 +1498,13 @@ async def subscribe_billing(
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except SquareApiError as exc:
         log_security_event(
-            logger, SecurityEventType.SQUARE_API_FAILED, operation="subscribe", error=str(exc)
+            logger,
+            SecurityEventType.SQUARE_API_FAILED,
+            actor_type=ActorType.USER,
+            actor_id=auth.user.id,
+            actor_label=auth.user.username,
+            operation="subscribe",
+            error=str(exc),
         )
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     except SQLAlchemyError as exc:
@@ -1526,7 +1535,13 @@ async def change_billing_tier(
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except SquareApiError as exc:
         log_security_event(
-            logger, SecurityEventType.SQUARE_API_FAILED, operation="change_tier", error=str(exc)
+            logger,
+            SecurityEventType.SQUARE_API_FAILED,
+            actor_type=ActorType.USER,
+            actor_id=auth.user.id,
+            actor_label=auth.user.username,
+            operation="change_tier",
+            error=str(exc),
         )
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     except SQLAlchemyError as exc:
@@ -1551,7 +1566,13 @@ async def cancel_billing_subscription(
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except SquareApiError as exc:
         log_security_event(
-            logger, SecurityEventType.SQUARE_API_FAILED, operation="cancel", error=str(exc)
+            logger,
+            SecurityEventType.SQUARE_API_FAILED,
+            actor_type=ActorType.USER,
+            actor_id=auth.user.id,
+            actor_label=auth.user.username,
+            operation="cancel",
+            error=str(exc),
         )
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     except SQLAlchemyError as exc:
@@ -1579,7 +1600,13 @@ async def refresh_billing_subscription(
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except SquareApiError as exc:
         log_security_event(
-            logger, SecurityEventType.SQUARE_API_FAILED, operation="refresh", error=str(exc)
+            logger,
+            SecurityEventType.SQUARE_API_FAILED,
+            actor_type=ActorType.USER,
+            actor_id=auth.user.id,
+            actor_label=auth.user.username,
+            operation="refresh",
+            error=str(exc),
         )
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     except SQLAlchemyError as exc:
@@ -4292,6 +4319,10 @@ async def push_invoice_to_square_record(
         log_security_event(
             logger,
             SecurityEventType.SQUARE_API_FAILED,
+            actor_type=ActorType.USER,
+            actor_id=auth.user.id,
+            actor_label=auth.user.username,
+            resource=f"invoice:{invoice_id}",
             invoice_id=invoice_id,
             operation="push",
             error=str(exc),
@@ -4337,6 +4368,10 @@ async def refresh_square_invoice_record(
         log_security_event(
             logger,
             SecurityEventType.SQUARE_API_FAILED,
+            actor_type=ActorType.USER,
+            actor_id=auth.user.id,
+            actor_label=auth.user.username,
+            resource=f"invoice:{invoice_id}",
             invoice_id=invoice_id,
             operation="refresh",
             error=str(exc),
