@@ -1,0 +1,18 @@
+# SHA-256 checksums for the preserved OptimusOS stack decision
+# Generated 2026-07-20. Recorded here (not inside the files themselves) so
+# that recording a checksum doesn't change the hash of the file it describes.
+#
+# Source PoC report checksum (docs/DECISION.md in optimus-laravel-poc at
+# commit c889e6d8ac81abf8962974bae734b0561e2c24e5):
+# b8583ac3aececf829ce838c7948efaea7c4cc0de73be263109433f9ab2665768
+#
+# Preserved copies in this repo, verified with: sha256sum -c CHECKSUMS.txt
+8110bca9ddeab9a24e58a530f6a4bf3e66e3cb8a2534ac25db946924042fd8e6  STACK-DECISION.md
+f00879f459afbf99e9f2148894753a4272e2d1f2d1f4154a958934890c6d86cc  adr/ADR-014-final-stack-and-deployment.md
+5afbcf5667cefb4d4fd1cd9ee87f1ab0519e92f691bee44ca928e3ae50f8541f  adr/ADR-015-vehicle-identity-and-ownership.md
+96bf117163913c7a5ad09444f808fe7260da364e68e7051f28c11ea893db03b3  adr/ADR-016-shared-business-service-layer.md
+cedb48b5982ae52309d669b1b12013a35b3ad980b9307aadfe4240520296e531  adr/ADR-017-prompt-manual-shared-execution.md
+802f3698bb9659366fd158e5c100db212d135f5c0456ac3b35e3df0af75e82e7  adr/ADR-018-environment-database-validation.md
+a096e549e0472bba10a72370f4e6779627fe91867028a47c0e916ae53a97b93b  adr/ADR-019-tenant-boundary.md
+fd050d513a81d3c254df54973447159658bdc2cbdbde6d93a6521c865eb59ccd  adr/ADR-020-security-kernel-integration.md
+9ada47f885c4dccfb0072ebb920e5944e266982963029dcdd649da9219847cc0  adr/ADR-021-sentinel-event-integration.md

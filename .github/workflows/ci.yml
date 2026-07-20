@@ -155,7 +155,16 @@ jobs:
       # secret. This file never leaves the runner and nothing below prints
       # its resolved contents (docker compose config always runs with -q).
       - name: Create placeholder env file for compose
-        run: cp .env.example .env
+        run: |
+          cp .env.example .env
+          # This job boots the stack with placeholder secrets to exercise
+          # container/compose mechanics -- it is not a production deployment.
+          # Declare a non-production APP_ENV so the fail-closed
+          # production-config guard (app/startup_checks.py) correctly stays
+          # silent instead of refusing to boot on .env.example's placeholder
+          # secrets. .env.example itself keeps APP_ENV=production as the safe
+          # template default real deployers copy.
+          sed -i 's/^APP_ENV=production$/APP_ENV=ci/' .env
 
       - name: Validate docker-compose config (base)
         run: docker compose config -q
@@ -222,7 +231,13 @@ jobs:
       # deployment; here it only ever points at this job's own throwaway
       # Postgres container.
       - name: Create placeholder env file
-        run: cp .env.example .env
+        run: |
+          cp .env.example .env
+          # Placeholder-secret boot to exercise the deploy/rollback mechanics,
+          # not a production deployment -- declare a non-production APP_ENV so
+          # the fail-closed production-config guard (app/startup_checks.py)
+          # stays silent instead of refusing to boot on placeholder secrets.
+          sed -i 's/^APP_ENV=production$/APP_ENV=ci/' .env
 
       - name: Start the stack via optimusctl.sh (same script real deploys use)
         run: ./scripts/optimusctl.sh start

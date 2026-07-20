@@ -48,7 +48,7 @@ class SlidingWindowRateLimiter:
             while events and events[0] <= cutoff:
                 events.popleft()
             if len(events) >= self._limit:
-                raise RateLimitExceeded("Estimate request limit exceeded. Try again shortly.")
+                raise RateLimitExceeded("Rate limit exceeded. Try again shortly.")
             events.append(now)
 
 
@@ -97,4 +97,42 @@ class RedisSlidingWindowRateLimiter:
         if count > self._limit:
             with contextlib.suppress(RedisError):
                 await self._redis.zrem(redis_key, member)
-            raise RateLimitExceeded("Estimate request limit exceeded. Try again shortly.")
+            raise RateLimitExceeded("Rate limit exceeded. Try again shortly.")
+
+
+class RateLimiterRegistry:
+    """One place that owns the process-wide, lazily-built rate limiters,
+    replacing seven near-identical copy-pasted singleton blocks that lived in
+    app/main.py. A limiter is (re)built the first time its named concern is
+    requested, or when its configured limit or the Redis URL changes --
+    preserving the exact lazy-singleton and invalidation behavior each
+    per-concern block had, in one implementation instead of seven.
+
+    Centralizing the wiring does not homogenize the *policy*: each concern
+    still supplies its own limit, window, key format, and client-facing 429
+    message at the call site (app/main.py's enforce_* helpers), because those
+    genuinely differ per concern."""
+
+    def __init__(self) -> None:
+        self._limiters: dict[str, RateLimiter] = {}
+        self._redis_urls: dict[str, str] = {}
+
+    def get(
+        self, name: str, *, redis_url: str, limit: int, window_seconds: float = 60.0
+    ) -> RateLimiter:
+        existing = self._limiters.get(name)
+        if existing is None or existing.limit != limit or self._redis_urls.get(name) != redis_url:
+            self._limiters[name] = RedisSlidingWindowRateLimiter(
+                redis_client=Redis.from_url(redis_url),
+                limit=limit,
+                window_seconds=window_seconds,
+            )
+            self._redis_urls[name] = redis_url
+        return self._limiters[name]
+
+    def clear(self) -> None:
+        """Drop all cached limiters (and their in-process fallback state).
+        Used by tests for per-test isolation; a real process never calls
+        this, sharing one limiter per concern across all requests."""
+        self._limiters.clear()
+        self._redis_urls.clear()

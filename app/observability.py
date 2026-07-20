@@ -9,6 +9,8 @@ from contextvars import ContextVar
 
 from fastapi import FastAPI, Request, Response
 
+from app.redaction import redact_secrets
+
 # Standard LogRecord attributes -- anything else on a record was passed via
 # logger.info(..., extra={...}) and belongs in the structured JSON output.
 _STANDARD_RECORD_ATTRS = frozenset(logging.LogRecord("", 0, "", 0, "", (), None).__dict__)
@@ -30,10 +32,13 @@ class RequestIdLogFilter(logging.Filter):
 class JsonLogFormatter(logging.Formatter):
     """Structured JSON logging for production log aggregation. Emits only
     request_id/path/method/status/duration/error-classification style
-    operational fields -- callers are responsible for never passing
-    passwords, tokens, or customer-sensitive text through `extra` (existing
-    call sites in this codebase already sanitize exception messages before
-    logging; this formatter does not add new content, only structure)."""
+    operational fields. Callers remain responsible for never passing
+    passwords, tokens, or customer-sensitive text through `extra`; as
+    defense in depth (Phase 1 security kernel) every rendered line is run
+    through a secret-redaction pass so an accidental credential -- a leaked
+    API key, a connection URL with embedded credentials, a password
+    assignment -- is scrubbed to a placeholder rather than persisted to the
+    log store."""
 
     def format(self, record: logging.LogRecord) -> str:
         payload: dict[str, object] = {
@@ -48,7 +53,12 @@ class JsonLogFormatter(logging.Formatter):
                 payload[key] = value
         if record.exc_info and record.exc_info[0] is not None:
             payload["exception_type"] = record.exc_info[0].__name__
-        return json.dumps(payload, default=str)
+        # Redact over the fully-serialized line so a secret is caught wherever
+        # it appears -- message, a nested extra value, an exception repr --
+        # not just in fields we thought to check. The placeholder is valid
+        # JSON content, and the value-only patterns don't match structural
+        # JSON, so this cannot corrupt the document.
+        return redact_secrets(json.dumps(payload, default=str))
 
 
 def configure_structured_logging(log_level: str) -> None:

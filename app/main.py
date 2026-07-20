@@ -14,7 +14,6 @@ from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response, s
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
-from redis.asyncio import Redis
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
@@ -352,7 +351,7 @@ from app.purchase_order_store import (
     receive_purchase_order_line_item,
     submit_purchase_order,
 )
-from app.rate_limit import RateLimiter, RateLimitExceeded, RedisSlidingWindowRateLimiter
+from app.rate_limit import RateLimiter, RateLimiterRegistry, RateLimitExceeded
 from app.report_store import (
     get_diagnostic_inspection_report,
     get_inventory_valuation_report,
@@ -388,7 +387,7 @@ from app.scheduling_store import (
     update_schedule_block,
     update_working_hours,
 )
-from app.security_events import SecurityEventType, log_security_event
+from app.security_events import ActorType, SecurityEventType, log_security_event
 from app.services.email import LoggingEmailAdapter
 from app.services.http import SafeHttpClient
 from app.services.location import LocationService
@@ -401,6 +400,7 @@ from app.square_store import (
     push_invoice_to_square,
     refresh_square_invoice,
 )
+from app.startup_checks import validate_production_config
 from app.subscription_store import (
     SubscriptionConflictError,
     SubscriptionStoreError,
@@ -487,6 +487,10 @@ from app.workflow_gap_store import (
 
 configure_structured_logging(get_settings().log_level)
 logger = logging.getLogger("optimus")
+# Fail loudly at import time (i.e. before uvicorn ever accepts a request)
+# rather than silently serving traffic on unsafe production configuration.
+# See app/startup_checks.py and docs/architecture/adr/ADR-018-environment-database-validation.md.
+validate_production_config(get_settings())
 STATIC_DIR = Path(__file__).parent / "static"
 # Set at image build time (see Dockerfile's GIT_COMMIT build arg); "unknown"
 # for a local `uv run uvicorn` dev process that didn't go through a build.
@@ -519,29 +523,21 @@ app.add_middleware(
 )
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 install_request_context_middleware(app, logger)
-_rate_limiter: RateLimiter | None = None
-_rate_limiter_redis_url: str | None = None
+# All seven rate limiters share one registry (app/rate_limit.py) instead of
+# the seven copy-pasted lazy-singleton blocks this used to be. Each concern
+# below keeps its own limit, window, per-request key format, and client-facing
+# 429 message -- those genuinely differ and must not be homogenized -- while
+# the identical wiring (build-once, rebuild-on-limit/redis-url-change,
+# Redis-backed with an in-process fallback for brief Redis outages) lives in
+# exactly one place. The per-concern get_* accessors are kept as named module
+# functions because existing tests monkeypatch them by name.
+_rate_limiters = RateLimiterRegistry()
 
 
 def get_rate_limiter(settings: Settings) -> RateLimiter:
-    # Redis-backed so the limit is shared and correctly enforced across
-    # multiple app instances behind a load balancer, not just per-process.
-    # RedisSlidingWindowRateLimiter itself falls back to a best-effort
-    # in-process limiter if Redis is briefly unreachable (see
-    # app/rate_limit.py), so this never turns a transient Redis hiccup into
-    # a full outage of the public chat/approval endpoints it guards.
-    global _rate_limiter, _rate_limiter_redis_url
-    if (
-        _rate_limiter is None
-        or _rate_limiter.limit != settings.max_estimates_per_minute
-        or _rate_limiter_redis_url != settings.redis_url
-    ):
-        _rate_limiter = RedisSlidingWindowRateLimiter(
-            redis_client=Redis.from_url(settings.redis_url),
-            limit=settings.max_estimates_per_minute,
-        )
-        _rate_limiter_redis_url = settings.redis_url
-    return _rate_limiter
+    return _rate_limiters.get(
+        "general", redis_url=settings.redis_url, limit=settings.max_estimates_per_minute
+    )
 
 
 async def enforce_rate_limit(request: Request, settings: Settings) -> None:
@@ -556,29 +552,10 @@ async def enforce_rate_limit(request: Request, settings: Settings) -> None:
         raise HTTPException(status_code=429, detail=str(exc)) from exc
 
 
-_login_rate_limiter: RateLimiter | None = None
-_login_rate_limiter_redis_url: str | None = None
-
-
 def get_login_rate_limiter(settings: Settings) -> RateLimiter:
-    # Separate limiter/limit from get_rate_limiter's -- login attempts
-    # warrant a much lower per-minute ceiling than a customer refreshing an
-    # approval link, and the underlying limiter classes only support one
-    # configured limit per instance, so this mirrors that function's exact
-    # lazy-singleton pattern for its own purpose rather than parameterizing
-    # a shared one.
-    global _login_rate_limiter, _login_rate_limiter_redis_url
-    if (
-        _login_rate_limiter is None
-        or _login_rate_limiter.limit != settings.max_login_attempts_per_minute
-        or _login_rate_limiter_redis_url != settings.redis_url
-    ):
-        _login_rate_limiter = RedisSlidingWindowRateLimiter(
-            redis_client=Redis.from_url(settings.redis_url),
-            limit=settings.max_login_attempts_per_minute,
-        )
-        _login_rate_limiter_redis_url = settings.redis_url
-    return _login_rate_limiter
+    return _rate_limiters.get(
+        "login", redis_url=settings.redis_url, limit=settings.max_login_attempts_per_minute
+    )
 
 
 async def enforce_login_rate_limit(request: Request, settings: Settings) -> None:
@@ -595,26 +572,10 @@ async def enforce_login_rate_limit(request: Request, settings: Settings) -> None
         ) from exc
 
 
-_signup_rate_limiter: RateLimiter | None = None
-_signup_rate_limiter_redis_url: str | None = None
-
-
 def get_signup_rate_limiter(settings: Settings) -> RateLimiter:
-    # Own limiter/limit, same reasoning as get_login_rate_limiter: a public,
-    # unauthenticated signup endpoint is a spam/abuse target distinct from
-    # both login attempts and the estimate-generation limiter.
-    global _signup_rate_limiter, _signup_rate_limiter_redis_url
-    if (
-        _signup_rate_limiter is None
-        or _signup_rate_limiter.limit != settings.max_signup_attempts_per_minute
-        or _signup_rate_limiter_redis_url != settings.redis_url
-    ):
-        _signup_rate_limiter = RedisSlidingWindowRateLimiter(
-            redis_client=Redis.from_url(settings.redis_url),
-            limit=settings.max_signup_attempts_per_minute,
-        )
-        _signup_rate_limiter_redis_url = settings.redis_url
-    return _signup_rate_limiter
+    return _rate_limiters.get(
+        "signup", redis_url=settings.redis_url, limit=settings.max_signup_attempts_per_minute
+    )
 
 
 async def enforce_signup_rate_limit(request: Request, settings: Settings) -> None:
@@ -638,26 +599,12 @@ def email_adapter() -> LoggingEmailAdapter:
     return LoggingEmailAdapter()
 
 
-_email_verification_resend_rate_limiter: RateLimiter | None = None
-_email_verification_resend_rate_limiter_redis_url: str | None = None
-_email_verification_rate_limiter: RateLimiter | None = None
-_email_verification_rate_limiter_redis_url: str | None = None
-
-
 def get_email_verification_rate_limiter(settings: Settings) -> RateLimiter:
-    global _email_verification_rate_limiter, _email_verification_rate_limiter_redis_url
-    if (
-        _email_verification_rate_limiter is None
-        or _email_verification_rate_limiter.limit
-        != settings.max_email_verification_attempts_per_minute
-        or _email_verification_rate_limiter_redis_url != settings.redis_url
-    ):
-        _email_verification_rate_limiter = RedisSlidingWindowRateLimiter(
-            redis_client=Redis.from_url(settings.redis_url),
-            limit=settings.max_email_verification_attempts_per_minute,
-        )
-        _email_verification_rate_limiter_redis_url = settings.redis_url
-    return _email_verification_rate_limiter
+    return _rate_limiters.get(
+        "email-verification",
+        redis_url=settings.redis_url,
+        limit=settings.max_email_verification_attempts_per_minute,
+    )
 
 
 async def enforce_email_verification_rate_limit(request: Request, settings: Settings) -> None:
@@ -675,26 +622,15 @@ async def enforce_email_verification_rate_limit(request: Request, settings: Sett
 
 
 def get_email_verification_resend_rate_limiter(settings: Settings) -> RateLimiter:
-    # Own limiter, keyed per authenticated user (not per IP, unlike
-    # login/signup) -- this action requires an existing session, so the
-    # abuse case is one account spamming itself/its own inbox, not
-    # unauthenticated IP-based abuse.
-    global \
-        _email_verification_resend_rate_limiter, \
-        _email_verification_resend_rate_limiter_redis_url
-    if (
-        _email_verification_resend_rate_limiter is None
-        or _email_verification_resend_rate_limiter.limit
-        != settings.max_email_verification_resend_attempts_per_hour
-        or _email_verification_resend_rate_limiter_redis_url != settings.redis_url
-    ):
-        _email_verification_resend_rate_limiter = RedisSlidingWindowRateLimiter(
-            redis_client=Redis.from_url(settings.redis_url),
-            limit=settings.max_email_verification_resend_attempts_per_hour,
-            window_seconds=3600.0,
-        )
-        _email_verification_resend_rate_limiter_redis_url = settings.redis_url
-    return _email_verification_resend_rate_limiter
+    # Keyed per authenticated user (not per IP, unlike login/signup) -- this
+    # action requires an existing session, so the abuse case is one account
+    # spamming its own inbox. Hourly window.
+    return _rate_limiters.get(
+        "email-verification-resend",
+        redis_url=settings.redis_url,
+        limit=settings.max_email_verification_resend_attempts_per_hour,
+        window_seconds=3600.0,
+    )
 
 
 async def enforce_email_verification_resend_rate_limit(
@@ -712,24 +648,13 @@ async def enforce_email_verification_resend_rate_limit(
         ) from exc
 
 
-_password_reset_rate_limiter: RateLimiter | None = None
-_password_reset_rate_limiter_redis_url: str | None = None
-
-
 def get_password_reset_rate_limiter(settings: Settings) -> RateLimiter:
-    global _password_reset_rate_limiter, _password_reset_rate_limiter_redis_url
-    if (
-        _password_reset_rate_limiter is None
-        or _password_reset_rate_limiter.limit != settings.max_password_reset_attempts_per_hour
-        or _password_reset_rate_limiter_redis_url != settings.redis_url
-    ):
-        _password_reset_rate_limiter = RedisSlidingWindowRateLimiter(
-            redis_client=Redis.from_url(settings.redis_url),
-            limit=settings.max_password_reset_attempts_per_hour,
-            window_seconds=3600.0,
-        )
-        _password_reset_rate_limiter_redis_url = settings.redis_url
-    return _password_reset_rate_limiter
+    return _rate_limiters.get(
+        "password-reset",
+        redis_url=settings.redis_url,
+        limit=settings.max_password_reset_attempts_per_hour,
+        window_seconds=3600.0,
+    )
 
 
 async def enforce_password_reset_rate_limit(
@@ -748,25 +673,13 @@ async def enforce_password_reset_rate_limit(
         ) from exc
 
 
-_invitation_acceptance_rate_limiter: RateLimiter | None = None
-_invitation_acceptance_rate_limiter_redis_url: str | None = None
-
-
 def get_invitation_acceptance_rate_limiter(settings: Settings) -> RateLimiter:
-    global _invitation_acceptance_rate_limiter, _invitation_acceptance_rate_limiter_redis_url
-    if (
-        _invitation_acceptance_rate_limiter is None
-        or _invitation_acceptance_rate_limiter.limit
-        != settings.max_invitation_acceptance_attempts_per_hour
-        or _invitation_acceptance_rate_limiter_redis_url != settings.redis_url
-    ):
-        _invitation_acceptance_rate_limiter = RedisSlidingWindowRateLimiter(
-            redis_client=Redis.from_url(settings.redis_url),
-            limit=settings.max_invitation_acceptance_attempts_per_hour,
-            window_seconds=3600.0,
-        )
-        _invitation_acceptance_rate_limiter_redis_url = settings.redis_url
-    return _invitation_acceptance_rate_limiter
+    return _rate_limiters.get(
+        "invitation-acceptance",
+        redis_url=settings.redis_url,
+        limit=settings.max_invitation_acceptance_attempts_per_hour,
+        window_seconds=3600.0,
+    )
 
 
 async def enforce_invitation_acceptance_rate_limit(request: Request, settings: Settings) -> None:
@@ -1457,6 +1370,9 @@ async def add_billing_payment_method(
         log_security_event(
             logger,
             SecurityEventType.SQUARE_API_FAILED,
+            actor_type=ActorType.USER,
+            actor_id=auth.user.id,
+            actor_label=auth.user.username,
             operation="add_payment_method",
             error=str(exc),
         )
@@ -1490,7 +1406,13 @@ async def subscribe_billing(
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except SquareApiError as exc:
         log_security_event(
-            logger, SecurityEventType.SQUARE_API_FAILED, operation="subscribe", error=str(exc)
+            logger,
+            SecurityEventType.SQUARE_API_FAILED,
+            actor_type=ActorType.USER,
+            actor_id=auth.user.id,
+            actor_label=auth.user.username,
+            operation="subscribe",
+            error=str(exc),
         )
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     except SQLAlchemyError as exc:
@@ -1521,7 +1443,13 @@ async def change_billing_tier(
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except SquareApiError as exc:
         log_security_event(
-            logger, SecurityEventType.SQUARE_API_FAILED, operation="change_tier", error=str(exc)
+            logger,
+            SecurityEventType.SQUARE_API_FAILED,
+            actor_type=ActorType.USER,
+            actor_id=auth.user.id,
+            actor_label=auth.user.username,
+            operation="change_tier",
+            error=str(exc),
         )
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     except SQLAlchemyError as exc:
@@ -1546,7 +1474,13 @@ async def cancel_billing_subscription(
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except SquareApiError as exc:
         log_security_event(
-            logger, SecurityEventType.SQUARE_API_FAILED, operation="cancel", error=str(exc)
+            logger,
+            SecurityEventType.SQUARE_API_FAILED,
+            actor_type=ActorType.USER,
+            actor_id=auth.user.id,
+            actor_label=auth.user.username,
+            operation="cancel",
+            error=str(exc),
         )
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     except SQLAlchemyError as exc:
@@ -1574,7 +1508,13 @@ async def refresh_billing_subscription(
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except SquareApiError as exc:
         log_security_event(
-            logger, SecurityEventType.SQUARE_API_FAILED, operation="refresh", error=str(exc)
+            logger,
+            SecurityEventType.SQUARE_API_FAILED,
+            actor_type=ActorType.USER,
+            actor_id=auth.user.id,
+            actor_label=auth.user.username,
+            operation="refresh",
+            error=str(exc),
         )
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     except SQLAlchemyError as exc:
@@ -4287,6 +4227,10 @@ async def push_invoice_to_square_record(
         log_security_event(
             logger,
             SecurityEventType.SQUARE_API_FAILED,
+            actor_type=ActorType.USER,
+            actor_id=auth.user.id,
+            actor_label=auth.user.username,
+            resource=f"invoice:{invoice_id}",
             invoice_id=invoice_id,
             operation="push",
             error=str(exc),
@@ -4332,6 +4276,10 @@ async def refresh_square_invoice_record(
         log_security_event(
             logger,
             SecurityEventType.SQUARE_API_FAILED,
+            actor_type=ActorType.USER,
+            actor_id=auth.user.id,
+            actor_label=auth.user.username,
+            resource=f"invoice:{invoice_id}",
             invoice_id=invoice_id,
             operation="refresh",
             error=str(exc),

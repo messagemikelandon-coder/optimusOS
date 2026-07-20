@@ -11,15 +11,9 @@ from app.auth import AuthContext, effective_shop_owner_id, ensure_utc
 from app.config import Settings
 from app.db_models import ContextEntry
 from app.models import ContextDeleteResponse, ContextEntryRead, ContextListResponse, ContextScope
+from app.redaction import contains_secret
 
 _IDENTIFIER_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,119}$")
-_SECRET_PATTERNS = (
-    re.compile(r"\bsk-[A-Za-z0-9_-]{20,}\b"),
-    re.compile(r"\bOPENAI_API_KEY\b", re.IGNORECASE),
-    re.compile(r"\bBearer\s+[A-Za-z0-9._-]{16,}\b", re.IGNORECASE),
-    re.compile(r"\boptimus_session=", re.IGNORECASE),
-    re.compile(r"\bpassword\s*[:=]\s*\S+", re.IGNORECASE),
-)
 
 
 class ContextStoreError(ValueError):
@@ -57,9 +51,8 @@ def validate_context_value(value: str, settings: Settings) -> str:
         raise ContextStoreError(
             f"Context value exceeds the {settings.context_max_value_chars}-character limit."
         )
-    for pattern in _SECRET_PATTERNS:
-        if pattern.search(normalized):
-            raise ContextStoreError("Context values must not store secrets, tokens, or passwords.")
+    if contains_secret(normalized):
+        raise ContextStoreError("Context values must not store secrets, tokens, or passwords.")
     return normalized
 
 
