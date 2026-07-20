@@ -401,6 +401,7 @@ from app.square_store import (
     push_invoice_to_square,
     refresh_square_invoice,
 )
+from app.startup_checks import validate_production_config
 from app.subscription_store import (
     SubscriptionConflictError,
     SubscriptionStoreError,
@@ -487,6 +488,10 @@ from app.workflow_gap_store import (
 
 configure_structured_logging(get_settings().log_level)
 logger = logging.getLogger("optimus")
+# Fail loudly at import time (i.e. before uvicorn ever accepts a request)
+# rather than silently serving traffic on unsafe production configuration.
+# See app/startup_checks.py and docs/architecture/adr/ADR-018-environment-database-validation.md.
+validate_production_config(get_settings())
 STATIC_DIR = Path(__file__).parent / "static"
 # Set at image build time (see Dockerfile's GIT_COMMIT build arg); "unknown"
 # for a local `uv run uvicorn` dev process that didn't go through a build.
