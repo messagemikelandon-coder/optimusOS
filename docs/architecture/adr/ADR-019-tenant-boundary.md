@@ -1,0 +1,11 @@
+# ADR-019: Tenant boundary
+
+- ID: ADR-019
+- Date: 2026-07-20
+- Status: Accepted
+- Context: optimus-server just completed a live conversion from single-owner-scoped auth to a full `Shop`/tenant multi-tenancy model (11 migrations in 2 days), with `effective_shop_id(db, auth)` in `app/auth.py` as the single tenant-scoping primitive, reused by every one of the 28 store modules, and an existing AST regression test that fails the build if any store reintroduces a raw `owner_user_id` comparison instead of calling it. The Laravel PoC independently confirmed the same "one function computes the boundary, everything else calls it" shape is the right one (its `shopId` parameter threading through `VehicleService`, though far less developed, follows the identical principle) — additional evidence this is a sound architecture choice, not something to revisit.
+- Decision: No change to the tenant-boundary mechanism. `effective_shop_id()` remains the single source of truth; the existing AST regression test remains the enforcement mechanism, and it must be extended (as part of Phase 1, see `docs/architecture/PHASE1-SECURITY-KERNEL-PLAN.md`) to cover new code paths — most importantly the future plan-executor (ADR-017) — before those paths are written, not after.
+- Alternatives considered: middleware-based tenant injection instead of an explicit function call at each store (rejected — the current explicit-call pattern is what the AST test can statically verify; implicit middleware injection would be harder to prove absent-of-bypass); revisiting the tenant model design itself (out of scope — no defect in the current model has been identified, only a request to confirm and extend its enforcement).
+- Consequences: Phase 1's tenant-context work is scoped to inventorying every endpoint's use of `effective_shop_id()` and closing any gaps found, not redesigning the mechanism.
+- Files affected: `app/auth.py` (no change expected, subject to Phase 1's inventory findings), the existing AST regression test file (extended), and any endpoint the inventory finds missing or inconsistent tenant scoping.
+- Revisit if: Phase 1's inventory (§2 of the Phase 1 report) finds a structural gap the current mechanism cannot express — at that point this ADR should be revisited with the specific gap as context, not preemptively.

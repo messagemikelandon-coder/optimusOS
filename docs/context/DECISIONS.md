@@ -162,3 +162,16 @@ Relevant sources: `git show 060ab68 --stat --summary`, `app/main.py`, `app/auth.
 - Consequences: lifecycle changes are auditable and transactionally enforceable across app restarts; public token responses remain generic; concurrent provisioning paths must share database row locks; an eventual MFA provider can be integrated without a schema redesign that exposes raw factor material.
 - Files affected: `alembic/versions/029_account_lifecycle.py`, `app/account_security_store.py`, `app/auth.py`, `app/db_models.py`, `app/main.py`, `app/technician_store.py`, `tests/test_account_security_api.py`, `tests/e2e/test_account_lifecycle_concurrency.py`.
 - Revisit if: an approved identity provider becomes the system of record for accounts/sessions or requires a different factor-secret custody model.
+
+## ADR-014
+
+- ID: ADR-014
+- Date: 2026-07-20
+- Status: Accepted
+- Context: A Laravel 12 + Livewire 4 proof-of-concept was built and evaluated (per an approved investigation) to decide whether OptimusOS should migrate off FastAPI. This is a pointer entry, not the full record — see below for where the complete analysis lives, since it was large enough to warrant its own directory rather than inline text here.
+- Decision: Retain and simplify the existing FastAPI/JavaScript OptimusOS. Do not migrate to Laravel, begin a phased Laravel rewrite, or run two production applications. This reaffirms ADR-001 above now that the alternative has actually been evaluated, not just deferred. The full verified comparison, weighted decision matrix, two architecture lessons the PoC surfaced (vehicle ownership modeling, environment/database validation), an 8-item ADR set (ADR-014 through ADR-021, continuing this file's numbering but held in their own files), the roadmap, and the first security-kernel phase all live in `docs/architecture/`.
+- Alternatives considered: a phased Laravel migration and a full Laravel rebuild — both rejected; full reasoning in `docs/architecture/STACK-DECISION.md` §2-3.
+- Consequences: Phase 1 (extracting and hardening the existing security kernel) is now the approved next implementation step, before any prompt/manual shared-execution or Sentinel work begins. The Laravel PoC repository (`/home/dejake/optimus-laravel-poc/`) is retained as research evidence, not deleted, and is not deployed.
+- Files affected: `docs/architecture/README.md`, `docs/architecture/STACK-DECISION.md`, `docs/architecture/adr/ADR-014-*.md` through `ADR-021-*.md`, `docs/architecture/PHASE1-SECURITY-KERNEL-PLAN.md`.
+- Revisit if: a future, separately-approved architecture review changes this decision — as a new dated ADR, never by editing `docs/architecture/STACK-DECISION.md`'s body.
+- **Note for future entries in this file:** ADR-014 through ADR-021 are reserved for the detailed records in `docs/architecture/adr/`. The next available number in this file's own sequence is **ADR-022**.
