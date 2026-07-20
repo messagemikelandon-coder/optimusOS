@@ -4,11 +4,9 @@ import asyncio
 import hashlib
 import logging
 import os
-import socket
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Annotated, Any
-from urllib.parse import urlparse
 
 from fastapi import FastAPI, HTTPException, Query, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
@@ -51,8 +49,8 @@ from app.api.deps import (
     OwnerOrTechnicianAuthContextDep,
     SettingsDep,
     SupportAuthContextDep,
-    VerifiedAuthContextDep,
 )
+from app.api.routers import context as context_router
 from app.api.routers import notifications as notifications_router
 
 # AuthContext and get_current_auth_context are re-exported (the redundant
@@ -71,14 +69,6 @@ from app.auth import (
     get_current_auth_context as get_current_auth_context,
 )
 from app.config import Settings, get_settings
-from app.context_store import (
-    ContextCapacityError,
-    ContextConflictError,
-    ContextStoreError,
-    delete_entry,
-    list_entries,
-    upsert_entry,
-)
 from app.customer_history_store import get_customer_history
 from app.customer_store import (
     CustomerNotFoundError,
@@ -185,11 +175,6 @@ from app.models import (
     ChatRequest,
     ChatResponse,
     ConcurrencyProbeResponse,
-    ContextDeleteResponse,
-    ContextEntryRead,
-    ContextEntryUpsertRequest,
-    ContextListResponse,
-    ContextScope,
     CustomerArchiveResponse,
     CustomerCreate,
     CustomerHistoryResponse,
@@ -323,6 +308,12 @@ from app.models import (
     WorkOrderStatusUpdate,
     WorkOrderUpdate,
 )
+
+# Re-exported: /ready (below) calls _tcp_dependency_ready, scripts/optimus_worker.py
+# imports it via `from app.main import _tcp_dependency_ready`, and tests
+# monkeypatch main._tcp_dependency_ready -- all keep working with the helper now
+# defined in the app.net leaf so app/api/context_deps.py can share it.
+from app.net import _tcp_dependency_ready as _tcp_dependency_ready
 from app.observability import configure_structured_logging, install_request_context_middleware
 from app.orchestrator import OptimusResearchOrchestrator
 from app.part_allocation_store import (
@@ -532,6 +523,14 @@ app.include_router(notifications_router.router)
 list_notification_records = notifications_router.list_notification_records
 mark_notification_read_record = notifications_router.mark_notification_read_record
 mark_all_notifications_read_record = notifications_router.mark_all_notifications_read_record
+
+# Phase 2C Step 2: the /api/context routes live in
+# app/api/routers/context.py (guard in app/api/context_deps.py). Same
+# identical-contract mount + handler re-export pattern as notifications above.
+app.include_router(context_router.router)
+get_context = context_router.get_context
+put_context = context_router.put_context
+remove_context = context_router.remove_context
 # All seven rate limiters share one registry (app/rate_limit.py) instead of
 # the seven copy-pasted lazy-singleton blocks this used to be. Each concern
 # below keeps its own limit, window, per-request key format, and client-facing
@@ -803,18 +802,6 @@ async def health(settings: SettingsDep) -> dict[str, str | bool]:
     }
 
 
-def _tcp_dependency_ready(url: str, default_port: int, timeout_seconds: float = 1.0) -> bool:
-    parsed = urlparse(url)
-    if not parsed.hostname:
-        return False
-    port = parsed.port or default_port
-    try:
-        with socket.create_connection((parsed.hostname, port), timeout=timeout_seconds):
-            return True
-    except OSError:
-        return False
-
-
 @app.get("/ready")
 async def ready(settings: SettingsDep) -> dict[str, object]:
     postgres_ready = await asyncio.to_thread(_tcp_dependency_ready, settings.database_url, 5432)
@@ -856,25 +843,6 @@ def auth_user_response(
         response.is_impersonated = True
         response.impersonated_by_username = impersonator.username if impersonator else None
     return response
-
-
-def ensure_context_dependencies(settings: Settings) -> None:
-    if settings.app_env == "test":
-        return
-    unavailable: list[str] = []
-    if not _tcp_dependency_ready(settings.database_url, 5432):
-        unavailable.append("postgres")
-    if not _tcp_dependency_ready(settings.redis_url, 6379):
-        unavailable.append("redis")
-    if unavailable:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail={
-                "code": "context_dependencies_unavailable",
-                "message": "Context management dependencies are unavailable.",
-                "unavailable_dependencies": unavailable,
-            },
-        )
 
 
 @app.post("/api/auth/login", response_model=AuthSessionResponse)
@@ -3351,104 +3319,12 @@ async def list_inspection_event_records(
         ) from exc
 
 
-@app.get("/api/context/{project_key}", response_model=ContextListResponse)
-async def get_context(
-    project_key: str,
-    db: DbSessionDep,
-    settings: SettingsDep,
-    auth: VerifiedAuthContextDep,
-    scope: ContextScope = ContextScope.PROJECT,
-) -> ContextListResponse:
-    await asyncio.to_thread(ensure_context_dependencies, settings)
-    try:
-        return await asyncio.to_thread(
-            list_entries,
-            db=db,
-            auth=auth,
-            settings=settings,
-            project_key=project_key,
-            scope=scope,
-        )
-    except ContextStoreError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-    except SQLAlchemyError as exc:
-        logger.warning("Context listing failed due to storage error.")
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Context storage is unavailable.",
-        ) from exc
-
-
-@app.put("/api/context/{project_key}/{context_key}", response_model=ContextEntryRead)
-async def put_context(
-    project_key: str,
-    context_key: str,
-    payload: ContextEntryUpsertRequest,
-    db: DbSessionDep,
-    settings: SettingsDep,
-    auth: VerifiedAuthContextDep,
-    scope: ContextScope = ContextScope.PROJECT,
-) -> ContextEntryRead:
-    await asyncio.to_thread(ensure_context_dependencies, settings)
-    try:
-        return await asyncio.to_thread(
-            upsert_entry,
-            db=db,
-            auth=auth,
-            settings=settings,
-            project_key=project_key,
-            scope=scope,
-            context_key=context_key,
-            value=payload.value,
-            expected_revision=payload.expected_revision,
-        )
-    except ContextConflictError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
-    except ContextCapacityError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
-    except ContextStoreError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-    except SQLAlchemyError as exc:
-        logger.warning("Context upsert failed due to storage error.")
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Context storage is unavailable.",
-        ) from exc
-
-
-@app.delete("/api/context/{project_key}/{context_key}", response_model=ContextDeleteResponse)
-async def remove_context(
-    project_key: str,
-    context_key: str,
-    db: DbSessionDep,
-    settings: SettingsDep,
-    auth: VerifiedAuthContextDep,
-    scope: ContextScope = ContextScope.PROJECT,
-    expected_revision: int | None = None,
-) -> ContextDeleteResponse:
-    await asyncio.to_thread(ensure_context_dependencies, settings)
-    try:
-        return await asyncio.to_thread(
-            delete_entry,
-            db=db,
-            auth=auth,
-            settings=settings,
-            project_key=project_key,
-            scope=scope,
-            context_key=context_key,
-            expected_revision=expected_revision,
-        )
-    except ContextConflictError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
-    except ContextStoreError as exc:
-        status_code_value = 404 if "not found" in str(exc).lower() else 422
-        raise HTTPException(status_code=status_code_value, detail=str(exc)) from exc
-    except SQLAlchemyError as exc:
-        logger.warning("Context deletion failed due to storage error.")
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Context storage is unavailable.",
-        ) from exc
+# The /api/context routes were extracted verbatim to
+# app/api/routers/context.py (Phase 2C Step 2), with their
+# ensure_context_dependencies guard in app/api/context_deps.py. They are
+# mounted via app.include_router(context_router.router) near app assembly,
+# and the handler functions are re-exported there so existing callers
+# (main.get_context, main.put_context, main.remove_context) keep working.
 
 
 @app.post(
