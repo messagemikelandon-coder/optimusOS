@@ -52,6 +52,7 @@ from app.api.deps import (
 )
 from app.api.routers import context as context_router
 from app.api.routers import notifications as notifications_router
+from app.api.routers import parts as parts_router
 
 # AuthContext and get_current_auth_context are re-exported (the redundant
 # `as` alias marks them intentional) for backward compatibility: many tests
@@ -232,12 +233,7 @@ from app.models import (
     PartAllocationReturnRequest,
     PartAllocationTechnicianRead,
     PartAllocationUseRequest,
-    PartArchiveResponse,
-    PartCreate,
-    PartListResponse,
-    PartRead,
     PartsUsageReportResponse,
-    PartUpdate,
     PasswordChangeRequest,
     PasswordResetConfirmRequest,
     PasswordResetRequest,
@@ -326,15 +322,6 @@ from app.part_allocation_store import (
     list_part_allocations,
     return_part_allocation,
     use_part_allocation,
-)
-from app.part_store import (
-    PartNotFoundError,
-    PartStoreError,
-    archive_part,
-    create_part,
-    get_part,
-    list_parts,
-    update_part,
 )
 from app.payment_store import PaymentNotFoundError, record_payment, void_payment
 from app.purchase_order_store import (
@@ -531,6 +518,16 @@ app.include_router(context_router.router)
 get_context = context_router.get_context
 put_context = context_router.put_context
 remove_context = context_router.remove_context
+
+# Phase 2C Step 3: the /api/parts routes live in app/api/routers/parts.py.
+# Same identical-contract mount + handler re-export pattern; the five handlers
+# are re-exported because many tests call them via app.main.
+app.include_router(parts_router.router)
+create_part_record = parts_router.create_part_record
+list_part_records = parts_router.list_part_records
+get_part_record = parts_router.get_part_record
+update_part_record = parts_router.update_part_record
+archive_part_record = parts_router.archive_part_record
 # All seven rate limiters share one registry (app/rate_limit.py) instead of
 # the seven copy-pasted lazy-singleton blocks this used to be. Each concern
 # below keeps its own limit, window, per-request key format, and client-facing
@@ -2348,120 +2345,13 @@ async def archive_vendor_record(
         ) from exc
 
 
-@app.post("/api/parts", response_model=PartRead)
-async def create_part_record(
-    payload: PartCreate,
-    db: DbSessionDep,
-    auth: OwnerAuthContextDep,
-) -> PartRead:
-    try:
-        return await asyncio.to_thread(create_part, db=db, auth=auth, payload=payload)
-    except PartStoreError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-    except SQLAlchemyError as exc:
-        logger.warning("Part creation failed due to storage error.")
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Part storage is unavailable.",
-        ) from exc
-
-
-@app.get("/api/parts", response_model=PartListResponse)
-async def list_part_records(
-    db: DbSessionDep,
-    settings: SettingsDep,
-    auth: OwnerAuthContextDep,
-    page: int = Query(default=1),
-    page_size: int = Query(default=20),
-    search: str | None = Query(default=None, max_length=120),
-    archived: bool = False,
-    vendor_id: int | None = Query(default=None, ge=1),
-    below_reorder_threshold_only: bool = False,
-) -> PartListResponse:
-    try:
-        return await asyncio.to_thread(
-            list_parts,
-            db=db,
-            auth=auth,
-            settings=settings,
-            page=page,
-            page_size=page_size,
-            archived=archived,
-            search=search,
-            vendor_id=vendor_id,
-            below_reorder_threshold_only=below_reorder_threshold_only,
-        )
-    except PartStoreError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-    except SQLAlchemyError as exc:
-        logger.warning("Part listing failed due to storage error.")
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Part storage is unavailable.",
-        ) from exc
-
-
-@app.get("/api/parts/{part_id}", response_model=PartRead)
-async def get_part_record(
-    part_id: int,
-    db: DbSessionDep,
-    auth: OwnerAuthContextDep,
-) -> PartRead:
-    try:
-        return await asyncio.to_thread(get_part, db=db, auth=auth, part_id=part_id)
-    except PartNotFoundError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    except PartStoreError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-    except SQLAlchemyError as exc:
-        logger.warning("Part retrieval failed due to storage error.")
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Part storage is unavailable.",
-        ) from exc
-
-
-@app.patch("/api/parts/{part_id}", response_model=PartRead)
-async def update_part_record(
-    part_id: int,
-    payload: PartUpdate,
-    db: DbSessionDep,
-    auth: OwnerAuthContextDep,
-) -> PartRead:
-    try:
-        return await asyncio.to_thread(
-            update_part, db=db, auth=auth, part_id=part_id, payload=payload
-        )
-    except PartNotFoundError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    except PartStoreError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-    except SQLAlchemyError as exc:
-        logger.warning("Part update failed due to storage error.")
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Part storage is unavailable.",
-        ) from exc
-
-
-@app.delete("/api/parts/{part_id}", response_model=PartArchiveResponse)
-async def archive_part_record(
-    part_id: int,
-    db: DbSessionDep,
-    auth: OwnerAuthContextDep,
-) -> PartArchiveResponse:
-    try:
-        return await asyncio.to_thread(archive_part, db=db, auth=auth, part_id=part_id)
-    except PartNotFoundError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    except PartStoreError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-    except SQLAlchemyError as exc:
-        logger.warning("Part archive failed due to storage error.")
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Part storage is unavailable.",
-        ) from exc
+# The /api/parts routes were extracted verbatim to app/api/routers/parts.py
+# (Phase 2C Step 3). They are mounted via app.include_router(parts_router.router)
+# near app assembly, and the handler functions are re-exported there so the
+# many existing callers (main.create_part_record, main.get_part_record, etc.,
+# across test_vendors_and_parts_api / test_part_allocations_api /
+# test_purchase_orders_api / test_reports_api / test_dashboard_api /
+# test_shop_id_populated_on_create) keep working.
 
 
 @app.post("/api/purchase-orders", response_model=PurchaseOrderRead)
