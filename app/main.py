@@ -50,6 +50,7 @@ from app.api.deps import (
     SettingsDep,
     SupportAuthContextDep,
 )
+from app.api.routers import bays as bays_router
 from app.api.routers import context as context_router
 from app.api.routers import notifications as notifications_router
 from app.api.routers import parts as parts_router
@@ -169,11 +170,6 @@ from app.models import (
     AuthSessionResponse,
     AuthUser,
     AvailabilityResponse,
-    BayArchiveResponse,
-    BayCreate,
-    BayListResponse,
-    BayRead,
-    BayUpdate,
     ChatRequest,
     ChatResponse,
     ConcurrencyProbeResponse,
@@ -345,25 +341,20 @@ from app.scheduling_store import (
     SchedulingConflictError,
     SchedulingNotFoundError,
     SchedulingStoreError,
-    archive_bay,
     cancel_appointment,
     create_appointment,
-    create_bay,
     create_schedule_block,
     create_working_hours,
     delete_schedule_block,
     delete_working_hours,
     get_appointment,
     get_availability,
-    get_bay,
     get_schedule_block,
     list_appointments,
-    list_bays,
     list_schedule_blocks,
     list_working_hours,
     move_appointment,
     update_appointment,
-    update_bay,
     update_schedule_block,
     update_working_hours,
 )
@@ -525,6 +516,16 @@ list_vendor_records = vendors_router.list_vendor_records
 get_vendor_record = vendors_router.get_vendor_record
 update_vendor_record = vendors_router.update_vendor_record
 archive_vendor_record = vendors_router.archive_vendor_record
+
+# Phase 2C Step 5: the /api/bays routes live in app/api/routers/bays.py. Same
+# identical-contract mount + handler re-export pattern; the five handlers are
+# re-exported because tests call them via app.main.
+app.include_router(bays_router.router)
+create_bay_record = bays_router.create_bay_record
+list_bay_records = bays_router.list_bay_records
+get_bay_record = bays_router.get_bay_record
+update_bay_record = bays_router.update_bay_record
+archive_bay_record = bays_router.archive_bay_record
 # All seven rate limiters share one registry (app/rate_limit.py) instead of
 # the seven copy-pasted lazy-singleton blocks this used to be. Each concern
 # below keeps its own limit, window, per-request key format, and client-facing
@@ -4172,100 +4173,11 @@ async def get_diagnostic_inspection_report_record(
         ) from exc
 
 
-# ---- Scheduling: bays ----
-
-
-@app.post("/api/bays", response_model=BayRead)
-async def create_bay_record(
-    payload: BayCreate,
-    db: DbSessionDep,
-    auth: OwnerAuthContextDep,
-) -> BayRead:
-    try:
-        return await asyncio.to_thread(create_bay, db=db, auth=auth, payload=payload)
-    except SchedulingStoreError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-    except SQLAlchemyError as exc:
-        logger.warning("Bay creation failed due to storage error.")
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Bay storage is unavailable."
-        ) from exc
-
-
-@app.get("/api/bays", response_model=BayListResponse)
-async def list_bay_records(
-    db: DbSessionDep,
-    settings: SettingsDep,
-    auth: OwnerAuthContextDep,
-    page: int = Query(default=1),
-    page_size: int = Query(default=20),
-    archived: bool = False,
-) -> BayListResponse:
-    try:
-        return await asyncio.to_thread(
-            list_bays,
-            db=db,
-            auth=auth,
-            settings=settings,
-            page=page,
-            page_size=page_size,
-            archived=archived,
-        )
-    except SchedulingStoreError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-    except SQLAlchemyError as exc:
-        logger.warning("Bay listing failed due to storage error.")
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Bay storage is unavailable."
-        ) from exc
-
-
-@app.get("/api/bays/{bay_id}", response_model=BayRead)
-async def get_bay_record(bay_id: int, db: DbSessionDep, auth: OwnerAuthContextDep) -> BayRead:
-    try:
-        return await asyncio.to_thread(get_bay, db=db, auth=auth, bay_id=bay_id)
-    except SchedulingNotFoundError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    except SQLAlchemyError as exc:
-        logger.warning("Bay retrieval failed due to storage error.")
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Bay storage is unavailable."
-        ) from exc
-
-
-@app.patch("/api/bays/{bay_id}", response_model=BayRead)
-async def update_bay_record(
-    bay_id: int,
-    payload: BayUpdate,
-    db: DbSessionDep,
-    auth: OwnerAuthContextDep,
-) -> BayRead:
-    try:
-        return await asyncio.to_thread(update_bay, db=db, auth=auth, bay_id=bay_id, payload=payload)
-    except SchedulingNotFoundError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    except SchedulingStoreError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-    except SQLAlchemyError as exc:
-        logger.warning("Bay update failed due to storage error.")
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Bay storage is unavailable."
-        ) from exc
-
-
-@app.delete("/api/bays/{bay_id}", response_model=BayArchiveResponse)
-async def archive_bay_record(
-    bay_id: int, db: DbSessionDep, auth: OwnerAuthContextDep
-) -> BayArchiveResponse:
-    try:
-        return await asyncio.to_thread(archive_bay, db=db, auth=auth, bay_id=bay_id)
-    except SchedulingNotFoundError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    except SQLAlchemyError as exc:
-        logger.warning("Bay archive failed due to storage error.")
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Bay storage is unavailable."
-        ) from exc
+# The /api/bays routes were extracted verbatim to app/api/routers/bays.py
+# (Phase 2C Step 5). They are mounted via app.include_router(bays_router.router)
+# near app assembly, and the handler functions are re-exported there so
+# existing callers (main.create_bay_record, main.get_bay_record, etc., across
+# test_scheduling_api / test_shop_id_populated_on_create) keep working.
 
 
 # ---- Scheduling: technician working hours ----
