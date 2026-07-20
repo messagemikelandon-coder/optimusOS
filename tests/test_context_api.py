@@ -8,6 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
+import app.api.routers.context as context_router
 import app.main as main
 from app.auth import AuthContext, get_current_auth_context, hash_password
 from app.config import Settings
@@ -449,7 +450,9 @@ async def test_context_storage_failures_are_sanitized_in_response_and_logs(
         del kwargs
         raise SQLAlchemyError(leaked_fragment)
 
-    monkeypatch.setattr(main, "upsert_entry", fail_upsert)
+    # upsert_entry is resolved in the context router module (the handler moved
+    # there in Phase 2C Step 2), so patch it where it is now used.
+    monkeypatch.setattr(context_router, "upsert_entry", fail_upsert)
 
     with (
         caplog.at_level(logging.WARNING, logger="optimus"),
@@ -547,3 +550,26 @@ async def test_context_model_constraints_reject_invalid_cross_scope_rows(
     with pytest.raises(IntegrityError):
         db_session.commit()
     db_session.rollback()
+
+
+@pytest.mark.anyio
+async def test_context_handler_invokes_the_dependency_guard(
+    monkeypatch, settings, db_session: Session
+) -> None:  # type: ignore[no-untyped-def]
+    """Wiring regression: a context handler must call
+    ensure_context_dependencies before touching the store. Existing tests run
+    with app_env="test" (guard is a no-op), so this replaces the guard with a
+    sentinel-raising stub and asserts the handler propagates it."""
+    _, response = await login_as(settings, db_session)
+    auth = auth_context(settings, db_session, raw_cookie_from_response(response))
+
+    sentinel = HTTPException(status_code=503, detail="guard-ran")
+
+    def guard_raises(_settings) -> None:  # type: ignore[no-untyped-def]
+        raise sentinel
+
+    monkeypatch.setattr(context_router, "ensure_context_dependencies", guard_raises)
+
+    with pytest.raises(HTTPException) as excinfo:
+        await main.get_context("project-a", db_session, settings, auth, ContextScope.PROJECT)
+    assert excinfo.value is sentinel
