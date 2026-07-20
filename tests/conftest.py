@@ -71,6 +71,14 @@ def _reset_rate_limiter_singletons() -> None:
     main._email_verification_resend_rate_limiter_redis_url = None
     main._email_verification_rate_limiter = None
     main._email_verification_rate_limiter_redis_url = None
+    # The password-reset and invitation-acceptance limiters were previously
+    # omitted here; reset all seven so no limiter's in-process fallback state
+    # leaks across tests (see tests/test_rate_limit_endpoints.py, which
+    # deliberately drives each limiter to its 429 threshold).
+    main._password_reset_rate_limiter = None
+    main._password_reset_rate_limiter_redis_url = None
+    main._invitation_acceptance_rate_limiter = None
+    main._invitation_acceptance_rate_limiter_redis_url = None
 
 
 @pytest.fixture
