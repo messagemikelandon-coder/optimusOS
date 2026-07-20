@@ -9,7 +9,7 @@ Relevant sources: `app/__init__.py`, `pyproject.toml`, `app/migration_compat.py`
 
 ## Versioning
 
-- Single source of truth: `__version__` in `app/__init__.py`. Every other place a version string could appear (`pyproject.toml`, the `User-Agent` header in `app/services/http.py`, `integration/optimus_adapter.py`, the marketing footer in `app/static/index.html`, test fixtures) either imports `__version__` directly or is covered by a test that fails on drift (`tests/test_release.py::test_pyproject_version_matches_app_version`). Do not hardcode a version string anywhere new — import `__version__`.
+- Single source of truth: `__version__` in `app/__init__.py`. Every other place a version string could appear (`pyproject.toml`, the `User-Agent` header in `app/services/http.py`, the marketing footer in `app/static/index.html`, test fixtures) either imports `__version__` directly or is covered by a test that fails on drift (`tests/test_release.py::test_pyproject_version_matches_app_version`). Do not hardcode a version string anywhere new — import `__version__`. (`integration/optimus_adapter.py` was deleted in the Phase 1 security-kernel work — see `docs/architecture/PHASE1-SECURITY-KERNEL-PLAN.md` — it was an unauthenticated, tenant-unscoped bypass with zero callers.)
 - Scheme: semantic versioning, `MAJOR.MINOR.PATCH`. Enforced by `tests/test_release.py::test_version_is_semantic_versioning_shaped`.
   - PATCH: bug fixes, no schema change, no API contract change.
   - MINOR: new functionality, additive API/schema changes, backward compatible.

@@ -1,7 +1,6 @@
 include .env.example
 include Dockerfile
 include docker-compose.yml
-include INTEGRATION.md
 include SECURITY.md
 include OPTIMUS_MANAGER_PATCH.md
 include VALIDATION.md
