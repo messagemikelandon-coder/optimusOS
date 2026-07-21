@@ -2962,3 +2962,65 @@ class SupportShopSummary(BaseModel):
 
 class SupportShopListResponse(BaseModel):
     items: list[SupportShopSummary]
+
+
+class OperatingMode(StrEnum):
+    """ADR-022: workflow-shaping axis, deliberately separate from
+    `SubscriptionTier` (a commercial-entitlement axis). Values match
+    `shops.operating_mode`'s check constraint exactly."""
+
+    SOLO = "solo"
+    MOBILE_FIELD = "mobile_field"
+    SHOP = "shop"
+
+
+class CapabilityId(StrEnum):
+    """ADR-022 §2 capability-matrix row identifiers. Identifiers only --
+    this foundation resolves availability, it does not enforce or hide
+    anything (see app/capability_store.py)."""
+
+    CUSTOMERS = "customers"
+    VEHICLES = "vehicles"
+    ESTIMATES = "estimates"
+    DIAGNOSTICS = "diagnostics"
+    WORK_ORDERS = "work_orders"
+    INVOICES = "invoices"
+    SCHEDULING = "scheduling"
+    BAYS = "bays"
+    TECHNICIANS = "technicians"
+    PARTS = "parts"
+    REPORTS = "reports"
+    FIELD_FUNCTIONS = "field_functions"
+    OPTIMUS_ACTIONS = "optimus_actions"
+
+
+class CapabilityLevel(StrEnum):
+    """Matches the ADR-022 §2 matrix legend exactly: `full` = primary
+    workflow surface, `limited` = present but reduced, `hidden` = not
+    surfaced by default but never deleted (ADR-022 Decision §4),
+    `not_applicable` = the domain doesn't apply to this mode/role at all."""
+
+    FULL = "full"
+    LIMITED = "limited"
+    HIDDEN = "hidden"
+    NOT_APPLICABLE = "not_applicable"
+
+
+class CapabilityEntry(BaseModel):
+    id: CapabilityId
+    level: CapabilityLevel
+
+
+class CapabilitiesRead(BaseModel):
+    """Read-only resolution snapshot. No enforcement: every existing route
+    remains reachable regardless of this response's contents (ADR-022
+    Decision §5, capability-foundation slice)."""
+
+    operating_mode: OperatingMode
+    tier: SubscriptionTier
+    role: str
+    seat_limit: int | None = None
+    seats_used: int
+    capabilities: list[CapabilityEntry]
+    overrides_applied: list[str] = []
+    resolved_at: datetime

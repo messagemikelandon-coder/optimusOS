@@ -178,10 +178,12 @@ def test_backfill_creates_one_shop_per_real_owner_and_excludes_synthetic_account
         ).fetchall()
         # This test upgrades to `head`, so later migrations that add their
         # own shop_events row (migration 031's subscription-grandfathering
-        # backfill, /goal Phase 7) legitimately extend this list.
+        # backfill, /goal Phase 7; migration 034's operating-mode backfill,
+        # ADR-022 capability foundation) legitimately extend this list.
         assert [row.event_type for row in events] == [
             "shop_backfilled_from_existing_owner",
             "subscription_grandfathered",
+            "operating_mode_backfilled",
         ]
     engine.dispose()
 
