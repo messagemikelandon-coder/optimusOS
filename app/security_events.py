@@ -50,6 +50,14 @@ class SecurityEventType(StrEnum):
     API_KEY_USED = "api_key.used"
     SUPPORT_ACCESS = "support.access"
     SECURITY_SETTING_CHANGED = "security.setting_changed"
+    # ADR-022 capability observe pilot: emitted once per gated request by
+    # app/capability_gate.py. In the observe-only pilot this never changes a
+    # request's outcome -- it records what a future ENFORCE mode *would* have
+    # decided (would_allow/would_deny), so operators can validate the
+    # capability matrix against real traffic before any enforcement is
+    # activated. A separate category (not ACCESS_DENIED) precisely because an
+    # observation is not a denial.
+    CAPABILITY_OBSERVED = "authz.capability_observed"
 
 
 class ActorType(StrEnum):
