@@ -292,6 +292,31 @@ Telemetry: each enforcing slice (3, 4) should log capability-denial events the s
 
 ---
 
+## 12a. Bays capability observe pilot — status and OBSERVE→ENFORCE runbook
+
+**Status (2026-07-21): implemented as observe-only.** Slice 3 of §9 shipped as `app/capability_gate.py` (the single `evaluate_capability()` helper) plus OBSERVE-mode calls in all five `/api/bays` handlers. This is telemetry only: the gate records what a future enforcement pass over `CapabilityId.BAYS` *would* decide (would_allow in Shop mode; would_deny in Solo/Mobile Field) and never changes a request's outcome. Enforcement is **off** and structurally blocked.
+
+### Why enforcement remains off
+
+- The capability matrix has never been validated against real production traffic. Observe mode exists precisely to gather that evidence first — flipping to enforce without it risks denying a legitimate workflow because a matrix cell was wrong.
+- Mode selection at signup is still an unresolved owner decision (§11 #2). Until a shop can deliberately choose its mode, defaulting every shop to `shop` (migration 034) means enforcement would be a no-op for existing shops and a surprise for any future non-`shop` shop.
+- Enforcement is a behavior change; this pilot's whole point is to integrate capability resolution with **zero** behavior change first.
+
+### The telemetry it emits
+
+One `authz.capability_observed` security event per gated bays request (via the existing `app/security_events.py` mechanism — no new telemetry system), carrying: `shop_id`, `actor_role`, `gate_mode` (`observe`), `operating_mode`, `tier`, `capability`, `capability_level`, `decision` (`would_allow`/`would_deny`/`resolution_error`), `route_action`, and a timestamp. Secret-free by construction (only enums/ids). On a resolution failure OBSERVE **fails open** (records `resolution_error`, allows); a future ENFORCE must **fail closed**.
+
+### The OBSERVE→ENFORCE flip (future, not part of this slice)
+
+1. **Gather evidence.** Run OBSERVE in production long enough to confirm, from the `authz.capability_observed` stream, that every `would_deny` for bays corresponds to a shop that genuinely should not have bays (i.e., no false denials for real Shop-mode shops). Resolve unresolved decision §11 #2 (mode selection) so non-`shop` shops exist deliberately.
+2. **Flip the switch.** Change the bays handlers' `mode=CapabilityGateMode.OBSERVE` to `ENFORCE`, and add `("bays.py", CapabilityId.BAYS)`-equivalent entry to `_ENFORCE_APPROVED` in `tests/test_capability_gate_safeguards.py` (the AST safeguard fails the build otherwise — enforcement can never be switched on silently). This is one small, reviewable diff.
+3. **Required evidence to approve the flip:** the observation stream showing no false `would_deny`; a passing enforce-mode test suite (the deny path is already unit-tested today); and explicit owner sign-off, since it is a behavior change.
+4. **Rollback switch:** revert the OBSERVE→ENFORCE diff (flip `ENFORCE` back to `OBSERVE`, remove the `_ENFORCE_APPROVED` entry). Because OBSERVE is behavior-neutral, rollback instantly restores prior behavior with no data migration. The gate's deny path raising 403 is the only behavioral difference between the two modes.
+
+The gate is deliberately capability-generic (accepts any `CapabilityId`), so extending observe to a second route group later reuses the exact same helper — but that is a separate slice, out of scope here.
+
+---
+
 ## 13. Documentation/link/checksum validation performed
 
 - Verified every file:line citation in this document against the current `main` branch (post-PR-#75 merge, commit `1ff6bad`) at the time of writing.
