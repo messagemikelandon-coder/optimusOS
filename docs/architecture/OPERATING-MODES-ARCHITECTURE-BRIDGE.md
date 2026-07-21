@@ -317,6 +317,25 @@ The gate is deliberately capability-generic (accepts any `CapabilityId`), so ext
 
 ---
 
+## 12b. Post-signup operating-mode management — amendment (2026-07-21)
+
+**Amends §11 unresolved decision #2 (mode selection), partially.** That decision had two halves: *(a)* whether a shop can change its mode at all after signup, and *(b)* whether mode is chosen *during* signup. This slice resolves **(a)** and leaves **(b)** deliberately open.
+
+**Resolved (a) — post-signup mode change is a real, owner-controlled capability.** An owner or manager can now move their shop among `solo` / `mobile_field` / `shop` after signup, via a two-step API:
+
+- `POST /api/operating-mode/preview` — a read-only dry run returning the current and proposed mode, every capability whose level would change, which capabilities would become hidden/not-applicable, the existing-data warnings (counts of bays, technicians, appointments, working hours, schedule blocks that would be de-emphasized or hidden), the retained-data categories, and an explicit statement that **no data will be deleted**.
+- `POST /api/operating-mode/apply` — an audited, atomic change guarded by optimistic concurrency (`expected_current_mode`; a stale value returns 409). It updates only `Shop.operating_mode`, appends one `ShopEvent` (`operating_mode_changed`, with actor + from/to mode + `source`), and returns the new capability snapshot. `GET /api/capabilities` remains the single source of truth for the *current* mode.
+
+Both routes are owner/manager-only (`OwnerAuthContextDep`) and tenant-scoped through `effective_shop_id()` — a caller can only change their own shop. Logic lives in `app/mode_transition_store.py` (a transition service), not in the handlers.
+
+**Explicitly still out of scope (unchanged by this slice):** signup-time mode selection (part **(b)** — signup still defaults every new shop to `shop`, migration 034's backfill default); mode-driven frontend navigation or hiding; capability **enforcement** (bays stays observe-only; this slice activates no ENFORCE); technician appointment access; subscription tier/seat changes; and Mobile Field travel/radius/fee/media fields. A mode change is purely a workflow-shape signal recorded on the shop; it hides nothing and deletes nothing.
+
+**Why data is never deleted on a mode change:** the whole point of the preview's warnings is that hidden ≠ deleted (ADR-022 Decision §4). A shop that switches Shop→Solo keeps every bay, technician, appointment, working-hours, and schedule-block row; switching back surfaces them again. The transition service touches only `Shop.operating_mode`.
+
+**Recommendation for mode-aware navigation / onboarding (future, not built here):** once enforcement evidence exists (§12a) and this management API has real usage, a natural next slice is to have the frontend consume `GET /api/capabilities` to shape navigation per mode (hide the Bays nav item in Solo, etc.) — *as a UI affordance layered on top of the backend capability truth, never as the enforcement mechanism* (ADR-022 Decision §4 forbids UI-hiding-as-enforcement). Signup-time mode selection (part **(b)**) should be designed alongside that, so a new owner picks a mode and immediately sees a mode-shaped product, with this post-signup API as the "change your mind later" path.
+
+---
+
 ## 13. Documentation/link/checksum validation performed
 
 - Verified every file:line citation in this document against the current `main` branch (post-PR-#75 merge, commit `1ff6bad`) at the time of writing.
