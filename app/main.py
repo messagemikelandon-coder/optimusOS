@@ -56,6 +56,7 @@ from app.api.routers import context as context_router
 from app.api.routers import notifications as notifications_router
 from app.api.routers import parts as parts_router
 from app.api.routers import schedule_blocks as schedule_blocks_router
+from app.api.routers import technicians as technicians_router
 from app.api.routers import vendors as vendors_router
 from app.api.routers import working_hours as working_hours_router
 
@@ -251,16 +252,7 @@ from app.models import (
     SyntheticAccountResponse,
     SyntheticCleanupResponse,
     SyntheticTechnicianRequest,
-    TechnicianArchiveResponse,
-    TechnicianClockResponse,
-    TechnicianCreate,
-    TechnicianListResponse,
-    TechnicianMeResponse,
-    TechnicianProvisionLoginRequest,
-    TechnicianProvisionLoginResponse,
-    TechnicianRead,
     TechnicianTimeReportResponse,
-    TechnicianUpdate,
     VehicleArchiveResponse,
     VehicleCreate,
     VehicleListResponse,
@@ -360,20 +352,6 @@ from app.support_store import (
     end_shop_impersonation,
     impersonate_shop_owner,
     list_shops_for_support,
-)
-from app.technician_store import (
-    TechnicianConflictError,
-    TechnicianNotFoundError,
-    TechnicianStoreError,
-    archive_technician,
-    clock_in,
-    clock_out,
-    create_technician,
-    get_my_technician_profile,
-    get_technician,
-    list_technicians,
-    provision_login,
-    update_technician,
 )
 from app.test_support_store import (
     SyntheticOwnerNotFoundError,
@@ -533,6 +511,21 @@ list_schedule_block_records = schedule_blocks_router.list_schedule_block_records
 get_schedule_block_record = schedule_blocks_router.get_schedule_block_record
 update_schedule_block_record = schedule_blocks_router.update_schedule_block_record
 delete_schedule_block_record = schedule_blocks_router.delete_schedule_block_record
+
+# Phase 2C Step 9: the /api/technicians routes live in
+# app/api/routers/technicians.py. Same identical-contract mount + handler
+# re-export pattern; the nine handlers are re-exported because tests call
+# them via app.main.
+app.include_router(technicians_router.router)
+create_technician_record = technicians_router.create_technician_record
+list_technician_records = technicians_router.list_technician_records
+get_my_technician_record = technicians_router.get_my_technician_record
+clock_in_record = technicians_router.clock_in_record
+clock_out_record = technicians_router.clock_out_record
+get_technician_record = technicians_router.get_technician_record
+update_technician_record = technicians_router.update_technician_record
+archive_technician_record = technicians_router.archive_technician_record
+provision_technician_login_record = technicians_router.provision_technician_login_record
 # All seven rate limiters share one registry (app/rate_limit.py) instead of
 # the seven copy-pasted lazy-singleton blocks this used to be. Each concern
 # below keeps its own limit, window, per-request key format, and client-facing
@@ -2039,203 +2032,14 @@ async def archive_vehicle_record(
         ) from exc
 
 
-@app.post("/api/technicians", response_model=TechnicianRead)
-async def create_technician_record(
-    payload: TechnicianCreate,
-    db: DbSessionDep,
-    auth: OwnerAuthContextDep,
-) -> TechnicianRead:
-    try:
-        return await asyncio.to_thread(create_technician, db=db, auth=auth, payload=payload)
-    except TechnicianStoreError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-    except SQLAlchemyError as exc:
-        logger.warning("Technician creation failed due to storage error.")
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Technician storage is unavailable.",
-        ) from exc
-
-
-@app.get("/api/technicians", response_model=TechnicianListResponse)
-async def list_technician_records(
-    db: DbSessionDep,
-    settings: SettingsDep,
-    auth: OwnerAuthContextDep,
-    page: int = Query(default=1),
-    page_size: int = Query(default=20),
-    search: str | None = Query(default=None, max_length=120),
-    archived: bool = False,
-) -> TechnicianListResponse:
-    try:
-        return await asyncio.to_thread(
-            list_technicians,
-            db=db,
-            auth=auth,
-            settings=settings,
-            page=page,
-            page_size=page_size,
-            archived=archived,
-            search=search,
-        )
-    except TechnicianStoreError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-    except SQLAlchemyError as exc:
-        logger.warning("Technician listing failed due to storage error.")
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Technician storage is unavailable.",
-        ) from exc
-
-
-@app.get("/api/technicians/me", response_model=TechnicianMeResponse)
-async def get_my_technician_record(
-    db: DbSessionDep,
-    auth: OwnerOrTechnicianAuthContextDep,
-) -> TechnicianMeResponse:
-    try:
-        return await asyncio.to_thread(get_my_technician_profile, db=db, auth=auth)
-    except TechnicianNotFoundError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    except SQLAlchemyError as exc:
-        logger.warning("Technician self-profile lookup failed due to storage error.")
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Technician storage is unavailable.",
-        ) from exc
-
-
-@app.post("/api/technicians/me/clock-in", response_model=TechnicianClockResponse)
-async def clock_in_record(
-    db: DbSessionDep,
-    auth: OwnerOrTechnicianAuthContextDep,
-) -> TechnicianClockResponse:
-    try:
-        return await asyncio.to_thread(clock_in, db=db, auth=auth)
-    except TechnicianNotFoundError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    except TechnicianConflictError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
-    except SQLAlchemyError as exc:
-        logger.warning("Technician clock-in failed due to storage error.")
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Technician storage is unavailable.",
-        ) from exc
-
-
-@app.post("/api/technicians/me/clock-out", response_model=TechnicianClockResponse)
-async def clock_out_record(
-    db: DbSessionDep,
-    auth: OwnerOrTechnicianAuthContextDep,
-) -> TechnicianClockResponse:
-    try:
-        return await asyncio.to_thread(clock_out, db=db, auth=auth)
-    except TechnicianNotFoundError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    except TechnicianConflictError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
-    except SQLAlchemyError as exc:
-        logger.warning("Technician clock-out failed due to storage error.")
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Technician storage is unavailable.",
-        ) from exc
-
-
-@app.get("/api/technicians/{technician_id}", response_model=TechnicianRead)
-async def get_technician_record(
-    technician_id: int,
-    db: DbSessionDep,
-    auth: OwnerAuthContextDep,
-) -> TechnicianRead:
-    try:
-        return await asyncio.to_thread(
-            get_technician, db=db, auth=auth, technician_id=technician_id
-        )
-    except TechnicianNotFoundError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    except TechnicianStoreError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-    except SQLAlchemyError as exc:
-        logger.warning("Technician retrieval failed due to storage error.")
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Technician storage is unavailable.",
-        ) from exc
-
-
-@app.patch("/api/technicians/{technician_id}", response_model=TechnicianRead)
-async def update_technician_record(
-    technician_id: int,
-    payload: TechnicianUpdate,
-    db: DbSessionDep,
-    auth: OwnerAuthContextDep,
-) -> TechnicianRead:
-    try:
-        return await asyncio.to_thread(
-            update_technician, db=db, auth=auth, technician_id=technician_id, payload=payload
-        )
-    except TechnicianNotFoundError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    except TechnicianStoreError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-    except SQLAlchemyError as exc:
-        logger.warning("Technician update failed due to storage error.")
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Technician storage is unavailable.",
-        ) from exc
-
-
-@app.delete("/api/technicians/{technician_id}", response_model=TechnicianArchiveResponse)
-async def archive_technician_record(
-    technician_id: int,
-    db: DbSessionDep,
-    auth: OwnerAuthContextDep,
-) -> TechnicianArchiveResponse:
-    try:
-        return await asyncio.to_thread(
-            archive_technician, db=db, auth=auth, technician_id=technician_id
-        )
-    except TechnicianNotFoundError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    except TechnicianStoreError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-    except SQLAlchemyError as exc:
-        logger.warning("Technician archive failed due to storage error.")
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Technician storage is unavailable.",
-        ) from exc
-
-
-@app.post(
-    "/api/technicians/{technician_id}/provision-login",
-    response_model=TechnicianProvisionLoginResponse,
-)
-async def provision_technician_login_record(
-    technician_id: int,
-    payload: TechnicianProvisionLoginRequest,
-    db: DbSessionDep,
-    auth: OwnerAuthContextDep,
-) -> TechnicianProvisionLoginResponse:
-    try:
-        return await asyncio.to_thread(
-            provision_login, db=db, auth=auth, technician_id=technician_id, payload=payload
-        )
-    except TechnicianNotFoundError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    except TechnicianConflictError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
-    except TechnicianStoreError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-    except SQLAlchemyError as exc:
-        logger.warning("Technician login provisioning failed due to storage error.")
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Technician storage is unavailable.",
-        ) from exc
+# The /api/technicians routes were extracted verbatim to
+# app/api/routers/technicians.py (Phase 2C Step 9). They are mounted via
+# app.include_router(technicians_router.router) near app assembly, and the
+# handler functions are re-exported there so existing callers
+# (main.create_technician_record, etc., across test_technicians_api /
+# test_scheduling_api / test_part_allocations_api /
+# test_diagnostics_and_inspections_api / test_reports_api /
+# test_shop_id_populated_on_create) keep working.
 
 
 # The /api/vendors routes were extracted verbatim to
