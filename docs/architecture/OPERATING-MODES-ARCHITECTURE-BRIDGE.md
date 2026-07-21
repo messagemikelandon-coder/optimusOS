@@ -336,6 +336,19 @@ Both routes are owner/manager-only (`OwnerAuthContextDep`) and tenant-scoped thr
 
 ---
 
+## 12c. Mode-aware navigation UI — amendment (2026-07-21)
+
+**Builds the frontend affordance §12b recommended; still no enforcement, no signup selection.** This slice consumes the existing capability + mode-transition APIs from the browser only — it adds no route, migration, store, tier/seat behavior, or enforcement, and does not activate ENFORCE (bays stays observe-only, §12a).
+
+**What shipped (frontend only):**
+
+- **Operating Mode panel** in System bay (owner/manager only, `data-owner-only`), reading current mode + levels from `GET /api/capabilities`, presenting Solo / Mobile Field / Shop with concise workflow descriptions, and keeping the subscription tier visibly separate (it points at Billing and states mode never changes the plan/seats). Switching runs `POST /api/operating-mode/preview` (showing capability changes, would-be-hidden areas, retained-data warnings with counts, and the explicit no-data-deleted statement), requires an explicit Confirm, then `POST /api/operating-mode/apply` with `expected_current_mode`. A 409 reloads current state and forces a fresh preview; success refreshes capabilities + nav in place with no full app reset.
+- **Capability-shaped navigation.** Desktop and mobile nav items carry `data-capability="…"`. **Role visibility is evaluated first; a UI-only capability pass runs second and can only hide more, never reveal what role hid.** For owner/manager sessions, `full`/`limited` stay visible and `hidden`/`not_applicable` are tucked away (so Bays and Technicians disappear in Solo, Bays in Mobile Field, and everything returns in Shop). Technician/support nav stays purely role-driven and never calls the owner-only capabilities endpoint. A capability-fetch failure fails open to role-based nav and shows no misleading mode. **Direct URLs and backend routes are unchanged — this is an affordance over backend truth, not enforcement (ADR-022 §4).** A read-only Bays view was added as the top-level surface the BAYS capability shapes.
+
+**Recommendation — signup-time mode selection as a post-account-creation onboarding step (future, not built here).** Unresolved decision #2 part **(b)** (choosing mode *during* signup) remains open by design. The recommended shape is **not** a field on the signup form but a **post-account-creation onboarding step**: after the account/shop already exists (and its subscription is provisioned), present a one-time "How do you work?" step that calls this same `POST /api/operating-mode/apply` path — the identical, audited, owner-controlled transition, just surfaced once at onboarding instead of only in Settings. This keeps signup itself unchanged, keeps `shop` as the migration-034 default for any owner who skips or defers the step (no default change), reuses the audited apply path (one `ShopEvent`, `source` distinguishing an onboarding selection from the Settings path), and never blocks account creation on the choice. It should be sequenced **after**, and independently of, the bays OBSERVE→ENFORCE decision (§12a): onboarding mode selection is a workflow-shaping affordance and needs no enforcement, whereas enforcement is a separate behavior change gated on its own observe-pilot evidence. Neither is a prerequisite for the other.
+
+---
+
 ## 13. Documentation/link/checksum validation performed
 
 - Verified every file:line citation in this document against the current `main` branch (post-PR-#75 merge, commit `1ff6bad`) at the time of writing.

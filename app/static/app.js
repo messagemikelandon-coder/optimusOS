@@ -198,6 +198,14 @@ const state = {
   },
   accountSecurity: { generation: 0 },
   billing: { generation: 0 },
+  // ADR-022 capability snapshot (owner/manager only). `levels` stays null
+  // until a successful GET /api/capabilities; a fetch failure leaves it null
+  // so nav falls back to pure role visibility (fail open, no mode claims).
+  capabilities: { levels: null, mode: null, tier: null, generation: 0 },
+  // Operating-mode panel working state: the last preview and the mode it was
+  // computed for, so Confirm applies exactly what the owner previewed.
+  operatingMode: { preview: null, previewMode: null, busy: false },
+  bays: { items: [], generation: 0 },
   workflowGaps: {
     items: [], selectedId: null, page: 1, pageSize: 20, total: 0, hasMore: false,
     search: "", statusFilter: "", severityFilter: "",
@@ -229,6 +237,7 @@ const viewMeta = {
   square: { eyebrow: "Payment integration", title: "Square" },
   reports: { eyebrow: "Owner reporting", title: "Reports" },
   scheduling: { eyebrow: "Appointments", title: "Scheduling" },
+  bays: { eyebrow: "Service bays", title: "Bays" },
   "service-desk": { eyebrow: "Intake queue", title: "Service Desk" },
   diagnostics: { eyebrow: "Findings", title: "Diagnostics" },
   inspections: { eyebrow: "Digital inspections", title: "Inspections" },
@@ -334,6 +343,87 @@ function applyRoleNavVisibility() {
     $$("#sidebar [data-view]:not([data-support-only]), .mobile-bottom-nav [data-view]:not([data-support-only])")
       .forEach((el) => { el.hidden = true; });
   }
+  // Role visibility is authoritative and evaluated first (above); capability
+  // visibility is a second, UI-only pass that can only hide more, never
+  // reveal something role hid (ADR-022 §4: this shapes the default surface,
+  // it does not enforce access -- direct URLs and backend routes are
+  // unchanged).
+  applyCapabilityNavVisibility();
+}
+
+function isCapabilityHiddenLevel(level) {
+  return level === "hidden" || level === "not_applicable";
+}
+
+function applyCapabilityNavVisibility() {
+  // Owner/manager only. Technician/support nav stays purely role-driven and
+  // we never fetch the owner-only capabilities endpoint for them (req 9). If
+  // no capability snapshot loaded (or the last fetch failed), `levels` is
+  // null and we leave role visibility exactly as-is -- fail open (req 10).
+  const levels = state.capabilities.levels;
+  if (!levels || isTechnicianSession() || isSupportSession()) return;
+  $$("[data-capability]").forEach((el) => {
+    // Role already ran; if it hid the item, capability never un-hides it.
+    if (el.hidden) return;
+    if (isCapabilityHiddenLevel(levels[el.dataset.capability])) el.hidden = true;
+  });
+}
+
+function clearCapabilitiesSnapshot() {
+  state.capabilities.generation += 1;
+  state.capabilities.levels = null;
+  state.capabilities.mode = null;
+  state.capabilities.tier = null;
+}
+
+function setCapabilitiesSnapshot(data) {
+  // A fresh snapshot supersedes any in-flight GET (generation bump) so a slow
+  // response can't clobber a newer apply result.
+  state.capabilities.generation += 1;
+  const levels = {};
+  (data.capabilities || []).forEach((entry) => { levels[entry.id] = entry.level; });
+  state.capabilities.levels = levels;
+  state.capabilities.mode = data.operating_mode;
+  state.capabilities.tier = data.tier;
+  applyRoleNavVisibility();
+  renderOperatingModePanel();
+}
+
+async function refreshCapabilities() {
+  // Owner/manager only (req 9). For anyone else, drop any snapshot so nav is
+  // role-only and the mode panel shows no stale mode.
+  if (!state.auth.authenticated || isTechnicianSession() || isSupportSession()) {
+    clearCapabilitiesSnapshot();
+    applyRoleNavVisibility();
+    renderOperatingModePanel();
+    return null;
+  }
+  const generation = state.capabilities.generation + 1;
+  state.capabilities.generation = generation;
+  try {
+    const response = await apiFetch("/api/capabilities");
+    const data = await response.json().catch(() => null);
+    if (generation !== state.capabilities.generation) return null; // superseded
+    if (!response.ok || !data) {
+      // Fail open: keep role-only nav and show no misleading mode (req 10).
+      state.capabilities.levels = null;
+      state.capabilities.mode = null;
+      state.capabilities.tier = null;
+      applyRoleNavVisibility();
+      renderOperatingModePanel();
+      return null;
+    }
+    setCapabilitiesSnapshot(data);
+    return data;
+  } catch {
+    if (generation !== state.capabilities.generation) return null;
+    state.capabilities.levels = null;
+    state.capabilities.mode = null;
+    state.capabilities.tier = null;
+    applyRoleNavVisibility();
+    renderOperatingModePanel();
+    return null;
+  }
 }
 
 function clearAccountSecurity(message = "Sign in to load account security.") {
@@ -376,6 +466,9 @@ function setAuthState(authenticated, user = null, expiresAt = null) {
   if (!authenticated || previousUserId !== user?.id) {
     clearAccountSecurity();
     clearWorkflowGaps();
+    // Drop any prior owner's capability snapshot so it can't shape nav or the
+    // mode panel for a different (or logged-out) session before a fresh fetch.
+    clearCapabilitiesSnapshot();
   }
   applyRoleNavVisibility();
   if (
@@ -1135,8 +1228,14 @@ function navigate(view) {
   if (view === "purchase-orders" && state.auth.authenticated) void loadPurchaseOrders();
   if (view === "technicians" && state.auth.authenticated) void loadTechnicians();
   if (view === "scheduling" && state.auth.authenticated) void loadScheduling();
+  if (view === "bays" && state.auth.authenticated) void loadBays();
   if (view === "my-day" && state.auth.authenticated) void loadMyDay();
-  if (view === "system" && state.auth.authenticated) void loadAccountSecurity();
+  if (view === "system" && state.auth.authenticated) {
+    void loadAccountSecurity();
+    // Keep the operating-mode panel and capability-shaped nav current whenever
+    // the owner opens System bay (no-op for technician/support sessions).
+    void refreshCapabilities();
+  }
   if (view === "workflow-gaps" && state.auth.authenticated) void loadWorkflowGaps();
   if (view === "chat") {
     renderChatContextSummary();
@@ -7799,6 +7898,330 @@ function initializeWorkflowGaps() {
   editWorkflowGap();
 }
 
+// ---------------------------------------------------------------------------
+// ADR-022 operating-mode management UI (owner/manager only). Presents the
+// three workflow modes, previews a switch against the read-only preview
+// endpoint, and applies it with optimistic concurrency -- never enforcing
+// capabilities or deleting data, only reshaping the default surface.
+// ---------------------------------------------------------------------------
+
+const MODE_META = {
+  solo: {
+    label: "Solo",
+    blurb:
+      "Just you, no roster. Estimates, work orders, invoices, parts, and Optimus stay front-and-center. The technician roster and service bays are tucked away.",
+  },
+  mobile_field: {
+    label: "Mobile Field",
+    blurb:
+      "On-site and mobile jobs. Full scheduling and field functions with a lighter technician roster; service bays are tucked away.",
+  },
+  shop: {
+    label: "Shop",
+    blurb:
+      "Full brick-and-mortar shop. Service bays, technician roster, scheduling, and reports are all fully surfaced.",
+  },
+};
+const MODE_ORDER = ["solo", "mobile_field", "shop"];
+
+function modeLabel(mode) {
+  return MODE_META[mode]?.label || String(mode || "").replace(/_/g, " ");
+}
+
+function prettyCapability(id) {
+  return String(id).replace(/_/g, " ");
+}
+
+function levelLabel(level) {
+  return String(level).replace(/_/g, " ");
+}
+
+function setModeStatus(message, kind) {
+  const el = $("operating-mode-status");
+  if (!el) return;
+  el.textContent = message || "";
+  el.classList.remove("is-error", "is-success");
+  if (kind === "error") el.classList.add("is-error");
+  else if (kind === "success") el.classList.add("is-success");
+}
+
+function clearModePreview() {
+  state.operatingMode.preview = null;
+  state.operatingMode.previewMode = null;
+  const wrap = $("operating-mode-preview");
+  if (wrap) wrap.hidden = true;
+  const body = $("operating-mode-preview-body");
+  if (body) body.innerHTML = "";
+}
+
+function renderOperatingModePanel() {
+  const panel = $("operating-mode-panel");
+  if (!panel) return;
+  // Owner/manager only surface (the panel is already data-owner-only in the
+  // DOM); bail defensively for anyone else.
+  if (isTechnicianSession() || isSupportSession()) return;
+  const cards = $("operating-mode-cards");
+  const currentEl = $("operating-mode-current");
+  const detailEl = $("operating-mode-current-detail");
+  const current = state.capabilities.mode;
+  if (!current) {
+    // No snapshot yet, or the fetch failed: show an honest unknown state
+    // rather than a wrong mode, and offer no switch controls (req 10).
+    if (currentEl) currentEl.textContent = "Operating mode unavailable";
+    if (detailEl)
+      detailEl.textContent =
+        "Current capabilities couldn't be loaded. Your workflows are unchanged — reopen System bay to retry.";
+    if (cards) cards.innerHTML = "";
+    clearModePreview();
+    return;
+  }
+  if (currentEl) currentEl.textContent = `${modeLabel(current)} mode`;
+  if (detailEl) {
+    const tier = state.capabilities.tier;
+    detailEl.textContent = tier
+      ? `Current workflow shape for this shop. Subscription tier: ${tier} — managed separately in Billing.`
+      : "Current workflow shape for this shop.";
+  }
+  if (cards) {
+    cards.innerHTML = MODE_ORDER.map((mode) => {
+      const meta = MODE_META[mode];
+      const isCurrent = mode === current;
+      const badge = isCurrent ? '<span class="mode-card-badge">Current</span>' : "";
+      const action = isCurrent
+        ? ""
+        : `<button class="secondary-button compact" type="button" data-mode-preview="${mode}">Preview switch</button>`;
+      return `<div class="mode-card${isCurrent ? " is-current" : ""}">
+        <h4>${escapeHtml(meta.label)}</h4>
+        ${badge}
+        <p>${escapeHtml(meta.blurb)}</p>
+        ${action}
+      </div>`;
+    }).join("");
+  }
+  // If a preview was open but the current mode moved out from under it, drop
+  // it so a stale projection can't be confirmed.
+  const preview = state.operatingMode.preview;
+  if (preview && preview.current_mode !== current) clearModePreview();
+}
+
+function renderModePreview(preview) {
+  const wrap = $("operating-mode-preview");
+  const body = $("operating-mode-preview-body");
+  const title = $("operating-mode-preview-title");
+  if (!wrap || !body) return;
+  if (title) title.textContent = `Switch to ${modeLabel(preview.proposed_mode)} mode`;
+
+  const changes = preview.capability_changes || [];
+  const changesHtml = changes.length
+    ? `<div class="mode-change-list">${changes
+        .map(
+          (c) => `<div class="mode-change-row">
+            <span class="cap-name">${escapeHtml(prettyCapability(c.id))}</span>
+            <span class="mode-level level-${escapeHtml(c.from_level)}">${escapeHtml(levelLabel(c.from_level))}</span>
+            <span aria-hidden="true">→</span>
+            <span class="mode-level level-${escapeHtml(c.to_level)}">${escapeHtml(levelLabel(c.to_level))}</span>
+          </div>`,
+        )
+        .join("")}</div>`
+    : '<p class="empty-card-inline">No capability changes — this matches your current mode.</p>';
+
+  const hidden = preview.would_be_hidden || [];
+  const hiddenHtml = hidden.length
+    ? `<p class="mode-preview-heading">Areas that would be tucked away</p>
+       <p style="font-size:.74rem">${hidden.map((h) => escapeHtml(prettyCapability(h))).join(", ")}</p>`
+    : "";
+
+  const warnings = preview.warnings || [];
+  const warnHtml = warnings.length
+    ? `<p class="mode-preview-heading">Existing records affected (retained, never deleted)</p>
+       <div class="mode-warning-list">${warnings
+         .map((w) => `<div class="mode-warning">${escapeHtml(w.message)}</div>`)
+         .join("")}</div>`
+    : "";
+
+  const noDelete = `<p class="mode-no-delete">${escapeHtml(
+    preview.data_handling_statement || "No data will be deleted, archived, or migrated by this change.",
+  )}</p>`;
+
+  body.innerHTML = `<p class="mode-preview-heading">Capability changes</p>
+    ${changesHtml}
+    ${hiddenHtml}
+    ${warnHtml}
+    ${noDelete}`;
+  wrap.hidden = false;
+  const confirm = $("operating-mode-confirm");
+  if (confirm) confirm.disabled = Boolean(preview.is_noop);
+}
+
+async function previewOperatingMode(mode) {
+  if (state.operatingMode.busy) return;
+  if (!state.capabilities.mode) {
+    setModeStatus("Operating mode isn't loaded yet. Reopen System bay and try again.", "error");
+    return;
+  }
+  state.operatingMode.busy = true;
+  setModeStatus("Loading preview…", "");
+  try {
+    const response = await apiFetch("/api/operating-mode/preview", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ proposed_mode: mode }),
+    });
+    const data = await response.json().catch(() => null);
+    if (!response.ok || !data) {
+      setModeStatus((data && data.detail) || "Preview failed.", "error");
+      return;
+    }
+    state.operatingMode.preview = data;
+    state.operatingMode.previewMode = mode;
+    renderModePreview(data);
+    setModeStatus("", "");
+  } catch {
+    setModeStatus("Preview failed. Check your connection and try again.", "error");
+  } finally {
+    state.operatingMode.busy = false;
+  }
+}
+
+async function applyOperatingMode() {
+  const preview = state.operatingMode.preview;
+  const mode = state.operatingMode.previewMode;
+  if (!preview || !mode || state.operatingMode.busy) return;
+  state.operatingMode.busy = true;
+  const confirmBtn = $("operating-mode-confirm");
+  if (confirmBtn) confirmBtn.disabled = true;
+  setModeStatus("Applying…", "");
+  try {
+    const response = await apiFetch("/api/operating-mode/apply", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        // Optimistic concurrency: apply exactly the transition we previewed.
+        expected_current_mode: preview.current_mode,
+        proposed_mode: mode,
+      }),
+    });
+    const data = await response.json().catch(() => null);
+    if (response.status === 409) {
+      // Stale: another session changed the mode first. Reload the true state
+      // and require a fresh preview before applying anything (req 6).
+      clearModePreview();
+      await refreshCapabilities();
+      setModeStatus(
+        "The operating mode changed in another session. We reloaded the current mode — preview again to continue.",
+        "error",
+      );
+      return;
+    }
+    if (!response.ok || !data) {
+      setModeStatus((data && data.detail) || "Apply failed.", "error");
+      return;
+    }
+    clearModePreview();
+    // Refresh capabilities + nav in place -- no full app reset (req 6).
+    if (data.capabilities) setCapabilitiesSnapshot(data.capabilities);
+    else void refreshCapabilities();
+    if (data.changed) {
+      showToast(`Now in ${modeLabel(data.new_mode)} mode. No records were deleted.`, "success");
+      setModeStatus(
+        `Switched to ${modeLabel(data.new_mode)} mode. Navigation updated; nothing was deleted.`,
+        "success",
+      );
+    } else {
+      setModeStatus(`Already in ${modeLabel(data.new_mode)} mode.`, "");
+    }
+  } catch {
+    setModeStatus("Apply failed. Check your connection and try again.", "error");
+  } finally {
+    state.operatingMode.busy = false;
+    const btn = $("operating-mode-confirm");
+    if (btn) btn.disabled = false;
+  }
+}
+
+function initializeOperatingMode() {
+  const cards = $("operating-mode-cards");
+  if (cards) {
+    cards.addEventListener("click", (event) => {
+      const btn = event.target.closest("[data-mode-preview]");
+      if (!btn) return;
+      void previewOperatingMode(btn.dataset.modePreview);
+    });
+  }
+  const cancel = $("operating-mode-cancel");
+  if (cancel)
+    cancel.addEventListener("click", () => {
+      clearModePreview();
+      setModeStatus("", "");
+    });
+  const confirm = $("operating-mode-confirm");
+  if (confirm) confirm.addEventListener("click", () => void applyOperatingMode());
+}
+
+// ---------------------------------------------------------------------------
+// Bays view: a read-only list of the shop's service bays (bay assignment and
+// scheduling stay in the Scheduling workspace). Reachable only when the BAYS
+// capability is surfaced -- the nav item carries data-capability="bays" and is
+// tucked away in Solo/Mobile Field mode.
+// ---------------------------------------------------------------------------
+
+function renderBays() {
+  const listEl = $("bays-list");
+  if (!listEl) return;
+  const items = state.bays.items || [];
+  if (!items.length) {
+    listEl.innerHTML =
+      '<div class="empty-card"><p>No service bays yet. Add bays from the Scheduling workspace.</p></div>';
+    return;
+  }
+  listEl.innerHTML = items
+    .map(
+      (bay) => `<div class="context-action">
+        <b>BAY</b>
+        <span><strong>${escapeHtml(bay.name)}</strong><small>${escapeHtml(bay.notes || "No notes")}</small></span>
+      </div>`,
+    )
+    .join("");
+}
+
+async function loadBays() {
+  const listEl = $("bays-list");
+  if (!listEl) return;
+  const generation = (state.bays.generation += 1);
+  listEl.innerHTML = '<div class="empty-card"><p>Loading bays…</p></div>';
+  const note = $("bays-mode-note");
+  if (note) {
+    const level = state.capabilities.levels ? state.capabilities.levels.bays : null;
+    if (level && isCapabilityHiddenLevel(level)) {
+      note.textContent = `Service bays are tucked away in ${modeLabel(
+        state.capabilities.mode,
+      )} mode. Any bays below are retained and reappear in Shop mode.`;
+      note.hidden = false;
+    } else {
+      note.hidden = true;
+    }
+  }
+  try {
+    const response = await apiFetch("/api/bays?page=1&page_size=100&archived=false");
+    const data = await response.json().catch(() => null);
+    if (generation !== state.bays.generation) return; // superseded
+    if (!response.ok || !data) {
+      listEl.innerHTML = '<div class="empty-card"><p>Bays could not be loaded.</p></div>';
+      return;
+    }
+    state.bays.items = data.items || [];
+    renderBays();
+  } catch {
+    if (generation !== state.bays.generation) return;
+    listEl.innerHTML = '<div class="empty-card"><p>Bays could not be loaded.</p></div>';
+  }
+}
+
+function initializeBays() {
+  const refresh = $("bays-refresh");
+  if (refresh) refresh.addEventListener("click", () => void loadBays());
+}
+
 function initializeApp() {
   setAuthState(false);
   initializeNavigation();
@@ -7824,6 +8247,8 @@ function initializeApp() {
   initializeParts();
   initializePurchaseOrders();
   initializeScheduling();
+  initializeBays();
+  initializeOperatingMode();
   initializeEstimate();
   initializeSystem();
   initializeAuth();
@@ -7907,6 +8332,9 @@ function initializeApp() {
       void restoreSelectionsFromContext();
       void loadDashboardSummary();
       void refreshApprovalQueueBadge();
+      // Load the capability snapshot so navigation is shaped by the shop's
+      // operating mode from first paint (owner/manager only; fails open).
+      void refreshCapabilities();
       if (
         window.location.pathname === "/login" ||
         window.location.pathname === "/signup" ||
