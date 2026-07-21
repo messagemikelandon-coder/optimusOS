@@ -133,6 +133,18 @@ def _capability_levels_for(
     return _MODE_LEVELS[operating_mode]
 
 
+def capability_levels_for(
+    operating_mode: OperatingMode, role: str
+) -> dict[CapabilityId, CapabilityLevel]:
+    """Public, DB-free view of the same (operating_mode, role) -> levels
+    mapping `resolve_capabilities` applies, so callers that need to compare
+    two hypothetical modes (e.g. the mode-transition preview) reuse the one
+    matrix instead of re-deriving it -- exactly the single-source discipline
+    the matrix-drift safeguard protects. Returns a fresh dict; mutating it
+    never affects the canonical matrix."""
+    return dict(_capability_levels_for(operating_mode, role))
+
+
 def resolve_capabilities(db: Session, auth: AuthContext) -> CapabilitiesRead:
     """Deterministic snapshot for the caller's shop: same
     (operating_mode, tier, role) always resolves to the same capability

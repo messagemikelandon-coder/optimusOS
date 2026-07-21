@@ -157,6 +157,12 @@ from app.migration_compat import (
     check_schema_compatibility,
     get_app_migration_head,
 )
+from app.mode_transition_store import (
+    ModeTransitionConflictError,
+    ModeTransitionError,
+    apply_mode_transition,
+    preview_mode_transition,
+)
 from app.models import (
     AccountSecurityRead,
     AccountStatusUpdate,
@@ -221,6 +227,10 @@ from app.models import (
     InvoiceRead,
     InvoiceStatus,
     LocationInput,
+    ModeTransitionApplyRequest,
+    ModeTransitionPreview,
+    ModeTransitionPreviewRequest,
+    ModeTransitionResult,
     PartAllocationAllocateRequest,
     PartAllocationCreate,
     PartAllocationEventsResponse,
@@ -1520,6 +1530,65 @@ async def get_capabilities_record(db: DbSessionDep, auth: OwnerAuthContextDep) -
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Capability resolution storage is unavailable.",
+        ) from exc
+
+
+@app.post("/api/operating-mode/preview", response_model=ModeTransitionPreview)
+async def preview_operating_mode_change(
+    payload: ModeTransitionPreviewRequest,
+    db: DbSessionDep,
+    auth: OwnerAuthContextDep,
+) -> ModeTransitionPreview:
+    """ADR-022 post-signup mode management: owner/manager dry run of changing
+    the shop's operating mode. Read-only -- computes the effect (capability
+    changes, would-be-hidden capabilities, existing-data warnings, retained
+    categories) with zero side effects. `GET /api/capabilities` remains the
+    source of truth for the *current* mode/capabilities; this only projects a
+    hypothetical change. Owner/manager only (`OwnerAuthContextDep`).
+    """
+    try:
+        return await asyncio.to_thread(
+            preview_mode_transition, db, auth, proposed_mode=payload.proposed_mode
+        )
+    except ModeTransitionError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Operating-mode preview failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Operating-mode storage is unavailable.",
+        ) from exc
+
+
+@app.post("/api/operating-mode/apply", response_model=ModeTransitionResult)
+async def apply_operating_mode_change(
+    payload: ModeTransitionApplyRequest,
+    db: DbSessionDep,
+    auth: OwnerAuthContextDep,
+) -> ModeTransitionResult:
+    """ADR-022 post-signup mode management: owner/manager apply of a mode
+    change. Optimistically concurrent (`expected_current_mode` must match the
+    shop's real mode, else 409) and audited (one `ShopEvent`). Changes only
+    `Shop.operating_mode` -- never tier, seats, business data, route access,
+    or capability enforcement. Owner/manager only (`OwnerAuthContextDep`).
+    """
+    try:
+        return await asyncio.to_thread(
+            apply_mode_transition,
+            db,
+            auth,
+            expected_current_mode=payload.expected_current_mode,
+            proposed_mode=payload.proposed_mode,
+        )
+    except ModeTransitionConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ModeTransitionError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Operating-mode apply failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Operating-mode storage is unavailable.",
         ) from exc
 
 

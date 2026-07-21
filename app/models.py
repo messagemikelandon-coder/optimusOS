@@ -3024,3 +3024,66 @@ class CapabilitiesRead(BaseModel):
     capabilities: list[CapabilityEntry]
     overrides_applied: list[str] = []
     resolved_at: datetime
+
+
+class ModeTransitionCapabilityChange(BaseModel):
+    """One capability whose level differs between the current and proposed
+    operating mode."""
+
+    id: CapabilityId
+    from_level: CapabilityLevel
+    to_level: CapabilityLevel
+
+
+class ModeTransitionWarning(BaseModel):
+    """A heads-up that existing data in a category will stop being surfaced
+    by default under the proposed mode. The data is always retained (see
+    `no_data_deleted`); this only flags that it will be hidden, so the owner
+    makes the change deliberately."""
+
+    category: str
+    count: int
+    from_level: CapabilityLevel
+    to_level: CapabilityLevel
+    message: str
+
+
+class ModeTransitionPreviewRequest(BaseModel):
+    proposed_mode: OperatingMode
+
+
+class ModeTransitionPreview(BaseModel):
+    """Read-only projection of what changing to `proposed_mode` would do.
+    Computes nothing durable and mutates no data -- purely a dry run so an
+    owner/manager can see the effect before applying it."""
+
+    current_mode: OperatingMode
+    proposed_mode: OperatingMode
+    is_noop: bool
+    capability_changes: list[ModeTransitionCapabilityChange]
+    would_be_hidden: list[CapabilityId]
+    retained_data_categories: list[str]
+    warnings: list[ModeTransitionWarning]
+    no_data_deleted: bool = True
+    data_handling_statement: str
+
+
+class ModeTransitionApplyRequest(BaseModel):
+    # Optimistic concurrency: the client must state the mode it believes is
+    # current. If the shop's real mode has since changed (another
+    # owner/manager, another tab), the apply is rejected as stale rather
+    # than silently clobbering the newer value.
+    expected_current_mode: OperatingMode
+    proposed_mode: OperatingMode
+
+
+class ModeTransitionResult(BaseModel):
+    """Result of a successful apply: what changed, plus the fresh capability
+    snapshot so the caller does not need a second round-trip to
+    GET /api/capabilities."""
+
+    previous_mode: OperatingMode
+    new_mode: OperatingMode
+    changed: bool
+    capability_changes: list[ModeTransitionCapabilityChange]
+    capabilities: CapabilitiesRead
