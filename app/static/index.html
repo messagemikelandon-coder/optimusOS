@@ -287,7 +287,7 @@
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 13h6V4H4v9Zm0 7h6v-5H4v5Zm10 0h6v-9h-6v9Zm0-16v5h6V4h-6Z"/></svg>
             <span>Overview</span>
           </button>
-          <button class="nav-item" type="button" data-view="technicians" data-owner-only="true">
+          <button class="nav-item" type="button" data-view="technicians" data-owner-only="true" data-capability="technicians">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21.7 19.3 16 13.6a5 5 0 0 1-6.1-6.1L4.4 2 2 4.4l5.5 5.5a5 5 0 0 0 6.1 6.1l5.7 5.7a1 1 0 0 0 1.4 0l1-1a1 1 0 0 0 0-1.4Z"/></svg>
             <span>Technicians</span>
           </button>
@@ -331,7 +331,7 @@
 
         <div class="nav-group">
           <span class="nav-group-label">Estimates &amp; approvals</span>
-          <button class="nav-item" type="button" data-view="estimate" data-owner-only="true">
+          <button class="nav-item" type="button" data-view="estimate" data-owner-only="true" data-capability="estimates">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 3h10v2h2v16H5V5h2V3Zm2 2h6V4H9v1Zm0 5h6V8H9v2Zm0 4h6v-2H9v2Zm0 4h4v-2H9v2Z"/></svg>
             <span>Job estimator</span>
           </button>
@@ -348,11 +348,15 @@
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h12v3h2v15H4V6h2V3Zm2 3h8V5H8v1Zm0 4h8V8H8v2Zm0 4h5v-2H8v2Zm7.2 6-3.6-3.6 1.4-1.4 2.2 2.2 4.4-4.4L21 15l-5.8 5Z"/></svg>
             <span>Work orders</span>
           </button>
-          <button class="nav-item" type="button" data-view="scheduling" data-owner-only="true">
+          <button class="nav-item" type="button" data-view="scheduling" data-owner-only="true" data-capability="scheduling">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 2v2H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2h-2V2h-2v2H9V2H7Zm-2 6h14v10H5V8Z"/></svg>
             <span>Scheduling</span>
           </button>
-          <button class="nav-item" type="button" data-view="parts" data-owner-only="true">
+          <button class="nav-item" type="button" data-view="bays" data-owner-only="true" data-capability="bays">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 10 5 5h14l2 5v9h-3v-2H6v2H3v-9Zm3.2-3L5.3 9h13.4l-.9-2H6.2ZM6 12v2h12v-2H6Z"/></svg>
+            <span>Bays</span>
+          </button>
+          <button class="nav-item" type="button" data-view="parts" data-owner-only="true" data-capability="parts">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v14H4V5Zm3 3v3h3V8H7Zm5 0v3h5V8h-5ZM7 13v3h10v-3H7Z"/></svg>
             <span>Parts</span>
           </button>
@@ -368,7 +372,7 @@
 
         <div class="nav-group">
           <span class="nav-group-label">Invoices &amp; payments</span>
-          <button class="nav-item" type="button" data-view="invoices" data-owner-only="true">
+          <button class="nav-item" type="button" data-view="invoices" data-owner-only="true" data-capability="invoices">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 2h9l5 5v15H6V2Zm8 1.5V8h4.5L14 3.5ZM8 11h10v2H8v-2Zm0 4h10v2H8v-2Zm0-8h4v2H8V7Z"/></svg>
             <span>Invoices</span>
           </button>
@@ -380,7 +384,7 @@
 
         <div class="nav-group">
           <span class="nav-group-label">Reports</span>
-          <button class="nav-item" type="button" data-view="reports" data-owner-only="true">
+          <button class="nav-item" type="button" data-view="reports" data-owner-only="true" data-capability="reports">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 20V10h3v10H5Zm5.5 0V4h3v16h-3ZM16 20v-7h3v7h-3Z"/></svg>
             <span>Reports</span>
           </button>
@@ -2745,6 +2749,19 @@
           </div>
         </section>
 
+        <section class="app-view" id="view-bays" data-view-panel="bays" hidden>
+          <div class="customers-layout">
+            <section class="panel customers-list-panel">
+              <div class="panel-heading">
+                <div><span class="section-kicker"><i></i> Service bays</span><h2>Bays</h2><p>Physical service bays for this shop. Bay assignment and scheduling stay in the Scheduling workspace.</p></div>
+                <button class="secondary-button compact" type="button" id="bays-refresh">Refresh</button>
+              </div>
+              <p class="mode-note" id="bays-mode-note" hidden></p>
+              <div id="bays-list" class="stacked-actions" aria-live="polite"><div class="empty-card"><p>Open Bays to load this shop's service bays.</p></div></div>
+            </section>
+          </div>
+        </section>
+
         <section class="app-view" id="view-system" data-view-panel="system" hidden>
           <div class="system-grid">
             <section class="panel system-hero">
@@ -2817,6 +2834,26 @@
               <div id="billing-events" class="stacked-actions"><div class="empty-card"><p>No billing history yet.</p></div></div>
             </section>
 
+            <section class="panel access-panel operating-mode-panel" id="operating-mode-panel" data-owner-only="true">
+              <div class="panel-heading"><div><span class="section-kicker"><i></i> Workflow shape</span><h3>Operating mode</h3></div><span class="security-badge">No data deleted</span></div>
+              <div class="location-display">
+                <div class="status-marker" aria-hidden="true"></div>
+                <div><strong id="operating-mode-current">Loading operating mode…</strong><p id="operating-mode-current-detail">Fetching current capabilities.</p></div>
+              </div>
+              <p class="mode-tier-note" id="operating-mode-tier-note">Operating mode shapes which workflows are surfaced. It is separate from your subscription tier (shown in Billing above), which governs seats and commercial entitlements — changing mode never changes your plan or seats.</p>
+              <div class="mode-card-grid" id="operating-mode-cards"></div>
+              <div class="mode-preview" id="operating-mode-preview" hidden>
+                <div class="panel-heading"><div><span class="section-kicker"><i></i> Preview</span><h4 id="operating-mode-preview-title">Preview change</h4></div></div>
+                <div id="operating-mode-preview-body"></div>
+                <div class="estimate-submit-row">
+                  <button class="text-button" type="button" id="operating-mode-cancel">Cancel</button>
+                  <button class="primary-button compact" type="button" id="operating-mode-confirm">Confirm and apply</button>
+                </div>
+              </div>
+              <p class="mode-footnote">You can change operating mode again at any time. Switching a mode only changes which areas are surfaced by default — every customer, vehicle, bay, technician, appointment, and record stays stored and reappears if you switch back.</p>
+              <div id="operating-mode-status" class="mode-status" aria-live="polite"></div>
+            </section>
+
             <section class="panel location-panel">
               <div class="panel-heading"><div><span class="section-kicker"><i></i> Parts radius</span><h3>Service location</h3></div><button class="secondary-button compact" type="button" id="use-location">Use current location</button></div>
               <div class="location-display"><div class="status-marker" aria-hidden="true"></div><div><strong id="location-status">Location not supplied</strong><p>Used for nearby stores. Coordinates are not persisted by the server.</p></div></div>
@@ -2855,13 +2892,14 @@
     <button type="button" data-view="customers" data-owner-only="true"><span>▣</span>Customers</button>
     <button type="button" data-view="vehicles" data-owner-only="true"><span>◈</span>Vehicles</button>
     <button type="button" data-view="work-orders"><span>✓</span>Work</button>
+    <button type="button" data-view="bays" data-owner-only="true" data-capability="bays"><span>▨</span>Bays</button>
     <button type="button" data-view="approval-queue" data-owner-only="true"><span>◉</span>Approval</button>
-    <button type="button" data-view="invoices" data-owner-only="true"><span>◫</span>Bill</button>
+    <button type="button" data-view="invoices" data-owner-only="true" data-capability="invoices"><span>◫</span>Bill</button>
     <button type="button" data-view="notifications" data-owner-only="true"><span>🔔</span>Alerts</button>
     <button type="button" data-view="square" data-owner-only="true"><span>◧</span>Square</button>
     <button type="button" data-view="my-day" data-technician-only="true" hidden><span>◉</span>My Day</button>
     <button type="button" data-view="support-directory" data-support-only="true" hidden><span>▦</span>Shops</button>
-    <button type="button" data-view="reports" data-owner-only="true"><span>▤</span>Reports</button>
+    <button type="button" data-view="reports" data-owner-only="true" data-capability="reports"><span>▤</span>Reports</button>
     <button type="button" data-view="chat"><span>◆</span>Optimus</button>
     <button type="button" data-view="system"><span>⚙</span>System</button>
   </nav>
