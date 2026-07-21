@@ -12,6 +12,7 @@ from app.auth import (
     hash_password,
     require_billing_context,
     require_owner_context,
+    require_owner_only_context,
     require_owner_or_technician_context,
     require_support_context,
 )
@@ -187,7 +188,13 @@ def test_every_business_route_is_role_gated_as_expected() -> None:
             uses_owner_or_technician = _dependant_uses(
                 dependant, require_owner_or_technician_context
             )
-            uses_owner_only = _dependant_uses(dependant, require_owner_context)
+            # `require_owner_only_context` (owner-exclusive, no managers) is a
+            # *stricter* owner gate than `require_owner_context` -- it still
+            # satisfies the "owner-gated, never open to technicians" contract
+            # this audit enforces (e.g. post-signup onboarding).
+            uses_owner_only = _dependant_uses(dependant, require_owner_context) or _dependant_uses(
+                dependant, require_owner_only_context
+            )
             uses_billing = _dependant_uses(dependant, require_billing_context)
             uses_support = _dependant_uses(dependant, require_support_context)
             if key in _BILLING_ROUTES:

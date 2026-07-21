@@ -464,6 +464,27 @@
         <button class="secondary-button compact" type="button" id="impersonation-end">End impersonation</button>
       </div>
 
+      <section class="onboarding-card" id="onboarding-mode-card" aria-label="Choose your operating mode" hidden>
+        <div class="onboarding-head">
+          <span class="section-kicker"><i></i> Welcome</span>
+          <h2>How does your shop work?</h2>
+          <p>Pick the mode that matches how you operate. It shapes which areas appear by default &mdash; it does <strong>not</strong> change your subscription tier, and it never deletes anything. You can change it any time in System bay.</p>
+        </div>
+        <div class="mode-card-grid" id="onboarding-mode-cards"></div>
+        <div class="mode-preview" id="onboarding-preview" hidden>
+          <div class="panel-heading"><div><span class="section-kicker"><i></i> Preview</span><h4 id="onboarding-preview-title">Preview mode</h4></div></div>
+          <div id="onboarding-preview-body"></div>
+          <div class="estimate-submit-row">
+            <button class="text-button" type="button" id="onboarding-back">Back to modes</button>
+            <button class="primary-button compact" type="button" id="onboarding-confirm">Confirm this mode</button>
+          </div>
+        </div>
+        <div class="onboarding-foot">
+          <button class="text-button" type="button" id="onboarding-later">Decide later</button>
+          <div id="onboarding-status" class="mode-status" aria-live="polite"></div>
+        </div>
+      </section>
+
       <div class="view-stack">
         <section class="app-view" id="view-login" data-view-panel="login" hidden>
           <div class="chat-layout">

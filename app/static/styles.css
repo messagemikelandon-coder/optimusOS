@@ -1181,3 +1181,10 @@ button.metric-card:hover { border-color: rgba(196,110,90,.35); }
 .mode-status.is-error { color: #e79a91; }
 .mode-status.is-success { color: #7be5ad; }
 .mode-note { margin: 0 0 12px; padding: 8px 10px; border-left: 2px solid var(--line-strong); background: var(--bg-1); border-radius: var(--radius-sm); font-size: .73rem; color: var(--muted); }
+
+/* First-run post-signup mode onboarding card (non-blocking, owner only). */
+.onboarding-card { margin: 0 0 18px; padding: 18px 20px; border: 1px solid var(--line-strong); border-radius: var(--radius-md); background: linear-gradient(180deg, var(--panel-raised), var(--panel-solid)); box-shadow: var(--shadow-tight); }
+.onboarding-head h2 { margin: 6px 0 4px; font-family: var(--font-condensed); }
+.onboarding-head p { margin: 0; font-size: .78rem; color: var(--muted); line-height: 1.5; max-width: 70ch; }
+.onboarding-card .mode-card-grid { margin-top: 14px; }
+.onboarding-foot { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line); }

@@ -609,6 +609,24 @@ def require_owner_context(
     return auth
 
 
+def require_owner_only_context(
+    auth: Annotated[AuthContext, Depends(get_current_auth_context)],
+    db: DbSessionDep,
+) -> AuthContext:
+    """Route dependency for owner-exclusive actions.
+
+    Stricter than `require_owner_context` (which also admits managers): only
+    the shop *owner* passes. Used by post-signup operating-mode onboarding --
+    an invited manager, a technician, a support account, or an unauthenticated
+    caller must never be able to complete another account's first-run mode
+    selection.
+    """
+    require_role(auth, "owner")
+    require_verified_email_if_present(auth)
+    require_shop_access_active(db, auth)
+    return auth
+
+
 def require_owner_or_technician_context(
     auth: Annotated[AuthContext, Depends(get_current_auth_context)],
     db: DbSessionDep,
