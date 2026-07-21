@@ -55,6 +55,7 @@ from app.api.routers import context as context_router
 from app.api.routers import notifications as notifications_router
 from app.api.routers import parts as parts_router
 from app.api.routers import vendors as vendors_router
+from app.api.routers import working_hours as working_hours_router
 
 # AuthContext and get_current_auth_context are re-exported (the redundant
 # `as` alias marks them intentional) for backward compatibility: many tests
@@ -283,10 +284,6 @@ from app.models import (
     WorkflowGapSeverity,
     WorkflowGapStatus,
     WorkflowGapUpdate,
-    WorkingHoursCreate,
-    WorkingHoursListResponse,
-    WorkingHoursRead,
-    WorkingHoursUpdate,
     WorkOrderAssignTechnicianRequest,
     WorkOrderCycleTimeReportResponse,
     WorkOrderListResponse,
@@ -344,19 +341,15 @@ from app.scheduling_store import (
     cancel_appointment,
     create_appointment,
     create_schedule_block,
-    create_working_hours,
     delete_schedule_block,
-    delete_working_hours,
     get_appointment,
     get_availability,
     get_schedule_block,
     list_appointments,
     list_schedule_blocks,
-    list_working_hours,
     move_appointment,
     update_appointment,
     update_schedule_block,
-    update_working_hours,
 )
 from app.security_events import ActorType, SecurityEventType, log_security_event
 from app.services.email import LoggingEmailAdapter
@@ -526,6 +519,16 @@ list_bay_records = bays_router.list_bay_records
 get_bay_record = bays_router.get_bay_record
 update_bay_record = bays_router.update_bay_record
 archive_bay_record = bays_router.archive_bay_record
+
+# Phase 2C Step 6: the /api/working-hours routes live in
+# app/api/routers/working_hours.py. Same identical-contract mount + handler
+# re-export pattern; the four handlers are re-exported because tests call
+# them via app.main.
+app.include_router(working_hours_router.router)
+create_working_hours_record = working_hours_router.create_working_hours_record
+list_working_hours_records = working_hours_router.list_working_hours_records
+update_working_hours_record = working_hours_router.update_working_hours_record
+delete_working_hours_record = working_hours_router.delete_working_hours_record
 # All seven rate limiters share one registry (app/rate_limit.py) instead of
 # the seven copy-pasted lazy-singleton blocks this used to be. Each concern
 # below keeps its own limit, window, per-request key format, and client-facing
@@ -4180,90 +4183,12 @@ async def get_diagnostic_inspection_report_record(
 # test_scheduling_api / test_shop_id_populated_on_create) keep working.
 
 
-# ---- Scheduling: technician working hours ----
-
-
-@app.post("/api/working-hours", response_model=WorkingHoursRead)
-async def create_working_hours_record(
-    payload: WorkingHoursCreate,
-    db: DbSessionDep,
-    auth: OwnerAuthContextDep,
-) -> WorkingHoursRead:
-    try:
-        return await asyncio.to_thread(create_working_hours, db=db, auth=auth, payload=payload)
-    except SchedulingStoreError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-    except SQLAlchemyError as exc:
-        logger.warning("Working hours creation failed due to storage error.")
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Scheduling storage is unavailable.",
-        ) from exc
-
-
-@app.get("/api/working-hours", response_model=WorkingHoursListResponse)
-async def list_working_hours_records(
-    db: DbSessionDep,
-    auth: OwnerAuthContextDep,
-    technician_id: int = Query(...),
-) -> WorkingHoursListResponse:
-    try:
-        return await asyncio.to_thread(
-            list_working_hours, db=db, auth=auth, technician_id=technician_id
-        )
-    except SchedulingStoreError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-    except SQLAlchemyError as exc:
-        logger.warning("Working hours listing failed due to storage error.")
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Scheduling storage is unavailable.",
-        ) from exc
-
-
-@app.patch("/api/working-hours/{working_hours_id}", response_model=WorkingHoursRead)
-async def update_working_hours_record(
-    working_hours_id: int,
-    payload: WorkingHoursUpdate,
-    db: DbSessionDep,
-    auth: OwnerAuthContextDep,
-) -> WorkingHoursRead:
-    try:
-        return await asyncio.to_thread(
-            update_working_hours,
-            db=db,
-            auth=auth,
-            working_hours_id=working_hours_id,
-            payload=payload,
-        )
-    except SchedulingNotFoundError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    except SchedulingStoreError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-    except SQLAlchemyError as exc:
-        logger.warning("Working hours update failed due to storage error.")
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Scheduling storage is unavailable.",
-        ) from exc
-
-
-@app.delete("/api/working-hours/{working_hours_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_working_hours_record(
-    working_hours_id: int, db: DbSessionDep, auth: OwnerAuthContextDep
-) -> None:
-    try:
-        await asyncio.to_thread(
-            delete_working_hours, db=db, auth=auth, working_hours_id=working_hours_id
-        )
-    except SchedulingNotFoundError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    except SQLAlchemyError as exc:
-        logger.warning("Working hours deletion failed due to storage error.")
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Scheduling storage is unavailable.",
-        ) from exc
+# The /api/working-hours routes were extracted verbatim to
+# app/api/routers/working_hours.py (Phase 2C Step 6). They are mounted via
+# app.include_router(working_hours_router.router) near app assembly, and the
+# handler functions are re-exported there so existing callers
+# (main.create_working_hours_record, etc., across test_scheduling_api /
+# test_shop_id_populated_on_create) keep working.
 
 
 # ---- Scheduling: schedule blocks ----
