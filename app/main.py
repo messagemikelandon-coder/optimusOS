@@ -50,6 +50,7 @@ from app.api.deps import (
     SettingsDep,
     SupportAuthContextDep,
 )
+from app.api.routers import appointments as appointments_router
 from app.api.routers import bays as bays_router
 from app.api.routers import context as context_router
 from app.api.routers import notifications as notifications_router
@@ -158,13 +159,6 @@ from app.models import (
     AccountSecurityRead,
     AccountStatusUpdate,
     AddPaymentMethodRequest,
-    AppointmentCancelRequest,
-    AppointmentCreate,
-    AppointmentListResponse,
-    AppointmentMoveRequest,
-    AppointmentRead,
-    AppointmentStatus,
-    AppointmentUpdate,
     AuthLoginHistoryResponse,
     AuthLoginRequest,
     AuthMeResponse,
@@ -332,16 +326,9 @@ from app.report_store import (
     get_work_order_cycle_time_report,
 )
 from app.scheduling_store import (
-    SchedulingConflictError,
     SchedulingNotFoundError,
     SchedulingStoreError,
-    cancel_appointment,
-    create_appointment,
-    get_appointment,
     get_availability,
-    list_appointments,
-    move_appointment,
-    update_appointment,
 )
 from app.security_events import ActorType, SecurityEventType, log_security_event
 from app.services.email import LoggingEmailAdapter
@@ -501,6 +488,20 @@ list_vendor_records = vendors_router.list_vendor_records
 get_vendor_record = vendors_router.get_vendor_record
 update_vendor_record = vendors_router.update_vendor_record
 archive_vendor_record = vendors_router.archive_vendor_record
+
+# Phase 2C Step 8: the /api/appointments routes live in
+# app/api/routers/appointments.py. Same identical-contract mount + handler
+# re-export pattern; the six handlers are re-exported because tests call
+# them via app.main. /api/availability stays in app.main (it reads
+# appointments, working hours, and schedule blocks directly via
+# scheduling_store.get_availability, not through these handlers).
+app.include_router(appointments_router.router)
+create_appointment_record = appointments_router.create_appointment_record
+list_appointment_records = appointments_router.list_appointment_records
+get_appointment_record = appointments_router.get_appointment_record
+update_appointment_record = appointments_router.update_appointment_record
+move_appointment_record = appointments_router.move_appointment_record
+cancel_appointment_record = appointments_router.cancel_appointment_record
 
 # Phase 2C Step 5: the /api/bays routes live in app/api/routers/bays.py. Same
 # identical-contract mount + handler re-export pattern; the five handlers are
@@ -4236,164 +4237,10 @@ async def get_availability_record(
         ) from exc
 
 
-# ---- Scheduling: appointments ----
-
-
-@app.post("/api/appointments", response_model=AppointmentRead)
-async def create_appointment_record(
-    payload: AppointmentCreate,
-    db: DbSessionDep,
-    auth: OwnerAuthContextDep,
-) -> AppointmentRead:
-    try:
-        return await asyncio.to_thread(create_appointment, db=db, auth=auth, payload=payload)
-    except SchedulingNotFoundError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    except SchedulingConflictError as exc:
-        raise HTTPException(status_code=409, detail=exc.as_detail()) from exc
-    except SchedulingStoreError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-    except SQLAlchemyError as exc:
-        logger.warning("Appointment creation failed due to storage error.")
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Scheduling storage is unavailable.",
-        ) from exc
-
-
-@app.get("/api/appointments", response_model=AppointmentListResponse)
-async def list_appointment_records(
-    db: DbSessionDep,
-    settings: SettingsDep,
-    auth: OwnerAuthContextDep,
-    page: int = Query(default=1),
-    page_size: int = Query(default=50),
-    date_from: Annotated[datetime | None, Query()] = None,
-    date_to: Annotated[datetime | None, Query()] = None,
-    technician_id: int | None = Query(default=None),
-    bay_id: int | None = Query(default=None),
-    status_filter: Annotated[AppointmentStatus | None, Query(alias="status")] = None,
-    customer_id: int | None = Query(default=None),
-    vehicle_id: int | None = Query(default=None),
-) -> AppointmentListResponse:
-    try:
-        return await asyncio.to_thread(
-            list_appointments,
-            db=db,
-            auth=auth,
-            settings=settings,
-            page=page,
-            page_size=page_size,
-            date_from=date_from,
-            date_to=date_to,
-            technician_id=technician_id,
-            bay_id=bay_id,
-            status_filter=status_filter,
-            customer_id=customer_id,
-            vehicle_id=vehicle_id,
-        )
-    except SchedulingStoreError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-    except SQLAlchemyError as exc:
-        logger.warning("Appointment listing failed due to storage error.")
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Scheduling storage is unavailable.",
-        ) from exc
-
-
-@app.get("/api/appointments/{appointment_id}", response_model=AppointmentRead)
-async def get_appointment_record(
-    appointment_id: int, db: DbSessionDep, auth: OwnerAuthContextDep
-) -> AppointmentRead:
-    try:
-        return await asyncio.to_thread(
-            get_appointment, db=db, auth=auth, appointment_id=appointment_id
-        )
-    except SchedulingNotFoundError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    except SQLAlchemyError as exc:
-        logger.warning("Appointment retrieval failed due to storage error.")
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Scheduling storage is unavailable.",
-        ) from exc
-
-
-@app.patch("/api/appointments/{appointment_id}", response_model=AppointmentRead)
-async def update_appointment_record(
-    appointment_id: int,
-    payload: AppointmentUpdate,
-    db: DbSessionDep,
-    auth: OwnerAuthContextDep,
-) -> AppointmentRead:
-    try:
-        return await asyncio.to_thread(
-            update_appointment, db=db, auth=auth, appointment_id=appointment_id, payload=payload
-        )
-    except SchedulingNotFoundError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    except SchedulingConflictError as exc:
-        raise HTTPException(status_code=409, detail=exc.as_detail()) from exc
-    except SchedulingStoreError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-    except SQLAlchemyError as exc:
-        logger.warning("Appointment update failed due to storage error.")
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Scheduling storage is unavailable.",
-        ) from exc
-
-
-@app.post("/api/appointments/{appointment_id}/move", response_model=AppointmentRead)
-async def move_appointment_record(
-    appointment_id: int,
-    payload: AppointmentMoveRequest,
-    db: DbSessionDep,
-    auth: OwnerAuthContextDep,
-) -> AppointmentRead:
-    try:
-        return await asyncio.to_thread(
-            move_appointment, db=db, auth=auth, appointment_id=appointment_id, payload=payload
-        )
-    except SchedulingNotFoundError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    except SchedulingConflictError as exc:
-        raise HTTPException(status_code=409, detail=exc.as_detail()) from exc
-    except SchedulingStoreError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-    except SQLAlchemyError as exc:
-        logger.warning("Appointment move failed due to storage error.")
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Scheduling storage is unavailable.",
-        ) from exc
-
-
-@app.post("/api/appointments/{appointment_id}/cancel", response_model=AppointmentRead)
-async def cancel_appointment_record(
-    appointment_id: int,
-    payload: AppointmentCancelRequest,
-    db: DbSessionDep,
-    auth: OwnerAuthContextDep,
-) -> AppointmentRead:
-    try:
-        return await asyncio.to_thread(
-            cancel_appointment,
-            db=db,
-            auth=auth,
-            appointment_id=appointment_id,
-            cancellation_reason=payload.cancellation_reason,
-        )
-    except SchedulingNotFoundError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    except SchedulingConflictError as exc:
-        raise HTTPException(status_code=409, detail=exc.as_detail()) from exc
-    except SchedulingStoreError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-    except SQLAlchemyError as exc:
-        logger.warning("Appointment cancellation failed due to storage error.")
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Scheduling storage is unavailable.",
-        ) from exc
+# The /api/appointments routes were extracted verbatim to
+# app/api/routers/appointments.py (Phase 2C Step 8). They are mounted via
+# app.include_router(appointments_router.router) near app assembly, and the
+# handler functions are re-exported there so existing callers
+# (main.create_appointment_record, etc., across test_scheduling_api /
+# test_shop_id_populated_on_create) keep working. /api/availability (above)
+# stays here and calls scheduling_store.get_availability directly.
