@@ -2028,6 +2028,10 @@ class Shop(Base):
             "status IN ('pilot', 'active', 'suspended', 'cancelled')",
             name="ck_shops_status",
         ),
+        CheckConstraint(
+            "operating_mode IN ('solo', 'mobile_field', 'shop')",
+            name="ck_shops_operating_mode",
+        ),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
@@ -2063,6 +2067,19 @@ class Shop(Base):
     )
     status: Mapped[str] = mapped_column(
         String(20), nullable=False, default="pilot", server_default="pilot"
+    )
+    # ADR-022: operating mode shapes workflow (Solo/Mobile Field/Shop) and is
+    # deliberately a separate column from `ShopSubscription.tier`, which
+    # grants commercial entitlements -- the two must never be inferred from
+    # each other. "shop" is the safe default for both new rows and the
+    # migration 034 backfill of every pre-existing shop, since every shop in
+    # this codebase today already uses bays/technicians/shop-based
+    # scheduling (see docs/context/GOAL_EVIDENCE_MATRIX.md Part A) -- the
+    # same backward-compatible-default reasoning migration 031 already used
+    # for grandfathering existing shops onto the unlimited subscription tier.
+    # This column is additive only: no route or store function reads it yet.
+    operating_mode: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="shop", server_default="shop"
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()

@@ -75,6 +75,7 @@ from app.auth import (
 from app.auth import (
     get_current_auth_context as get_current_auth_context,
 )
+from app.capability_store import CapabilityStoreError, resolve_capabilities
 from app.config import Settings, get_settings
 from app.customer_history_store import get_customer_history
 from app.customer_store import (
@@ -167,6 +168,7 @@ from app.models import (
     AuthSessionResponse,
     AuthUser,
     AvailabilityResponse,
+    CapabilitiesRead,
     ChatRequest,
     ChatResponse,
     ConcurrencyProbeResponse,
@@ -1497,6 +1499,28 @@ async def refresh_billing_subscription(
         ) from exc
     finally:
         client.close()
+
+
+@app.get("/api/capabilities", response_model=CapabilitiesRead)
+async def get_capabilities_record(db: DbSessionDep, auth: OwnerAuthContextDep) -> CapabilitiesRead:
+    """ADR-022 capability foundation: read-only resolution snapshot for the
+    caller's shop. No enforcement -- every other route's behavior is
+    unaffected by this endpoint's existence or response (ADR-022 Decision
+    §5). Owner-or-manager only (`OwnerAuthContextDep`, matching every other
+    shop-admin-shaped read in this file, e.g. `/api/shop/members`), since a
+    resolved capability snapshot is shop-administration information, not a
+    self-service or platform-support surface.
+    """
+    try:
+        return await asyncio.to_thread(resolve_capabilities, db, auth)
+    except CapabilityStoreError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Capability resolution failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Capability resolution storage is unavailable.",
+        ) from exc
 
 
 @app.get("/api/support/shops", response_model=SupportShopListResponse)
