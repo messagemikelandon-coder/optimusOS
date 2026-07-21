@@ -174,4 +174,15 @@ Relevant sources: `git show 060ab68 --stat --summary`, `app/main.py`, `app/auth.
 - Consequences: Phase 1 (extracting and hardening the existing security kernel) is now the approved next implementation step, before any prompt/manual shared-execution or Sentinel work begins. The Laravel PoC repository (`/home/dejake/optimus-laravel-poc/`) is retained as research evidence, not deleted, and is not deployed.
 - Files affected: `docs/architecture/README.md`, `docs/architecture/STACK-DECISION.md`, `docs/architecture/adr/ADR-014-*.md` through `ADR-021-*.md`, `docs/architecture/PHASE1-SECURITY-KERNEL-PLAN.md`.
 - Revisit if: a future, separately-approved architecture review changes this decision — as a new dated ADR, never by editing `docs/architecture/STACK-DECISION.md`'s body.
-- **Note for future entries in this file:** ADR-014 through ADR-021 are reserved for the detailed records in `docs/architecture/adr/`. The next available number in this file's own sequence is **ADR-022**.
+## ADR-022
+
+- ID: ADR-022
+- Date: 2026-07-20
+- Status: Accepted (design), not yet implemented
+- Context: This is a pointer entry, not the full record — the OptimusOS `/goal` roadmap requires one codebase to support three operating modes (Solo, Mobile Field, Shop) plus a Technician role workspace, and existing subscription tiers, without duplicated business logic. The full inventory, capability matrix, domain model, capability-resolution service design, safe-transition rules, role-vs-mode boundaries, Optimus prompt-first rules, Mobile Field gap analysis, reversible implementation slices, and route classification live in `docs/architecture/OPERATING-MODES-ARCHITECTURE-BRIDGE.md`.
+- Decision: Operating mode and subscription tier are separate, service-resolved axes — one backend capability service (modeled on the existing `effective_shop_id()` tenant-boundary precedent, ADR-019) is the single point every route, store function, the manual UI, and any future AI action must call; UI hiding alone is never sufficient enforcement; hidden data is never deleted. Full reasoning in `docs/architecture/adr/ADR-022-operating-mode-tier-separation.md`.
+- Alternatives considered: forking the codebase per mode, encoding mode as a tier attribute, gating via a general-purpose feature-flag service, and renaming modes to avoid their word overlap with existing tier names — all rejected; full reasoning in the linked ADR.
+- Consequences: this document is design/docs only — no schema, runtime, frontend, API, permission, entitlement, navigation, or behavior change ships with it. Router extraction (Phase 2C) is paused pending this design's review. Implementation is a separate, later, multi-slice effort per the linked document's §9.
+- Files affected: `docs/architecture/README.md`, `docs/architecture/OPERATING-MODES-ARCHITECTURE-BRIDGE.md`, `docs/architecture/adr/ADR-022-operating-mode-tier-separation.md`.
+- Revisit if: implementation of any slice in the linked document's §9 finds the single-service model cannot express a real requirement.
+- **Note for future entries in this file:** the next available number in this file's own sequence is **ADR-023**.

@@ -20,6 +20,7 @@ This directory holds the preserved record of the OptimusOS stack decision (FastA
 | [ADR-019](adr/ADR-019-tenant-boundary.md) | Tenant boundary | Accepted |
 | [ADR-020](adr/ADR-020-security-kernel-integration.md) | Security-kernel integration | Accepted — Phase 1, in progress |
 | [ADR-021](adr/ADR-021-sentinel-event-integration.md) | Sentinel event integration | Accepted (design), not yet implemented |
+| [ADR-022](adr/ADR-022-operating-mode-tier-separation.md) | Operating mode and subscription tier as separate, service-resolved axes | Accepted (design), not yet implemented |
 
 These continue the numbering already used in `docs/context/DECISIONS.md` (which runs ADR-001 through ADR-013 as of this writing) rather than restarting at ADR-001, since they are part of the same project decision history.
 
@@ -28,6 +29,10 @@ These continue the numbering already used in `docs/context/DECISIONS.md` (which 
 The ordered roadmap lives in `STACK-DECISION.md` §7. Current phase: **Phase 1 — security kernel** (ADR-020). Its inventory, gap ranking, files-to-change list, commit sequence, and test/rollback plan live in **[PHASE1-SECURITY-KERNEL-PLAN.md](PHASE1-SECURITY-KERNEL-PLAN.md)**.
 
 Explicitly deferred, not part of Phase 1: vehicle ownership history (ADR-015) and prompt/manual shared execution (ADR-017) both wait until Phase 1 ships and passes its own acceptance tests.
+
+## Operating modes and subscription tiers
+
+**[OPERATING-MODES-ARCHITECTURE-BRIDGE.md](OPERATING-MODES-ARCHITECTURE-BRIDGE.md)** — design bridge for Solo/Mobile Field/Shop operating modes and the Technician role workspace, covering the current-state inventory, capability matrix, domain model, the single capability-resolution service, safe transitions, role-vs-mode boundaries, prompt-first rules for Optimus, Mobile Field gaps, reversible implementation slices, and route classification. Decision recorded in [ADR-022](adr/ADR-022-operating-mode-tier-separation.md). Design/docs only — router extraction (Phase 2C) is paused and no mode/tier gating has shipped.
 
 ## Rules for this directory
 
