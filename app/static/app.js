@@ -205,6 +205,17 @@ const state = {
   // Operating-mode panel working state: the last preview and the mode it was
   // computed for, so Confirm applies exactly what the owner previewed.
   operatingMode: { preview: null, previewMode: null, busy: false },
+  // First-run onboarding: owner-only. `dismissed` is per-session ("Decide
+  // later"); `needsOnboarding` is null until a successful status fetch so a
+  // fetch failure fails open (card stays hidden, never claims completion).
+  onboarding: {
+    needsOnboarding: null,
+    dismissed: false,
+    preview: null,
+    previewMode: null,
+    busy: false,
+    generation: 0,
+  },
   bays: { items: [], generation: 0 },
   workflowGaps: {
     items: [], selectedId: null, page: 1, pageSize: 20, total: 0, hasMore: false,
@@ -318,6 +329,13 @@ function isSupportSession() {
   return state.auth.authenticated && state.auth.user?.role === "support";
 }
 
+function isOwnerSession() {
+  // Strictly the shop owner -- managers, technicians, and support are
+  // excluded. Post-signup onboarding is owner-exclusive, so the first-run
+  // card and its owner-only endpoints are gated on this.
+  return state.auth.authenticated && state.auth.user?.role === "owner";
+}
+
 function requiresEmailVerification(user = state.auth.user) {
   return Boolean(user?.email && !user?.email_verified_at);
 }
@@ -387,6 +405,7 @@ function setCapabilitiesSnapshot(data) {
   state.capabilities.tier = data.tier;
   applyRoleNavVisibility();
   renderOperatingModePanel();
+  renderOnboardingCard();
 }
 
 async function refreshCapabilities() {
@@ -469,6 +488,10 @@ function setAuthState(authenticated, user = null, expiresAt = null) {
     // Drop any prior owner's capability snapshot so it can't shape nav or the
     // mode panel for a different (or logged-out) session before a fresh fetch.
     clearCapabilitiesSnapshot();
+    // Reset first-run onboarding for the new/absent session: a fresh login
+    // re-evaluates whether the card is needed, and "Decide later" only lasts
+    // the session it was chosen in.
+    resetOnboardingState();
   }
   applyRoleNavVisibility();
   if (
@@ -586,6 +609,11 @@ async function handleLoginSubmit(event) {
     } else {
       void loadCustomerOptions();
       void restoreSelectionsFromContext();
+      // Shape nav by the shop's mode from first paint after a fresh login
+      // (owner/manager; fails open), and show the owner-only first-run mode
+      // card if this shop has never confirmed a mode (non-blocking).
+      void refreshCapabilities();
+      void refreshOnboardingStatus();
       navigate("dashboard");
     }
   } catch (error) {
@@ -8004,13 +8032,10 @@ function renderOperatingModePanel() {
   if (preview && preview.current_mode !== current) clearModePreview();
 }
 
-function renderModePreview(preview) {
-  const wrap = $("operating-mode-preview");
-  const body = $("operating-mode-preview-body");
-  const title = $("operating-mode-preview-title");
-  if (!wrap || !body) return;
-  if (title) title.textContent = `Switch to ${modeLabel(preview.proposed_mode)} mode`;
-
+function buildModePreviewBodyHtml(preview) {
+  // Shared preview projection used by both the Settings mode panel and the
+  // first-run onboarding card: capability changes, would-be-hidden areas,
+  // existing-record warnings, and the explicit no-deletion statement.
   const changes = preview.capability_changes || [];
   const changesHtml = changes.length
     ? `<div class="mode-change-list">${changes
@@ -8043,11 +8068,20 @@ function renderModePreview(preview) {
     preview.data_handling_statement || "No data will be deleted, archived, or migrated by this change.",
   )}</p>`;
 
-  body.innerHTML = `<p class="mode-preview-heading">Capability changes</p>
+  return `<p class="mode-preview-heading">Capability changes</p>
     ${changesHtml}
     ${hiddenHtml}
     ${warnHtml}
     ${noDelete}`;
+}
+
+function renderModePreview(preview) {
+  const wrap = $("operating-mode-preview");
+  const body = $("operating-mode-preview-body");
+  const title = $("operating-mode-preview-title");
+  if (!wrap || !body) return;
+  if (title) title.textContent = `Switch to ${modeLabel(preview.proposed_mode)} mode`;
+  body.innerHTML = buildModePreviewBodyHtml(preview);
   wrap.hidden = false;
   const confirm = $("operating-mode-confirm");
   if (confirm) confirm.disabled = Boolean(preview.is_noop);
@@ -8159,6 +8193,213 @@ function initializeOperatingMode() {
 }
 
 // ---------------------------------------------------------------------------
+// First-run post-signup mode onboarding (owner only). A non-blocking card
+// shown once to a newly created shop's owner: pick a mode (preview first,
+// then confirm through the owner-only onboarding API), or "Decide later".
+// Managers/technicians/support never see it and never call its endpoints.
+// The System bay panel remains the permanent change-later path.
+// ---------------------------------------------------------------------------
+
+function setOnboardingStatus(message, kind) {
+  const el = $("onboarding-status");
+  if (!el) return;
+  el.textContent = message || "";
+  el.classList.remove("is-error", "is-success");
+  if (kind === "error") el.classList.add("is-error");
+  else if (kind === "success") el.classList.add("is-success");
+}
+
+function hideOnboardingCard() {
+  const card = $("onboarding-mode-card");
+  if (card) card.hidden = true;
+}
+
+function clearOnboardingPreview() {
+  state.onboarding.preview = null;
+  state.onboarding.previewMode = null;
+  const wrap = $("onboarding-preview");
+  if (wrap) wrap.hidden = true;
+  const body = $("onboarding-preview-body");
+  if (body) body.innerHTML = "";
+}
+
+function resetOnboardingState() {
+  state.onboarding.generation += 1;
+  state.onboarding.needsOnboarding = null;
+  state.onboarding.dismissed = false;
+  state.onboarding.busy = false;
+  clearOnboardingPreview();
+  hideOnboardingCard();
+  setOnboardingStatus("", "");
+}
+
+function renderOnboardingCard() {
+  const card = $("onboarding-mode-card");
+  const cards = $("onboarding-mode-cards");
+  if (!card || !cards) return;
+  // Only ever shown to an owner who still needs onboarding and hasn't
+  // dismissed it this session. `needsOnboarding` stays null on a failed/absent
+  // status fetch, so this fails closed on *showing* (fail open for the app).
+  if (!isOwnerSession() || state.onboarding.needsOnboarding !== true || state.onboarding.dismissed) {
+    hideOnboardingCard();
+    return;
+  }
+  const current = state.capabilities.mode || "shop";
+  cards.innerHTML = MODE_ORDER.map((mode) => {
+    const meta = MODE_META[mode];
+    const isCurrent = mode === current;
+    const badge = isCurrent ? '<span class="mode-card-badge">Default</span>' : "";
+    return `<div class="mode-card${isCurrent ? " is-current" : ""}">
+      <h4>${escapeHtml(meta.label)}</h4>
+      ${badge}
+      <p>${escapeHtml(meta.blurb)}</p>
+      <button class="secondary-button compact" type="button" data-onboard-mode="${mode}">Preview ${escapeHtml(meta.label)}</button>
+    </div>`;
+  }).join("");
+  card.hidden = false;
+}
+
+async function refreshOnboardingStatus() {
+  // Owner-only. Never call the owner-exclusive endpoint for anyone else, and
+  // never show the card to them (managers/technicians/support/invited users).
+  if (!isOwnerSession()) {
+    state.onboarding.needsOnboarding = null;
+    hideOnboardingCard();
+    return;
+  }
+  const generation = (state.onboarding.generation += 1);
+  try {
+    const response = await apiFetch("/api/operating-mode/onboarding");
+    const data = await response.json().catch(() => null);
+    if (generation !== state.onboarding.generation) return; // superseded
+    if (!response.ok || !data) {
+      // Fail open: do not show the card and do not claim onboarding is
+      // complete -- the System bay panel remains available as the change path.
+      state.onboarding.needsOnboarding = null;
+      hideOnboardingCard();
+      return;
+    }
+    state.onboarding.needsOnboarding = Boolean(data.needs_onboarding);
+    renderOnboardingCard();
+  } catch {
+    if (generation !== state.onboarding.generation) return;
+    state.onboarding.needsOnboarding = null;
+    hideOnboardingCard();
+  }
+}
+
+async function previewOnboarding(mode) {
+  if (state.onboarding.busy) return;
+  state.onboarding.busy = true;
+  setOnboardingStatus("Loading preview…", "");
+  try {
+    // Reuse the same read-only preview endpoint the Settings panel uses.
+    const response = await apiFetch("/api/operating-mode/preview", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ proposed_mode: mode }),
+    });
+    const data = await response.json().catch(() => null);
+    if (!response.ok || !data) {
+      setOnboardingStatus((data && data.detail) || "Preview failed.", "error");
+      return;
+    }
+    state.onboarding.preview = data;
+    state.onboarding.previewMode = mode;
+    const wrap = $("onboarding-preview");
+    const body = $("onboarding-preview-body");
+    const title = $("onboarding-preview-title");
+    if (title) title.textContent = `Confirm ${modeLabel(mode)} mode`;
+    if (body) body.innerHTML = buildModePreviewBodyHtml(data);
+    if (wrap) wrap.hidden = false;
+    setOnboardingStatus("", "");
+  } catch {
+    setOnboardingStatus("Preview failed. Check your connection and try again.", "error");
+  } finally {
+    state.onboarding.busy = false;
+  }
+}
+
+async function confirmOnboarding() {
+  const preview = state.onboarding.preview;
+  const mode = state.onboarding.previewMode;
+  if (!preview || !mode || state.onboarding.busy) return;
+  state.onboarding.busy = true;
+  const confirmBtn = $("onboarding-confirm");
+  if (confirmBtn) confirmBtn.disabled = true;
+  setOnboardingStatus("Saving…", "");
+  try {
+    const response = await apiFetch("/api/operating-mode/onboarding/complete", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        expected_current_mode: preview.current_mode,
+        proposed_mode: mode,
+      }),
+    });
+    const data = await response.json().catch(() => null);
+    if (response.status === 409) {
+      // Another session changed the mode first: reload status and require a
+      // fresh preview before completing.
+      clearOnboardingPreview();
+      await refreshCapabilities();
+      renderOnboardingCard();
+      setOnboardingStatus(
+        "The operating mode changed in another session. Pick a mode and preview again to continue.",
+        "error",
+      );
+      return;
+    }
+    if (!response.ok || !data) {
+      setOnboardingStatus((data && data.detail) || "Could not save. Try again.", "error");
+      return;
+    }
+    // Onboarding is done for this shop: hide the card and refresh nav in place.
+    state.onboarding.needsOnboarding = false;
+    clearOnboardingPreview();
+    hideOnboardingCard();
+    if (data.capabilities) setCapabilitiesSnapshot(data.capabilities);
+    else void refreshCapabilities();
+    showToast(`Your shop is set to ${modeLabel(data.new_mode)} mode. Nothing was deleted.`, "success");
+  } catch {
+    setOnboardingStatus("Could not save. Check your connection and try again.", "error");
+  } finally {
+    state.onboarding.busy = false;
+    const btn = $("onboarding-confirm");
+    if (btn) btn.disabled = false;
+  }
+}
+
+function dismissOnboarding() {
+  // "Decide later": non-blocking, session-scoped. The card stays gone until
+  // the next login; the System bay mode panel is always available meanwhile.
+  state.onboarding.dismissed = true;
+  clearOnboardingPreview();
+  hideOnboardingCard();
+}
+
+function initializeOnboarding() {
+  const cards = $("onboarding-mode-cards");
+  if (cards) {
+    cards.addEventListener("click", (event) => {
+      const btn = event.target.closest("[data-onboard-mode]");
+      if (!btn) return;
+      void previewOnboarding(btn.dataset.onboardMode);
+    });
+  }
+  const back = $("onboarding-back");
+  if (back)
+    back.addEventListener("click", () => {
+      clearOnboardingPreview();
+      setOnboardingStatus("", "");
+    });
+  const confirm = $("onboarding-confirm");
+  if (confirm) confirm.addEventListener("click", () => void confirmOnboarding());
+  const later = $("onboarding-later");
+  if (later) later.addEventListener("click", () => dismissOnboarding());
+}
+
+// ---------------------------------------------------------------------------
 // Bays view: a read-only list of the shop's service bays (bay assignment and
 // scheduling stay in the Scheduling workspace). Reachable only when the BAYS
 // capability is surfaced -- the nav item carries data-capability="bays" and is
@@ -8249,6 +8490,7 @@ function initializeApp() {
   initializeScheduling();
   initializeBays();
   initializeOperatingMode();
+  initializeOnboarding();
   initializeEstimate();
   initializeSystem();
   initializeAuth();
@@ -8335,6 +8577,9 @@ function initializeApp() {
       // Load the capability snapshot so navigation is shaped by the shop's
       // operating mode from first paint (owner/manager only; fails open).
       void refreshCapabilities();
+      // Owner-only, non-blocking: show the first-run mode picker if this shop
+      // has never confirmed a mode. Fails open (no card) on any error.
+      void refreshOnboardingStatus();
       if (
         window.location.pathname === "/login" ||
         window.location.pathname === "/signup" ||

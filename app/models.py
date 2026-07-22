@@ -3087,3 +3087,34 @@ class ModeTransitionResult(BaseModel):
     changed: bool
     capability_changes: list[ModeTransitionCapabilityChange]
     capabilities: CapabilitiesRead
+
+
+class ModeOnboardingStatus(BaseModel):
+    """Owner-only read of whether a shop still needs its one-time post-signup
+    operating-mode selection. `needs_onboarding` is true only while the shop
+    has never confirmed a mode (a brand-new shop); backfilled/established
+    shops return false and never see the first-run card."""
+
+    needs_onboarding: bool
+    operating_mode: OperatingMode
+    confirmed_at: datetime | None = None
+
+
+class ModeOnboardingCompleteRequest(BaseModel):
+    # Optimistic concurrency, identical to the Settings apply: the client
+    # states the mode it believes is current; a stale value returns 409.
+    expected_current_mode: OperatingMode
+    proposed_mode: OperatingMode
+
+
+class ModeOnboardingResult(BaseModel):
+    """Result of completing post-signup onboarding: the confirmation is now
+    recorded (`confirmed_at`), what changed, and the fresh capability snapshot
+    so the client can refresh nav without a second round-trip."""
+
+    previous_mode: OperatingMode
+    new_mode: OperatingMode
+    changed: bool
+    confirmed_at: datetime
+    capability_changes: list[ModeTransitionCapabilityChange]
+    capabilities: CapabilitiesRead

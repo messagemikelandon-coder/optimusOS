@@ -349,6 +349,23 @@ Both routes are owner/manager-only (`OwnerAuthContextDep`) and tenant-scoped thr
 
 ---
 
+## 12d. Post-signup mode onboarding — amendment (2026-07-21)
+
+**Implements §12c's recommendation: a non-blocking, post-account-creation mode selection. Resolves unresolved decision #2 part (b) as an onboarding step, not a signup-form field.** Signup itself is unchanged; account creation is never gated on the choice.
+
+**Schema.** Adds one nullable column, `shops.operating_mode_confirmed_at` (migration `035`). `NULL` = the owner has not yet deliberately confirmed a mode (a brand-new shop). Migration 035 backfills every *pre-existing* shop to the migration timestamp — so established shops are treated as already-confirmed and never see the card — while shops created afterwards stay `NULL` (there is deliberately no server default). Clean downgrade drops the column.
+
+**API (owner-exclusive, `require_owner_only_context` — stricter than the Settings routes' owner-or-manager gate; managers, technicians, support, and unauthenticated callers are all denied):**
+
+- `GET /api/operating-mode/onboarding` — read-only status: `needs_onboarding` (true only while `operating_mode_confirmed_at` is `NULL`), current mode, and `confirmed_at`.
+- `POST /api/operating-mode/onboarding/complete` — accepts `proposed_mode` + `expected_current_mode`. **Reuses the mode-transition service's shared lock/optimistic-concurrency primitive and the capability matrix — no transition logic is duplicated.** Atomically applies the mode change (if any) and stamps `operating_mode_confirmed_at` in one transaction; a stale `expected_current_mode` returns 409. Writes **exactly one** `ShopEvent` (`operating_mode_onboarding_completed`, metadata `from_mode`/`to_mode`/`changed`/`source=post_signup_onboarding`/`confirmed_at`, actor) — **including for a deliberate no-op confirmation of the default `shop` mode** (unlike the Settings apply, which is silent on a no-op). Returns the fresh capability snapshot + completion state.
+
+**UI (owner only).** A non-blocking first-run card appears after login for an owner whose shop is still unconfirmed. It presents the three modes, keeps tier separate, previews via the existing `POST /api/operating-mode/preview` (showing would-be-hidden/limited areas and the no-deletion wording), then completes through the onboarding API and refreshes capabilities + desktop/mobile nav in place. **"Decide later"** dismisses it for the session (the System bay panel remains the permanent change-later path). Backfilled/confirmed shops never see it; managers and invited users never see it and never call the owner-only endpoints; a status-fetch failure fails open (no card, and it never claims onboarding is complete).
+
+**Still out of scope (unchanged):** ENFORCE / the bays observe gate; tier/seats; data deletion or capability overrides; Mobile Field travel/radius/fee/media models; technician appointment access; any broader business-profile wizard; router extraction.
+
+---
+
 ## 13. Documentation/link/checksum validation performed
 
 - Verified every file:line citation in this document against the current `main` branch (post-PR-#75 merge, commit `1ff6bad`) at the time of writing.

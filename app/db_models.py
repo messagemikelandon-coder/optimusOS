@@ -2081,6 +2081,16 @@ class Shop(Base):
     operating_mode: Mapped[str] = mapped_column(
         String(20), nullable=False, default="shop", server_default="shop"
     )
+    # ADR-022 post-signup onboarding: NULL means the shop's owner has not yet
+    # deliberately confirmed an operating mode, so a newly created shop is
+    # "unconfirmed" and its owner sees the one-time first-run mode picker.
+    # Deliberately nullable with no default -- migration 035 backfills every
+    # pre-existing shop to the migration timestamp (established shops must not
+    # be interrupted), while new shops created after it stay NULL until their
+    # owner confirms. Confirmation never blocks signup or any other route.
+    operating_mode_confirmed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )

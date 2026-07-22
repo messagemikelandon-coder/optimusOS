@@ -26,6 +26,7 @@ from app.auth import (
     require_authenticated_user,
     require_billing_context,
     require_owner_context,
+    require_owner_only_context,
     require_owner_or_technician_context,
     require_support_context,
     require_verified_auth_context,
@@ -40,6 +41,7 @@ AuthContextDep = Annotated[AuthContext, Depends(get_current_auth_context)]
 VerifiedAuthContextDep = Annotated[AuthContext, Depends(require_verified_auth_context)]
 CurrentUserDep = Annotated[UserAccount, Depends(require_authenticated_user)]
 OwnerAuthContextDep = Annotated[AuthContext, Depends(require_owner_context)]
+OwnerOnlyAuthContextDep = Annotated[AuthContext, Depends(require_owner_only_context)]
 OwnerOrTechnicianAuthContextDep = Annotated[
     AuthContext, Depends(require_owner_or_technician_context)
 ]

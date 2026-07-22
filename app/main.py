@@ -46,6 +46,7 @@ from app.api.deps import (
     CurrentUserDep,
     DbSessionDep,
     OwnerAuthContextDep,
+    OwnerOnlyAuthContextDep,
     OwnerOrTechnicianAuthContextDep,
     SettingsDep,
     SupportAuthContextDep,
@@ -161,6 +162,8 @@ from app.mode_transition_store import (
     ModeTransitionConflictError,
     ModeTransitionError,
     apply_mode_transition,
+    complete_mode_onboarding,
+    get_mode_onboarding_status,
     preview_mode_transition,
 )
 from app.models import (
@@ -227,6 +230,9 @@ from app.models import (
     InvoiceRead,
     InvoiceStatus,
     LocationInput,
+    ModeOnboardingCompleteRequest,
+    ModeOnboardingResult,
+    ModeOnboardingStatus,
     ModeTransitionApplyRequest,
     ModeTransitionPreview,
     ModeTransitionPreviewRequest,
@@ -1586,6 +1592,64 @@ async def apply_operating_mode_change(
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except SQLAlchemyError as exc:
         logger.warning("Operating-mode apply failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Operating-mode storage is unavailable.",
+        ) from exc
+
+
+@app.get("/api/operating-mode/onboarding", response_model=ModeOnboardingStatus)
+async def get_operating_mode_onboarding_status(
+    db: DbSessionDep,
+    auth: OwnerOnlyAuthContextDep,
+) -> ModeOnboardingStatus:
+    """ADR-022 post-signup onboarding: owner-only read of whether this shop
+    still needs its one-time first-run operating-mode selection. Read-only.
+    Owner-exclusive (`OwnerOnlyAuthContextDep`) -- an invited manager,
+    technician, support, or unauthenticated caller cannot reach it, so the
+    first-run card is never surfaced to them.
+    """
+    try:
+        return await asyncio.to_thread(get_mode_onboarding_status, db, auth)
+    except ModeTransitionError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Operating-mode onboarding status failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Operating-mode storage is unavailable.",
+        ) from exc
+
+
+@app.post("/api/operating-mode/onboarding/complete", response_model=ModeOnboardingResult)
+async def complete_operating_mode_onboarding(
+    payload: ModeOnboardingCompleteRequest,
+    db: DbSessionDep,
+    auth: OwnerOnlyAuthContextDep,
+) -> ModeOnboardingResult:
+    """ADR-022 post-signup onboarding: owner-only completion of the one-time
+    first-run mode selection. Optimistically concurrent (`expected_current_mode`
+    must match, else 409) and audited (exactly one `ShopEvent`,
+    `source=post_signup_onboarding`). Records `operating_mode_confirmed_at`
+    even when the owner keeps the default `shop` (a deliberate confirmation).
+    Changes only `Shop.operating_mode`/`operating_mode_confirmed_at` -- never
+    tier, seats, business data, route access, or enforcement. Owner-exclusive
+    (`OwnerOnlyAuthContextDep`).
+    """
+    try:
+        return await asyncio.to_thread(
+            complete_mode_onboarding,
+            db,
+            auth,
+            expected_current_mode=payload.expected_current_mode,
+            proposed_mode=payload.proposed_mode,
+        )
+    except ModeTransitionConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ModeTransitionError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Operating-mode onboarding completion failed due to storage error.")
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Operating-mode storage is unavailable.",
