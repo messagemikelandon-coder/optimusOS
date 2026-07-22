@@ -4,6 +4,7 @@ import asyncio
 import hashlib
 import logging
 import os
+import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Annotated, Any
@@ -195,6 +196,10 @@ from app.models import (
     DiagnosticFindingRead,
     DiagnosticFindingUpdate,
     DiagnosticInspectionReportResponse,
+    DiskThresholdsRead,
+    DiskUsageRead,
+    DockerCategoryUsageRead,
+    DockerStorageRead,
     EstimateApprovalActionRequest,
     EstimateApprovalActionResponse,
     EstimateApprovalAuditResponse,
@@ -263,6 +268,7 @@ from app.models import (
     ShopInvitationRead,
     ShopMemberRead,
     ShopSignupRequest,
+    StorageObservabilityRead,
     SubscribeRequest,
     SubscriptionEventsResponse,
     SubscriptionRead,
@@ -301,6 +307,7 @@ from app.models import (
 # defined in the app.net leaf so app/api/context_deps.py can share it.
 from app.net import _tcp_dependency_ready as _tcp_dependency_ready
 from app.observability import configure_structured_logging, install_request_context_middleware
+from app.operations_monitor import storage_service
 from app.orchestrator import OptimusResearchOrchestrator
 from app.part_allocation_store import (
     PartAllocationNotFoundError,
@@ -354,6 +361,12 @@ from app.square_store import (
     refresh_square_invoice,
 )
 from app.startup_checks import validate_production_config
+from app.storage_monitor import (
+    DiskThresholdStatus,
+    StorageSnapshot,
+    classify_disk_status,
+    collect_storage_snapshot,
+)
 from app.subscription_store import (
     SubscriptionConflictError,
     SubscriptionStoreError,
@@ -610,6 +623,28 @@ async def enforce_signup_rate_limit(request: Request, settings: Settings) -> Non
         )
         raise HTTPException(
             status_code=429, detail="Too many signup attempts. Try again shortly."
+        ) from exc
+
+
+def get_operations_storage_rate_limiter(settings: Settings) -> RateLimiter:
+    return _rate_limiters.get(
+        "operations-storage",
+        redis_url=settings.redis_url,
+        limit=settings.max_operations_storage_requests_per_minute,
+    )
+
+
+async def enforce_operations_storage_rate_limit(request: Request, settings: Settings) -> None:
+    client_host = request.client.host if request.client else "unknown"
+    client_key = f"operations-storage:{client_host}"
+    try:
+        await get_operations_storage_rate_limiter(settings).check(client_key)
+    except RateLimitExceeded as exc:
+        log_security_event(
+            logger, SecurityEventType.RATE_LIMIT_EXCEEDED, request=request, limit_key=client_key
+        )
+        raise HTTPException(
+            status_code=429, detail="Too many storage-status requests. Try again shortly."
         ) from exc
 
 
@@ -1654,6 +1689,97 @@ async def complete_operating_mode_onboarding(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Operating-mode storage is unavailable.",
         ) from exc
+
+
+@app.get("/api/operations/storage", response_model=StorageObservabilityRead)
+async def get_storage_observability(
+    request: Request,
+    response: Response,
+    settings: SettingsDep,
+    auth: SupportAuthContextDep,
+) -> StorageObservabilityRead:
+    """Platform-support-only, read-only, bounded snapshot of host filesystem
+    and Docker storage usage. This is NOT production host monitoring: it
+    reports only the resources visible to this application process (see
+    docs/context/MONITORING.md sec 4). Rate-limited, and served from a TTL
+    cache with single-flight collection, so at most one `docker system df`
+    runs per TTL window regardless of request volume. Never returns the raw
+    configured host path (a non-sensitive label is used) and sets
+    Cache-Control: no-store. Support-only via `require_support_context`, which
+    admits genuine support sessions only -- an impersonated-owner session has
+    role `owner` and is rejected, so support impersonation cannot reach this
+    platform-infrastructure surface."""
+    await enforce_operations_storage_rate_limit(request, settings)
+
+    def _emit(status: DiskThresholdStatus, snapshot: StorageSnapshot) -> None:
+        # Operational reliability warning (not a security/audit event). Carries
+        # only non-sensitive fields: the target label, numeric percentages, and
+        # the support actor's role and internal account id -- never the raw
+        # path, username, or email.
+        logger.warning(
+            "disk usage threshold crossed",
+            extra={
+                "reliability_event": f"disk.usage_{status.value}",
+                "storage_target": settings.storage_target_label,
+                "disk_used_percent": snapshot.disk.used_percent,
+                "disk_warning_percent": settings.disk_warning_percent,
+                "disk_critical_percent": settings.disk_critical_percent,
+                "actor_role": auth.user.role,
+                "actor_user_id": auth.user.id,
+            },
+        )
+
+    bounded = await asyncio.to_thread(
+        storage_service.get_snapshot,
+        ttl_seconds=settings.storage_snapshot_ttl_seconds,
+        cooldown_seconds=settings.storage_warning_cooldown_seconds,
+        warning_percent=settings.disk_warning_percent,
+        critical_percent=settings.disk_critical_percent,
+        collect=lambda: collect_storage_snapshot(settings.disk_monitor_path),
+        emit=_emit,
+        monotonic=time.monotonic,
+        now_wall=lambda: datetime.now(UTC),
+    )
+
+    response.headers["Cache-Control"] = "no-store"
+
+    disk = bounded.snapshot.disk
+    docker = bounded.snapshot.docker
+    status = classify_disk_status(
+        disk.used_percent,
+        warning_percent=settings.disk_warning_percent,
+        critical_percent=settings.disk_critical_percent,
+    )
+    return StorageObservabilityRead(
+        target=settings.storage_target_label,
+        freshness=bounded.freshness,
+        collected_at=bounded.collected_at,
+        age_seconds=round(bounded.age_seconds, 3),
+        disk=DiskUsageRead(
+            total_bytes=disk.total_bytes,
+            used_bytes=disk.used_bytes,
+            available_bytes=disk.available_bytes,
+            used_percent=disk.used_percent,
+            status=status,
+        ),
+        docker=DockerStorageRead(
+            availability=docker.availability,
+            reason=docker.reason,
+            categories=[
+                DockerCategoryUsageRead(
+                    category=category.category,
+                    count=category.count,
+                    size_bytes=category.size_bytes,
+                    reclaimable_bytes=category.reclaimable_bytes,
+                )
+                for category in docker.categories
+            ],
+        ),
+        thresholds=DiskThresholdsRead(
+            warning_percent=settings.disk_warning_percent,
+            critical_percent=settings.disk_critical_percent,
+        ),
+    )
 
 
 @app.get("/api/support/shops", response_model=SupportShopListResponse)
