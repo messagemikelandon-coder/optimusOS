@@ -151,6 +151,49 @@ class DecodedVehicle(BaseModel):
         return " ".join(part for part in parts if part) or self.vin or "Unknown vehicle"
 
 
+class VinDecodeStatus(StrEnum):
+    """Outcome of a standalone vehicle-intake VIN decode.
+
+    ``decoded`` -- year, make, and model were all resolved.
+    ``partial`` -- some identity fields resolved, but not the full year/make/model.
+    ``unavailable`` -- the decode service could not be reached or returned nothing;
+    the caller should fall back to manual entry. This is the safe-failure state:
+    the endpoint never surfaces a 5xx for an unreachable upstream, and never
+    presents an un-decoded VIN as if it were a confirmed vehicle.
+    """
+
+    DECODED = "decoded"
+    PARTIAL = "partial"
+    UNAVAILABLE = "unavailable"
+
+
+class VinDecodeRequest(BaseModel):
+    """A vehicle-first VIN decode request. No customer is required -- the shop can
+    identify a vehicle before any customer record exists."""
+
+    vin: str = Field(min_length=17, max_length=17)
+
+    @field_validator("vin")
+    @classmethod
+    def normalize_vin(cls, value: str) -> str:
+        cleaned = "".join(value.upper().split())
+        if not re.fullmatch(r"[A-HJ-NPR-Z0-9]{17}", cleaned):
+            raise ValueError(
+                "VIN must be exactly 17 valid letters and digits and cannot contain I, O, or Q."
+            )
+        return cleaned
+
+
+class VinDecodeResponse(BaseModel):
+    """Safe-failure result of a standalone VIN decode. ``decoded`` is populated on
+    ``decoded``/``partial`` and is ``None`` on ``unavailable``. ``message`` is a
+    short, human-facing explanation suitable for a toast."""
+
+    status: VinDecodeStatus
+    message: str
+    decoded: DecodedVehicle | None = None
+
+
 class Availability(StrEnum):
     CONFIRMED_IN_STOCK = "confirmed_in_stock"
     LIMITED = "limited"

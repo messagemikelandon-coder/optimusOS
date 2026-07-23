@@ -522,6 +522,12 @@ button[disabled] { cursor: wait; opacity: .6; transform: none !important; }
 .prompt-chip:hover { color: white; border-color: rgba(173,70,52,.32); background: var(--blue-soft); }
 .text-button { padding: 0; border: 0; background: transparent; color: var(--blue); font-size: .72rem; font-weight: 800; cursor: pointer; }
 .text-button:hover { color: var(--cyan); }
+.text-button:disabled { opacity: .5; cursor: default; }
+.vin-decode-row { display: flex; align-items: center; gap: 12px; margin-top: 8px; flex-wrap: wrap; }
+.vin-decode-status { font-size: .72rem; font-weight: 700; color: var(--muted); }
+.vin-decode-status[data-tone="success"] { color: var(--green, #4ade80); }
+.vin-decode-status[data-tone="warn"] { color: var(--amber, #fbbf24); }
+.vin-decode-status[data-tone="error"] { color: var(--red, #f87171); }
 .status-list { display: grid; gap: 3px; }
 .status-list > div { display: flex; align-items: center; justify-content: space-between; gap: 15px; padding: 10px 0; border-bottom: 1px solid rgba(147,174,198,.08); }
 .status-list > div:last-child { border-bottom: 0; }

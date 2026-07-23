@@ -1,12 +1,27 @@
 from __future__ import annotations
 
+import logging
 from typing import Any
 from urllib.parse import quote
 
-from app.models import DecodedVehicle, VehicleInput
+import httpx
+
+from app.models import (
+    DecodedVehicle,
+    VehicleInput,
+    VinDecodeResponse,
+    VinDecodeStatus,
+)
 from app.services.http import SafeHttpClient
 
+logger = logging.getLogger(__name__)
+
 VPIC_BASE_URL = "https://vpic.nhtsa.dot.gov/api/vehicles/DecodeVinValues"
+
+_UNAVAILABLE_MESSAGE = (
+    "VIN lookup is unavailable right now. Enter the vehicle details manually; "
+    "you can retry the decode later."
+)
 
 
 def _first_nonblank(*values: Any) -> str | None:
@@ -58,4 +73,52 @@ class VinService:
             body_class=_first_nonblank(item.get("BodyClass")),
             error_code=_first_nonblank(item.get("ErrorCode")),
             error_text=_first_nonblank(item.get("ErrorText")),
+        )
+
+    async def decode_intake(self, vin: str) -> VinDecodeResponse:
+        """Decode a VIN for standalone vehicle intake, never raising on an
+        unreachable or malformed upstream response.
+
+        This is the vehicle-first, safe-failure entry point used by the intake
+        endpoint. Any transport error, non-JSON body, empty result, or unexpected
+        upstream shape degrades to a ``VinDecodeStatus.UNAVAILABLE`` result with a
+        manual-entry message rather than a 5xx -- the shop can always fall back to
+        typing the vehicle in by hand. A VIN that decodes but resolves neither
+        year, make, nor model is also reported as ``UNAVAILABLE`` so an
+        un-decoded VIN is never presented as a confirmed vehicle.
+        """
+        try:
+            decoded = await self.decode(VehicleInput(vin=vin))
+        except (httpx.HTTPError, ValueError, KeyError, TypeError) as exc:
+            logger.warning(
+                "VIN decode unavailable",
+                extra={
+                    "reliability_event": "vin_decode.unavailable",
+                    "error_type": type(exc).__name__,
+                },
+            )
+            return VinDecodeResponse(
+                status=VinDecodeStatus.UNAVAILABLE, message=_UNAVAILABLE_MESSAGE, decoded=None
+            )
+
+        has_year_make_model = bool(decoded.year and decoded.make and decoded.model)
+        has_any = bool(
+            decoded.year or decoded.make or decoded.model or decoded.trim or decoded.engine
+        )
+        if has_year_make_model:
+            return VinDecodeResponse(
+                status=VinDecodeStatus.DECODED,
+                message="VIN decoded. Review the populated fields before saving.",
+                decoded=decoded,
+            )
+        if has_any:
+            return VinDecodeResponse(
+                status=VinDecodeStatus.PARTIAL,
+                message=(
+                    "VIN partially decoded. Confirm and complete the vehicle details before saving."
+                ),
+                decoded=decoded,
+            )
+        return VinDecodeResponse(
+            status=VinDecodeStatus.UNAVAILABLE, message=_UNAVAILABLE_MESSAGE, decoded=None
         )

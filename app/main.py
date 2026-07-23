@@ -9,7 +9,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Annotated, Any
 
-from fastapi import FastAPI, HTTPException, Query, Request, Response, status
+from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -292,6 +292,8 @@ from app.models import (
     VehicleUpdate,
     VendorPurchasingReportResponse,
     VerifyEmailRequest,
+    VinDecodeRequest,
+    VinDecodeResponse,
     WorkerHeartbeatRead,
     WorkflowGapCreate,
     WorkflowGapEventsResponse,
@@ -368,6 +370,7 @@ from app.services.http import SafeHttpClient
 from app.services.location import LocationService
 from app.services.optimus_chat import OptimusChatService
 from app.services.square import SquareApiError, SquareInvoiceClient, SquareSubscriptionClient
+from app.services.vin import VinService
 from app.shop_store import ShopSignupConflictError, ShopSignupError, signup_shop_owner
 from app.square_store import (
     SquareAlreadyPushedError,
@@ -683,6 +686,42 @@ async def enforce_operations_summary_rate_limit(request: Request, settings: Sett
         raise HTTPException(
             status_code=429, detail="Too many operations-summary requests. Try again shortly."
         ) from exc
+
+
+def get_vin_decode_rate_limiter(settings: Settings) -> RateLimiter:
+    return _rate_limiters.get(
+        "vin-decode",
+        redis_url=settings.redis_url,
+        limit=settings.max_vin_decode_requests_per_minute,
+    )
+
+
+async def enforce_vin_decode_rate_limit(request: Request, settings: Settings) -> None:
+    client_host = request.client.host if request.client else "unknown"
+    client_key = f"vin-decode:{client_host}"
+    try:
+        await get_vin_decode_rate_limiter(settings).check(client_key)
+    except RateLimitExceeded as exc:
+        log_security_event(
+            logger, SecurityEventType.RATE_LIMIT_EXCEEDED, request=request, limit_key=client_key
+        )
+        raise HTTPException(
+            status_code=429, detail="Too many VIN decode requests. Try again shortly."
+        ) from exc
+
+
+def get_vin_service(settings: SettingsDep) -> VinService:
+    """VIN decode service restricted to the NHTSA vPIC host, matching the
+    outbound-host allowlist the research orchestrator already uses. Provided as a
+    FastAPI dependency so tests can override it without any network access."""
+    http = SafeHttpClient(
+        timeout_seconds=settings.http_timeout_seconds,
+        allowed_hosts=("vpic.nhtsa.dot.gov",),
+    )
+    return VinService(http)
+
+
+VinServiceDep = Annotated[VinService, Depends(get_vin_service)]
 
 
 def email_adapter() -> LoggingEmailAdapter:
@@ -2388,6 +2427,30 @@ async def get_customer_history_record(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Customer history storage is unavailable.",
         ) from exc
+
+
+@app.post("/api/vehicles/decode-vin", response_model=VinDecodeResponse)
+async def decode_vehicle_vin(
+    payload: VinDecodeRequest,
+    request: Request,
+    response: Response,
+    settings: SettingsDep,
+    auth: OwnerAuthContextDep,
+    vin_service: VinServiceDep,
+) -> VinDecodeResponse:
+    """Vehicle-first VIN decode for intake: given a 17-character VIN, resolve
+    year/make/model/trim/engine/drivetrain for automatic field population, with
+    no customer record required.
+
+    Owner/manager only (`OwnerAuthContextDep`), rate-limited per client because it
+    triggers one outbound NHTSA vPIC lookup. It is a read-only lookup -- it
+    creates and mutates nothing. On an unreachable or malformed upstream it
+    degrades to a `unavailable` result (HTTP 200) with a manual-entry message
+    rather than a 5xx, and it never presents an un-decoded VIN as a confirmed
+    vehicle. Sets `Cache-Control: no-store`."""
+    await enforce_vin_decode_rate_limit(request, settings)
+    response.headers["Cache-Control"] = "no-store"
+    return await vin_service.decode_intake(payload.vin)
 
 
 @app.get("/api/vehicles", response_model=VehicleListResponse)

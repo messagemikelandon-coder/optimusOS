@@ -132,6 +132,9 @@ class Settings(BaseSettings):
     dependency_probe_timeout_seconds: float = Field(default=1.0, ge=0.1, le=10.0)
     runtime_warning_cooldown_seconds: int = Field(default=300, ge=0, le=86_400)
     max_operations_summary_requests_per_minute: int = Field(default=30, ge=1, le=240)
+    # Vehicle-first intake: standalone VIN decode triggers one outbound NHTSA
+    # vPIC lookup, so it is throttled per client to bound the outbound-call rate.
+    max_vin_decode_requests_per_minute: int = Field(default=20, ge=1, le=240)
     session_ttl_hours: int = Field(default=12, ge=1, le=168)
     frontend_origin: str = "http://127.0.0.1:5173"
     session_cookie_name: str = "optimus_session"

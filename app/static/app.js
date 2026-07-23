@@ -2916,6 +2916,7 @@ function populateVehicleForm(vehicle = null, options = {}) {
   $("vehicle-id").value = vehicle?.id ?? "";
   $("vehicle-customer-id").value = customerId ? String(customerId) : "";
   $("vehicle-vin").value = vehicle?.vin ?? "";
+  setVinDecodeStatus("");
   $("vehicle-year").value = vehicle?.year ?? "";
   $("vehicle-make").value = vehicle?.make ?? "";
   $("vehicle-model").value = vehicle?.model ?? "";
@@ -3472,9 +3473,71 @@ async function loadPublicApprovalPage() {
   }
 }
 
+function setVinDecodeStatus(message, tone = "") {
+  const el = $("vehicle-decode-status");
+  if (!el) return;
+  el.textContent = message || "";
+  el.dataset.tone = tone;
+}
+
+function applyDecodedVehicleFields(decoded) {
+  // Only populate fields the user has left blank, so a decode never clobbers
+  // details the shop already entered by hand.
+  const mapping = {
+    "vehicle-year": decoded.year,
+    "vehicle-make": decoded.make,
+    "vehicle-model": decoded.model,
+    "vehicle-trim": decoded.trim,
+    "vehicle-engine": decoded.engine,
+    "vehicle-drivetrain": decoded.drivetrain,
+  };
+  let filled = 0;
+  for (const [id, value] of Object.entries(mapping)) {
+    const field = $(id);
+    if (!field || value === null || value === undefined || value === "") continue;
+    if (field.value.trim() !== "") continue;
+    field.value = String(value);
+    filled += 1;
+  }
+  return filled;
+}
+
+async function decodeVehicleVin() {
+  const button = $("vehicle-decode-vin");
+  const vin = $("vehicle-vin").value.trim().toUpperCase();
+  if (vin.length !== 17) {
+    setVinDecodeStatus("Enter a full 17-character VIN to decode.", "error");
+    return;
+  }
+  button.disabled = true;
+  setVinDecodeStatus("Decoding VIN…", "");
+  try {
+    const response = await apiFetch("/api/vehicles/decode-vin", {
+      method: "POST",
+      body: JSON.stringify({ vin }),
+    });
+    const data = await readApiPayload(response);
+    if (!response.ok || !data) throw apiError(response, data, "VIN decode failed");
+    if (data.status === "unavailable" || !data.decoded) {
+      setVinDecodeStatus(data.message || "VIN could not be decoded. Enter details manually.", "warn");
+      return;
+    }
+    const filled = applyDecodedVehicleFields(data.decoded);
+    const suffix = filled ? ` Populated ${filled} empty field${filled === 1 ? "" : "s"}.` : " No empty fields to fill.";
+    setVinDecodeStatus((data.message || "VIN decoded.") + suffix, data.status === "partial" ? "warn" : "success");
+  } catch (error) {
+    setVinDecodeStatus(`VIN decode failed: ${error.message}`, "error");
+  } finally {
+    button.disabled = false;
+  }
+}
+
 function initializeVehicles() {
   $("vehicle-form").addEventListener("submit", (event) => {
     void submitVehicleForm(event);
+  });
+  $("vehicle-decode-vin").addEventListener("click", () => {
+    void decodeVehicleVin();
   });
   $("vehicle-cancel").addEventListener("click", () => {
     state.vehicles.selectedVehicleId = null;

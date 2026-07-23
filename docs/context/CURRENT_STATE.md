@@ -20,6 +20,17 @@ Relevant sources: `git status --short --branch`, `git rev-parse HEAD`, `env UV_C
   - **Bays remains OBSERVE-only** (capability-gate telemetry). **No capability enforcement has shipped** — an AST safeguard (`tests/test_capability_gate_safeguards.py`) fails the build if any route references `CapabilityGateMode.ENFORCE`. The first enforcement change, when it comes, is Bays alone, gated on its own observe-pilot evidence.
 - Full ADR-022 slice history: `docs/architecture/OPERATING-MODES-ARCHITECTURE-BRIDGE.md` §12a–§12d and the ADR-022 implementation-status amendment. The `/goal` pilot-phase status (a separate 17-phase numbering) remains in `docs/context/GOAL_EVIDENCE_MATRIX.md`.
 
+## VIN-decode vehicle intake (branch `agent/claude/vin-decode-intake`, review/merge pending — NOT on `main`)
+
+Vehicle-first foundation slice (`/goal` order item 2). Additive, on top of `main` at `e5ead03`.
+
+- New endpoint `POST /api/vehicles/decode-vin`, owner/manager-gated (`OwnerAuthContextDep`; classified by the existing `tests/test_role_isolation.py` static audit with no allowlist change). Given a 17-character VIN it resolves year/make/model/trim/engine/drivetrain for **automatic vehicle-field population** with **no customer record required**. Read-only lookup (creates/mutates nothing), rate-limited per client (`MAX_VIN_DECODE_REQUESTS_PER_MINUTE`, default 20) because it triggers one outbound NHTSA vPIC lookup, and sets `Cache-Control: no-store`.
+- **Safe-failure by design:** `app/services/vin.py::VinService.decode_intake()` wraps the existing NHTSA decode and, on any transport/parse error or empty upstream result, returns a `VinDecodeStatus.UNAVAILABLE` response (HTTP 200) with a manual-entry message rather than a 5xx. A VIN that decodes but resolves no identity fields is also reported `unavailable`, so an un-decoded VIN is never presented as a confirmed vehicle. `decoded`/`partial` classify full vs. incomplete year/make/model.
+- Frontend: a "Decode VIN" button + live status on the vehicle intake form (`app/static/index.html`/`app.js`/`styles.css`); the handler populates **only empty** identity fields, never clobbering hand-entered values, and uses `textContent` (no XSS surface).
+- The VIN service is a FastAPI dependency (`get_vin_service`) restricted to the `vpic.nhtsa.dot.gov` host allowlist the research orchestrator already uses, and is overridable in tests so no test makes a real outbound call.
+- Additive only: no migration (head stays `035_operating_mode_confirmed_at`), no schema, no change to any existing route/behavior; OpenAPI gains one POST. Rollback = revert the single commit.
+- Gates: ruff format/check + pyright clean; `node --check app/static/app.js` clean; fast suite **799 passed, 2 skipped** (+13 new tests: `tests/test_vin.py` safe-failure/classification units, `tests/test_vin_decode_api.py` auth/decoded/soft-failure/invalid-VIN/no-store/rate-limit). Full Docker/Playwright e2e is CI's job. **Not merged — awaiting owner review/approval.**
+
 ## Phase 2B — bounded runtime observability summary (branch, draft PR pending — NOT yet on `main`)
 
 Second Phase 2 (observability) slice, additive on top of merged Phase 2A. Implemented on branch `agent/claude/phase2b-runtime-observability` off `main` at `b81aad5`; awaiting draft-PR review and merge. Do not treat as merged until it lands on `main` (ADR-024).
