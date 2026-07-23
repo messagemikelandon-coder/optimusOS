@@ -1228,9 +1228,13 @@
                   <p>Select an intake request from the list or create a new one.</p>
                 </div>
                 <form class="estimate-submit-row" id="service-desk-convert-form">
-                  <div><strong>Convert to customer</strong><span>Creates a real customer record (and optionally a vehicle) from this request. Vehicle fields default to the draft's decoded values; leave the existing-customer ID blank to create a new customer.</span></div>
+                  <div><strong>Convert to customer</strong><span>Creates a real customer record (and optionally a vehicle) from this request. Vehicle fields default to the draft's decoded values; leave the customer search blank to create a new customer.</span></div>
                   <div class="customers-form-actions">
-                    <input id="service-desk-convert-customer-id" class="convert-field-narrow" type="number" min="1" placeholder="Existing customer ID (optional)">
+                    <div class="customer-typeahead convert-field-narrow" id="service-desk-convert-customer-typeahead">
+                      <input id="service-desk-convert-customer-search" type="text" autocomplete="off" placeholder="Attach existing customer (search)" role="combobox" aria-expanded="false" aria-haspopup="listbox" aria-autocomplete="list" aria-controls="service-desk-convert-customer-results" aria-label="Search existing customers to attach">
+                      <input id="service-desk-convert-customer-id" type="hidden">
+                      <div id="service-desk-convert-customer-results" class="customer-typeahead-results" role="listbox" aria-label="Matching customers" hidden></div>
+                    </div>
                     <input id="service-desk-convert-vehicle-vin" class="convert-field-narrow" maxlength="17" placeholder="VIN (override)">
                     <input id="service-desk-convert-vehicle-year" class="convert-field-narrow" type="number" min="1900" max="2100" placeholder="Year">
                     <input id="service-desk-convert-vehicle-make" class="convert-field-narrow" placeholder="Make">

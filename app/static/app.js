@@ -4883,6 +4883,7 @@ async function selectServiceDeskRequest(requestId) {
 }
 
 function populateServiceDeskForm(request = null) {
+  resetConvertCustomerTypeahead();
   $("service-desk-id").value = request ? String(request.id) : "";
   $("service-desk-customer-name").value = request ? request.customer_name : "";
   $("service-desk-phone").value = request ? request.phone || "" : "";
@@ -5044,7 +5045,145 @@ async function submitServiceDeskConvert(event) {
   }
 }
 
+// ---- Convert-to-customer typeahead (same-shop, bounded, accessible) ----
+
+const convertCustomerTypeahead = { timer: null, items: [], activeIndex: -1 };
+
+function closeConvertCustomerResults() {
+  const results = $("service-desk-convert-customer-results");
+  if (!results) return;
+  results.hidden = true;
+  results.innerHTML = "";
+  convertCustomerTypeahead.items = [];
+  convertCustomerTypeahead.activeIndex = -1;
+  const search = $("service-desk-convert-customer-search");
+  if (search) {
+    search.setAttribute("aria-expanded", "false");
+    search.removeAttribute("aria-activedescendant");
+  }
+}
+
+function resetConvertCustomerTypeahead() {
+  const search = $("service-desk-convert-customer-search");
+  if (search) search.value = "";
+  const hidden = $("service-desk-convert-customer-id");
+  if (hidden) hidden.value = "";
+  closeConvertCustomerResults();
+}
+
+function selectConvertCustomer(id, name) {
+  $("service-desk-convert-customer-id").value = id ? String(id) : "";
+  $("service-desk-convert-customer-search").value = name || "";
+  closeConvertCustomerResults();
+}
+
+function showConvertCustomerStatus(message) {
+  const results = $("service-desk-convert-customer-results");
+  results.innerHTML = `<p class="customer-typeahead-status" role="status">${escapeHtml(message)}</p>`;
+  results.hidden = false;
+  $("service-desk-convert-customer-search").setAttribute("aria-expanded", "true");
+}
+
+function renderConvertCustomerResults(items) {
+  const results = $("service-desk-convert-customer-results");
+  convertCustomerTypeahead.items = items;
+  convertCustomerTypeahead.activeIndex = -1;
+  if (!items.length) {
+    showConvertCustomerStatus("No matching customers.");
+    return;
+  }
+  results.innerHTML = items
+    .map((customer, index) => {
+      const subtitle = [customer.email, customer.phone].filter(Boolean).join(" · ");
+      return `<button type="button" role="option" id="convert-customer-option-${index}" class="customer-typeahead-option" data-customer-id="${Number(customer.id)}" data-customer-name="${escapeHtml(customer.display_name || "Customer")}"><strong>${escapeHtml(customer.display_name || "Customer")}</strong>${subtitle ? `<span>${escapeHtml(subtitle)}</span>` : ""}</button>`;
+    })
+    .join("");
+  results.hidden = false;
+  $("service-desk-convert-customer-search").setAttribute("aria-expanded", "true");
+  results.querySelectorAll("[data-customer-id]").forEach((button) => {
+    // mousedown (not click) so the selection lands before the input's blur
+    // handler closes the list.
+    button.addEventListener("mousedown", (event) => {
+      event.preventDefault();
+      selectConvertCustomer(Number(button.dataset.customerId), button.dataset.customerName);
+    });
+  });
+}
+
+async function searchConvertCustomers(query) {
+  const trimmed = query.trim();
+  // Any keystroke invalidates a previously chosen customer id until one is
+  // re-selected, so an edited name can never silently keep a stale attachment.
+  $("service-desk-convert-customer-id").value = "";
+  if (trimmed.length < 2) {
+    closeConvertCustomerResults();
+    return;
+  }
+  showConvertCustomerStatus("Searching…");
+  try {
+    const response = await apiFetch(`/api/customers?search=${encodeURIComponent(trimmed)}&page_size=8`);
+    const data = await readApiPayload(response);
+    if (!response.ok || !data) throw apiError(response, data, "Customer search failed");
+    // Ignore a stale response if the input changed while it was in flight.
+    if ($("service-desk-convert-customer-search").value.trim() !== trimmed) return;
+    renderConvertCustomerResults(data.items || []);
+  } catch (error) {
+    showConvertCustomerStatus("Customer search is unavailable. Try again.");
+  }
+}
+
+function moveConvertCustomerActive(delta) {
+  const options = Array.from(
+    $("service-desk-convert-customer-results").querySelectorAll("[data-customer-id]"),
+  );
+  if (!options.length) return;
+  convertCustomerTypeahead.activeIndex =
+    (convertCustomerTypeahead.activeIndex + delta + options.length) % options.length;
+  options.forEach((option, index) =>
+    option.classList.toggle("is-active", index === convertCustomerTypeahead.activeIndex),
+  );
+  const active = options[convertCustomerTypeahead.activeIndex];
+  active.scrollIntoView({ block: "nearest" });
+  $("service-desk-convert-customer-search").setAttribute("aria-activedescendant", active.id);
+}
+
+function initConvertCustomerTypeahead() {
+  const search = $("service-desk-convert-customer-search");
+  if (!search) return;
+  search.addEventListener("input", () => {
+    // Clear any prior selection SYNCHRONOUSLY on the keystroke (not inside the
+    // debounced search), so a name edited away can never leave a stale
+    // customer_id that a fast submit would attach. Programmatic `.value` sets
+    // (selectConvertCustomer) do not fire 'input', so a real selection stands.
+    $("service-desk-convert-customer-id").value = "";
+    if (convertCustomerTypeahead.timer) clearTimeout(convertCustomerTypeahead.timer);
+    const value = search.value;
+    convertCustomerTypeahead.timer = setTimeout(() => void searchConvertCustomers(value), 250);
+  });
+  search.addEventListener("keydown", (event) => {
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      moveConvertCustomerActive(1);
+    } else if (event.key === "ArrowUp") {
+      event.preventDefault();
+      moveConvertCustomerActive(-1);
+    } else if (event.key === "Enter") {
+      const index = convertCustomerTypeahead.activeIndex;
+      const chosen = convertCustomerTypeahead.items[index];
+      if (index >= 0 && chosen) {
+        event.preventDefault();
+        selectConvertCustomer(chosen.id, chosen.display_name || "Customer");
+      }
+    } else if (event.key === "Escape") {
+      closeConvertCustomerResults();
+    }
+  });
+  // Delay the close so a mousedown selection on a result registers first.
+  search.addEventListener("blur", () => setTimeout(() => closeConvertCustomerResults(), 150));
+}
+
 function initializeServiceDesk() {
+  initConvertCustomerTypeahead();
   $("service-desk-new").addEventListener("click", () => {
     state.serviceDesk.selectedRequestId = null;
     state.serviceDesk.selectedRequest = null;
