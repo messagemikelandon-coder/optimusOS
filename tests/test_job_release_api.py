@@ -167,3 +167,26 @@ async def test_release_rejects_compilation_from_another_shop_not_found(
     with pytest.raises(HTTPException) as excinfo:
         await main.release_job_compilation_record(999999, db_session, auth)
     assert excinfo.value.status_code == 404
+
+
+async def test_release_labor_only_compilation(settings, db_session: Session) -> None:
+    # A labor-only job (no parts) reconciles and releases: selected_parts is
+    # empty, and the estimate total equals the labor total.
+    auth = await _owner_auth(settings, db_session)
+    vehicle = await _create_vehicle(db_session, auth)
+    finding = await _create_finding(db_session, auth, vehicle.id)
+    compiled = await main.compile_job_from_finding(
+        finding.id,
+        JobCompilationRequest(
+            labor_rate=100.0,
+            services=[JobCompilationServiceInput(title="Diagnose", labor_hours=2.0)],
+        ),
+        db_session,
+        auth,
+    )
+    result = await main.release_job_compilation_record(compiled.id, db_session, auth)
+    est = result.estimate.current_revision.estimate
+    assert est.selected_parts == []
+    assert est.labor_items[0].labor_total == 200.0
+    assert result.estimate.estimate_total is not None
+    assert float(result.estimate.estimate_total) == 200.0
