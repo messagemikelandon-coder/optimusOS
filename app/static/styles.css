@@ -480,6 +480,20 @@ button[disabled] { cursor: wait; opacity: .6; transform: none !important; }
 .diag-confidence-confirmed { color: var(--green, #4ade80); border-color: rgba(74,222,128,.4); }
 .diag-unverified { color: var(--amber, #fbbf24); font-style: italic; font-weight: 700; }
 
+/* Compact severity/status chips shown on diagnostic-finding list rows for triage. */
+.diag-chip-row { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.diag-chip {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: .62rem;
+  font-weight: 800;
+  letter-spacing: .04em;
+  border: 1px solid rgba(147,174,198,.28);
+  color: var(--muted);
+}
+.diag-chip-unverified { color: var(--amber, #fbbf24); border-color: rgba(251,191,36,.4); }
+
 /* Shared record-detail layout: a center "main" column for timeline/history/
    line-item content and a narrower right "rail" for facts/status/totals,
    reused by work orders, invoices, and the approval queue. */

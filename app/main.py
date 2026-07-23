@@ -199,6 +199,7 @@ from app.models import (
     DiagnosticFindingRead,
     DiagnosticFindingUpdate,
     DiagnosticInspectionReportResponse,
+    DiagnosticSeverity,
     DiskThresholdsRead,
     DiskUsageRead,
     DockerCategoryUsageRead,
@@ -3186,6 +3187,7 @@ async def list_diagnostic_finding_records(
     page_size: int = Query(default=20),
     vehicle_id: int | None = Query(default=None, ge=1),
     work_order_id: int | None = Query(default=None, ge=1),
+    severity: Annotated[DiagnosticSeverity | None, Query()] = None,
     archived: bool = False,
 ) -> DiagnosticFindingListResponse:
     try:
@@ -3198,6 +3200,7 @@ async def list_diagnostic_finding_records(
             page_size=page_size,
             vehicle_id=vehicle_id,
             work_order_id=work_order_id,
+            severity=severity,
             archived=archived,
         )
     except DiagnosticsStoreError as exc:
