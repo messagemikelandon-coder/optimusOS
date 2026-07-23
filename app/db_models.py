@@ -1660,6 +1660,15 @@ class DiagnosticFinding(Base):
             "updated_at",
         ),
         Index("ix_diagnostic_findings_shop_id", "shop_id"),
+        CheckConstraint(
+            "confidence IS NULL OR confidence IN ('theory', 'probable', 'confirmed')",
+            name="ck_diagnostic_findings_confidence",
+        ),
+        CheckConstraint(
+            "severity IS NULL OR severity IN "
+            "('informational', 'advisory', 'service_soon', 'unsafe')",
+            name="ck_diagnostic_findings_severity",
+        ),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
@@ -1677,8 +1686,12 @@ class DiagnosticFinding(Base):
         ForeignKey("technicians.id", ondelete="SET NULL"), nullable=True
     )
     codes: Mapped[str | None] = mapped_column(Text)
+    complaint: Mapped[str | None] = mapped_column(Text)
     symptoms: Mapped[str] = mapped_column(Text, nullable=False)
     tests_performed: Mapped[str | None] = mapped_column(Text)
+    confidence: Mapped[str | None] = mapped_column(String(20))
+    severity: Mapped[str | None] = mapped_column(String(20))
+    recommended_next_test: Mapped[str | None] = mapped_column(Text)
     conclusion: Mapped[str | None] = mapped_column(Text)
     is_archived: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False, server_default="false"

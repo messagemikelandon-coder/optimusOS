@@ -1331,11 +1331,35 @@
                   </div>
                 </fieldset>
                 <fieldset>
-                  <legend><span>02</span> Findings</legend>
+                  <legend><span>02</span> Complaint &amp; evidence</legend>
+                  <label class="field full">Complaint (reported) <textarea id="diagnostics-complaint" maxlength="4000" placeholder="What the driver reported, in their words"></textarea></label>
                   <label class="field full">Codes <input id="diagnostics-codes" maxlength="2000" placeholder="P0301, P0171"></label>
-                  <label class="field full">Symptoms <textarea id="diagnostics-symptoms" maxlength="4000"></textarea></label>
-                  <label class="field full">Tests performed <textarea id="diagnostics-tests-performed" maxlength="4000"></textarea></label>
-                  <label class="field full">Conclusion <textarea id="diagnostics-conclusion" maxlength="4000"></textarea></label>
+                  <label class="field full">Symptoms (observed) <textarea id="diagnostics-symptoms" maxlength="4000"></textarea></label>
+                  <label class="field full">Tests &amp; measurements performed <textarea id="diagnostics-tests-performed" maxlength="4000"></textarea></label>
+                </fieldset>
+                <fieldset>
+                  <legend><span>03</span> Assessment</legend>
+                  <div class="form-grid two">
+                    <label class="field">Safety severity
+                      <select id="diagnostics-severity">
+                        <option value="">Not assessed</option>
+                        <option value="informational">Informational — no safety impact</option>
+                        <option value="advisory">Advisory — address, not urgent</option>
+                        <option value="service_soon">Service soon</option>
+                        <option value="unsafe">Unsafe — do not drive</option>
+                      </select>
+                    </label>
+                    <label class="field">Diagnosis confidence
+                      <select id="diagnostics-confidence">
+                        <option value="">Not stated</option>
+                        <option value="theory">Theory — unverified hypothesis</option>
+                        <option value="probable">Probable — evidence-supported</option>
+                        <option value="confirmed">Confirmed — verified by test</option>
+                      </select>
+                    </label>
+                  </div>
+                  <label class="field full">Recommended next test <textarea id="diagnostics-recommended-next-test" maxlength="4000" placeholder="The next step that would raise confidence"></textarea></label>
+                  <label class="field full">Conclusion (final diagnosis) <textarea id="diagnostics-conclusion" maxlength="4000" placeholder="Requires a confidence level so an un-evidenced diagnosis is never stated as fact"></textarea></label>
                 </fieldset>
                 <div class="estimate-submit-row">
                   <div><strong id="diagnostics-form-status-title">Diagnostic finding</strong><span id="diagnostics-form-status-detail">Create or edit a finding.</span></div>

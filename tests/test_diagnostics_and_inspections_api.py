@@ -7,8 +7,10 @@ from sqlalchemy.orm import Session
 import app.main as main
 from app.models import (
     CustomerCreate,
+    DiagnosticConfidence,
     DiagnosticFindingCreate,
     DiagnosticFindingUpdate,
+    DiagnosticSeverity,
     EstimatePaymentOptionCode,
     InspectionCreate,
     InspectionItem,
@@ -112,6 +114,110 @@ async def test_create_and_update_diagnostic_finding(settings, db_session: Sessio
     )
     assert updated.conclusion == "Replaced ignition coil #3."
     assert updated.symptoms == "Rough idle at startup."
+
+
+async def test_diagnostic_evidence_fields_round_trip(settings, db_session: Session) -> None:
+    # The Diagnostic Evidence Engine's structured fields (complaint, severity,
+    # confidence, recommended next test) persist and read back.
+    _, response = await login_as(settings, db_session)
+    auth = auth_context(settings, db_session, raw_cookie_from_response(response))
+    vehicle = await _create_vehicle(settings, db_session, auth)
+
+    created = await main.create_diagnostic_finding_record(
+        DiagnosticFindingCreate(
+            vehicle_id=vehicle.id,
+            complaint="Grinding noise when braking.",
+            symptoms="Metal-on-metal at front axle under braking.",
+            tests_performed="Measured front pad thickness at 1mm; rotor scored.",
+            severity=DiagnosticSeverity.UNSAFE,
+            confidence=DiagnosticConfidence.CONFIRMED,
+            recommended_next_test="Confirm caliper slide-pin freedom after pad replacement.",
+            conclusion="Front brake pads worn out; rotors scored.",
+        ),
+        db_session,
+        auth,
+    )
+    assert created.complaint == "Grinding noise when braking."
+    assert created.severity is DiagnosticSeverity.UNSAFE
+    assert created.confidence is DiagnosticConfidence.CONFIRMED
+    assert (
+        created.recommended_next_test == "Confirm caliper slide-pin freedom after pad replacement."
+    )
+    # A conclusion backed by a confidence level is not flagged unverified.
+    assert created.diagnosis_unverified is False
+
+    fetched = await main.get_diagnostic_finding_record(created.id, db_session, auth)
+    assert fetched.severity is DiagnosticSeverity.UNSAFE
+    assert fetched.confidence is DiagnosticConfidence.CONFIRMED
+    assert fetched.diagnosis_unverified is False
+
+
+async def test_conclusion_without_confidence_is_flagged_unverified(
+    settings, db_session: Session
+) -> None:
+    # "No unsupported diagnosis stated as fact": a conclusion recorded without a
+    # confidence level is surfaced as an unverified working theory, not a fact.
+    _, response = await login_as(settings, db_session)
+    auth = auth_context(settings, db_session, raw_cookie_from_response(response))
+    vehicle = await _create_vehicle(settings, db_session, auth)
+
+    created = await main.create_diagnostic_finding_record(
+        DiagnosticFindingCreate(
+            vehicle_id=vehicle.id,
+            symptoms="Intermittent misfire.",
+            conclusion="Likely a failing coil pack.",
+        ),
+        db_session,
+        auth,
+    )
+    assert created.conclusion == "Likely a failing coil pack."
+    assert created.confidence is None
+    assert created.diagnosis_unverified is True
+
+    # Adding a confidence level later clears the unverified flag.
+    verified = await main.update_diagnostic_finding_record(
+        created.id,
+        DiagnosticFindingUpdate(confidence=DiagnosticConfidence.CONFIRMED),
+        db_session,
+        auth,
+    )
+    assert verified.diagnosis_unverified is False
+
+
+async def test_no_conclusion_is_not_flagged_unverified(settings, db_session: Session) -> None:
+    # A finding still gathering evidence (no conclusion) asserts nothing, so it is
+    # never flagged as an unverified diagnosis.
+    _, response = await login_as(settings, db_session)
+    auth = auth_context(settings, db_session, raw_cookie_from_response(response))
+    vehicle = await _create_vehicle(settings, db_session, auth)
+
+    created = await main.create_diagnostic_finding_record(
+        DiagnosticFindingCreate(
+            vehicle_id=vehicle.id,
+            symptoms="Rough idle.",
+            severity=DiagnosticSeverity.ADVISORY,
+        ),
+        db_session,
+        auth,
+    )
+    assert created.conclusion is None
+    assert created.diagnosis_unverified is False
+
+
+async def test_diagnostic_finding_rejects_invalid_enum_values(
+    settings, db_session: Session
+) -> None:
+    # Enum-typed evidence fields reject out-of-range values at the model boundary.
+    # Built via model_validate so the invalid literals are rejected at runtime
+    # (the typed constructor would reject them at type-check time instead).
+    with pytest.raises(ValueError):
+        DiagnosticFindingCreate.model_validate(
+            {"vehicle_id": 1, "symptoms": "x", "severity": "catastrophic"}
+        )
+    with pytest.raises(ValueError):
+        DiagnosticFindingCreate.model_validate(
+            {"vehicle_id": 1, "symptoms": "x", "confidence": "certain"}
+        )
 
 
 async def test_diagnostic_finding_rejects_unknown_vehicle(settings, db_session: Session) -> None:

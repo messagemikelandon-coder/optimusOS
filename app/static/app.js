@@ -5056,19 +5056,35 @@ function renderDiagnosticsDetail(finding = null) {
     detail.innerHTML = "<p>Select a finding from the list or create a new one.</p>";
     return;
   }
+  const severityLabels = {
+    informational: "Informational",
+    advisory: "Advisory",
+    service_soon: "Service soon",
+    unsafe: "Unsafe — do not drive",
+  };
+  const confidenceLabels = { theory: "Theory", probable: "Probable", confirmed: "Confirmed" };
+  const severityBadge = finding.severity
+    ? `<span class="diag-badge diag-severity-${escapeHtml(finding.severity)}">${escapeHtml(severityLabels[finding.severity] || finding.severity)}</span>`
+    : "";
+  const confidenceBadge = finding.confidence
+    ? `<span class="diag-badge diag-confidence-${escapeHtml(finding.confidence)}">Confidence: ${escapeHtml(confidenceLabels[finding.confidence] || finding.confidence)}</span>`
+    : "";
   detail.innerHTML = `
     <div class="customer-detail-header">
       <strong>${escapeHtml(finding.vehicle_display_name || "Vehicle")}</strong>
       <span>${finding.is_archived ? "Archived" : "Active"} · ${new Date(finding.updated_at).toLocaleString()}</span>
     </div>
+    ${severityBadge || confidenceBadge ? `<div class="diag-badge-row">${severityBadge}${confidenceBadge}</div>` : ""}
     <div class="customer-detail-grid">
       <div><span>Codes</span><strong>${escapeHtml(finding.codes || "None recorded")}</strong></div>
       <div><span>Technician</span><strong>${escapeHtml(finding.technician_display_name || "Unassigned")}</strong></div>
       <div><span>Work order</span><strong>${finding.work_order_id ? `#${finding.work_order_id}` : "None"}</strong></div>
     </div>
-    <div class="customer-detail-notes"><span>Symptoms</span><p>${escapeHtml(finding.symptoms)}</p></div>
-    ${finding.tests_performed ? `<div class="customer-detail-notes"><span>Tests performed</span><p>${escapeHtml(finding.tests_performed)}</p></div>` : ""}
-    ${finding.conclusion ? `<div class="customer-detail-notes"><span>Conclusion</span><p>${escapeHtml(finding.conclusion)}</p></div>` : ""}`;
+    ${finding.complaint ? `<div class="customer-detail-notes"><span>Complaint (reported)</span><p>${escapeHtml(finding.complaint)}</p></div>` : ""}
+    <div class="customer-detail-notes"><span>Symptoms (observed)</span><p>${escapeHtml(finding.symptoms)}</p></div>
+    ${finding.tests_performed ? `<div class="customer-detail-notes"><span>Tests &amp; measurements</span><p>${escapeHtml(finding.tests_performed)}</p></div>` : ""}
+    ${finding.recommended_next_test ? `<div class="customer-detail-notes"><span>Recommended next test</span><p>${escapeHtml(finding.recommended_next_test)}</p></div>` : ""}
+    ${finding.conclusion ? `<div class="customer-detail-notes"><span>Conclusion (final diagnosis)${finding.diagnosis_unverified ? ' — <em class="diag-unverified">Unverified working theory</em>' : ""}</span><p>${escapeHtml(finding.conclusion)}</p></div>` : ""}`;
 }
 
 async function selectDiagnosticFinding(findingId) {
@@ -5091,8 +5107,12 @@ function populateDiagnosticsForm(finding = null) {
   $("diagnostics-vehicle-id").value = finding ? String(finding.vehicle_id) : "";
   $("diagnostics-work-order-id").value = finding && finding.work_order_id ? String(finding.work_order_id) : "";
   $("diagnostics-codes").value = finding ? finding.codes || "" : "";
+  $("diagnostics-complaint").value = finding ? finding.complaint || "" : "";
   $("diagnostics-symptoms").value = finding ? finding.symptoms : "";
   $("diagnostics-tests-performed").value = finding ? finding.tests_performed || "" : "";
+  $("diagnostics-severity").value = finding ? finding.severity || "" : "";
+  $("diagnostics-confidence").value = finding ? finding.confidence || "" : "";
+  $("diagnostics-recommended-next-test").value = finding ? finding.recommended_next_test || "" : "";
   $("diagnostics-conclusion").value = finding ? finding.conclusion || "" : "";
   $("diagnostics-form-title").textContent = finding ? "Edit finding" : "Create finding";
   $("diagnostics-form-mode").textContent = finding ? "EDIT" : "CREATE";
@@ -5115,8 +5135,12 @@ async function submitDiagnosticsForm(event) {
     vehicle_id: Number(vehicleId),
     work_order_id: workOrderId ? Number(workOrderId) : null,
     codes: $("diagnostics-codes").value.trim() || null,
+    complaint: $("diagnostics-complaint").value.trim() || null,
     symptoms: $("diagnostics-symptoms").value.trim(),
     tests_performed: $("diagnostics-tests-performed").value.trim() || null,
+    severity: $("diagnostics-severity").value || null,
+    confidence: $("diagnostics-confidence").value || null,
+    recommended_next_test: $("diagnostics-recommended-next-test").value.trim() || null,
     conclusion: $("diagnostics-conclusion").value.trim() || null,
   };
   if (findingId) delete payload.vehicle_id;

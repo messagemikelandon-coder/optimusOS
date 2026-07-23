@@ -9,6 +9,7 @@ from app.auth import AuthContext, effective_shop_id, effective_shop_owner_id, en
 from app.config import Settings
 from app.db_models import DiagnosticFinding, DiagnosticFindingEvent, Technician, Vehicle, WorkOrder
 from app.models import (
+    DiagnosticConfidence,
     DiagnosticFindingArchiveResponse,
     DiagnosticFindingCreate,
     DiagnosticFindingEventRead,
@@ -16,6 +17,7 @@ from app.models import (
     DiagnosticFindingListResponse,
     DiagnosticFindingRead,
     DiagnosticFindingUpdate,
+    DiagnosticSeverity,
 )
 from app.shop_store import resolve_shop_id
 from app.technician_store import display_name as technician_display_name
@@ -48,6 +50,16 @@ def _owner_query(db: Session, auth: AuthContext) -> Select[tuple[DiagnosticFindi
         )
         query = query.where(DiagnosticFinding.work_order_id.in_(assigned_work_order_ids))
     return query
+
+
+def _diagnosis_is_unverified(conclusion: str | None, confidence: object | None) -> bool:
+    """Evidence-integrity signal for the Diagnostic Evidence Engine: a conclusion
+    (final diagnosis) that carries no confidence level is an *unverified* working
+    theory, not an established fact. Callers (the read model and the UI) use this
+    to ensure such a diagnosis is always presented as unverified and never stated
+    as fact. Returns ``False`` when there is no conclusion at all (nothing is
+    being asserted) or when a confidence level is on record."""
+    return bool(conclusion) and confidence is None
 
 
 def _get_finding(db: Session, auth: AuthContext, finding_id: int) -> DiagnosticFinding:
@@ -131,9 +143,14 @@ def _to_read(db: Session, finding: DiagnosticFinding) -> DiagnosticFindingRead:
         work_order_id=finding.work_order_id,
         technician_id=finding.technician_id,
         codes=finding.codes,
+        complaint=finding.complaint,
         symptoms=finding.symptoms,
         tests_performed=finding.tests_performed,
+        confidence=DiagnosticConfidence(finding.confidence) if finding.confidence else None,
+        severity=DiagnosticSeverity(finding.severity) if finding.severity else None,
+        recommended_next_test=finding.recommended_next_test,
         conclusion=finding.conclusion,
+        diagnosis_unverified=_diagnosis_is_unverified(finding.conclusion, finding.confidence),
         vehicle_display_name=vehicle_display_name(vehicle) if vehicle else None,
         technician_display_name=technician_display_name(technician) if technician else None,
         is_archived=finding.is_archived,
@@ -172,8 +189,12 @@ def create_diagnostic_finding(
         work_order_id=payload.work_order_id,
         technician_id=payload.technician_id,
         codes=payload.codes,
+        complaint=payload.complaint,
         symptoms=payload.symptoms,
         tests_performed=payload.tests_performed,
+        confidence=payload.confidence.value if payload.confidence else None,
+        severity=payload.severity.value if payload.severity else None,
+        recommended_next_test=payload.recommended_next_test,
         conclusion=payload.conclusion,
         created_by_user_id=auth.user.id,
         updated_by_user_id=auth.user.id,
@@ -209,10 +230,18 @@ def update_diagnostic_finding(
         finding.work_order_id = payload.work_order_id
     if "codes" in fields_set:
         finding.codes = payload.codes
+    if "complaint" in fields_set:
+        finding.complaint = payload.complaint
     if "symptoms" in fields_set and payload.symptoms is not None:
         finding.symptoms = payload.symptoms
     if "tests_performed" in fields_set:
         finding.tests_performed = payload.tests_performed
+    if "confidence" in fields_set:
+        finding.confidence = payload.confidence.value if payload.confidence else None
+    if "severity" in fields_set:
+        finding.severity = payload.severity.value if payload.severity else None
+    if "recommended_next_test" in fields_set:
+        finding.recommended_next_test = payload.recommended_next_test
     if "conclusion" in fields_set:
         finding.conclusion = payload.conclusion
     if fields_set:
