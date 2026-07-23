@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 
 from sqlalchemy import Select, func, or_, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.auth import AuthContext, effective_shop_id, effective_shop_owner_id, ensure_utc
@@ -311,6 +312,16 @@ def convert_intake_request(
         intake_request.converted_vehicle_id = vehicle.id if vehicle else None
         db.add(intake_request)
         db.commit()
+    except IntegrityError as exc:
+        # A genuine race between the app-level VIN uniqueness pre-check and the
+        # INSERT (the DB partial unique index `uq_vehicles_owner_active_vin`
+        # firing at flush) surfaces as a clean 409 rather than an unhandled 5xx,
+        # and the rollback guarantees no orphan customer is left behind.
+        db.rollback()
+        raise IntakeConflictError(
+            "This conversion conflicts with an existing record (a duplicate VIN was created "
+            "concurrently). Please retry."
+        ) from exc
     except VehicleStoreError as exc:
         db.rollback()
         # A duplicate active VIN (the most common case) surfaces as a clean

@@ -2205,17 +2205,19 @@ class IntakeStatus(StrEnum):
 
 def _normalize_intake_vin(value: object) -> object:
     """Normalize a draft VIN: uppercase, strip whitespace, allow None/blank.
-    Bounds and character rules match the canonical vehicle VIN validator; a
-    partial/invalid VIN is rejected here rather than silently stored, so an
-    intake draft never carries a VIN that conversion would then reject."""
+    A stored VIN must be a full, valid 17-character VIN -- exactly what the
+    canonical `vehicle_store.normalize_vin` requires at conversion -- so an
+    intake draft never carries a partial or invalid VIN that conversion would
+    then reject. A shop that only has a partial VIN simply leaves it blank until
+    it has the full number (the Decode-VIN affordance also needs the full 17)."""
     if not isinstance(value, str):
         return value
     cleaned = "".join(value.upper().split())
     if not cleaned:
         return None
-    if not re.fullmatch(r"[A-HJ-NPR-Z0-9]{1,17}", cleaned):
+    if not re.fullmatch(r"[A-HJ-NPR-Z0-9]{17}", cleaned):
         raise ValueError(
-            "VIN must contain only valid letters and digits and cannot contain I, O, or Q."
+            "VIN must be exactly 17 valid letters and digits and cannot contain I, O, or Q."
         )
     return cleaned
 

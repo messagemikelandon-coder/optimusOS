@@ -4,8 +4,10 @@ import pytest
 from fastapi import HTTPException
 from pydantic import ValidationError
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+import app.intake_store as intake_store
 import app.main as main
 from app.db_models import Customer, Vehicle
 from app.models import (
@@ -184,6 +186,30 @@ async def test_convert_rejects_duplicate_vin_without_orphaning_customer(
     assert reread.status.value != "converted"
 
 
+async def test_convert_vin_race_maps_to_conflict_without_orphan(
+    settings, db_session: Session, monkeypatch
+) -> None:
+    # If a concurrent insert wins the VIN uniqueness race and the DB partial
+    # unique index fires at flush (IntegrityError), conversion surfaces a clean
+    # 409 and rolls back so no orphan customer is left behind.
+    auth = await _owner_auth(settings, db_session)
+    draft = await _create_draft(db_session, auth, vehicle_make="Honda", vehicle_model="Civic")
+    customers_before = db_session.scalar(select(func.count()).select_from(Customer))
+
+    def _raise_integrity(*args, **kwargs):
+        raise IntegrityError("INSERT", {}, Exception("duplicate key uq_vehicles_owner_active_vin"))
+
+    monkeypatch.setattr(intake_store, "create_vehicle", _raise_integrity)
+    with pytest.raises(HTTPException) as excinfo:
+        await main.convert_intake_request_record(
+            draft.id, IntakeRequestConvertRequest(), db_session, auth
+        )
+    assert excinfo.value.status_code == 409
+    assert db_session.scalar(select(func.count()).select_from(Customer)) == customers_before
+    reread = await main.get_intake_request_record(draft.id, db_session, auth)
+    assert reread.status.value != "converted"
+
+
 async def test_double_conversion_is_rejected(settings, db_session: Session) -> None:
     auth = await _owner_auth(settings, db_session)
     draft = await _create_draft(db_session, auth, vehicle_make="Mazda", vehicle_model="3")
@@ -228,6 +254,14 @@ async def test_draft_rejects_invalid_vin(settings, db_session: Session) -> None:
         # 'I' is not a valid VIN character; the draft VIN validator rejects it
         # so a draft never stores a VIN that conversion would then reject.
         await _create_draft(db_session, auth, vehicle_vin="1HGFA16588LI00000")
+
+
+async def test_draft_rejects_partial_vin(settings, db_session: Session) -> None:
+    # A partial (non-17-char) VIN is rejected at draft time, so a draft never
+    # stores a VIN that the canonical conversion would then reject as too short.
+    auth = await _owner_auth(settings, db_session)
+    with pytest.raises(ValidationError):
+        await _create_draft(db_session, auth, vehicle_vin="1HGFA1658")
 
 
 async def test_update_draft_vehicle_fields_round_trip(settings, db_session: Session) -> None:

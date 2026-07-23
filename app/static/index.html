@@ -1231,6 +1231,7 @@
                   <div><strong>Convert to customer</strong><span>Creates a real customer record (and optionally a vehicle) from this request. Vehicle fields default to the draft's decoded values; leave the existing-customer ID blank to create a new customer.</span></div>
                   <div class="customers-form-actions">
                     <input id="service-desk-convert-customer-id" class="convert-field-narrow" type="number" min="1" placeholder="Existing customer ID (optional)">
+                    <input id="service-desk-convert-vehicle-vin" class="convert-field-narrow" maxlength="17" placeholder="VIN (override)">
                     <input id="service-desk-convert-vehicle-year" class="convert-field-narrow" type="number" min="1900" max="2100" placeholder="Year">
                     <input id="service-desk-convert-vehicle-make" class="convert-field-narrow" placeholder="Make">
                     <input id="service-desk-convert-vehicle-model" class="convert-field-narrow" placeholder="Model">

@@ -5018,8 +5018,10 @@ async function submitServiceDeskConvert(event) {
   submit.disabled = true;
   try {
     const existingCustomerId = $("service-desk-convert-customer-id").value.trim();
+    const convertVin = $("service-desk-convert-vehicle-vin").value.trim().toUpperCase();
     const payload = {
       customer_id: existingCustomerId ? Number(existingCustomerId) : null,
+      vehicle_vin: convertVin || null,
       vehicle_year: $("service-desk-convert-vehicle-year").value ? Number($("service-desk-convert-vehicle-year").value) : null,
       vehicle_make: $("service-desk-convert-vehicle-make").value.trim() || null,
       vehicle_model: $("service-desk-convert-vehicle-model").value.trim() || null,

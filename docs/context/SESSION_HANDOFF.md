@@ -8,60 +8,58 @@ Last verified date: 2026-07-23.
 
 ## Identity
 
-- Agent/task owner: Claude — Deterministic Job Compiler (`/goal` Priority 1): compile an approved diagnostic finding into a priced draft job (labor, part needs, work-order tasks, totals) through one deterministic, no-OpenAI/no-paid-call service.
-- Branch/HEAD: `agent/claude/job-compiler`, off `main` at `e14de1a`. Two commits: `822ec3f` (backend + tests + migration) and `6db7634` (frontend UI + UI test). **Migration head advances to `037_job_compilations`.**
+- Agent/task owner: Claude — `/goal` Priorities 1 and 2. **Priority 1 (Deterministic Job Compiler) is MERGED** into `main` via PR #89 (`93f96ff`). **Priority 2 (customer-optional intake bridge) is implemented on branch `agent/claude/intake-bridge`** (draft PR pending).
+- Branch/HEAD: `agent/claude/intake-bridge`, off `main` at `93f96ff`. **Migration head advances to `038_intake_vehicle_draft`.**
 - Working directory: primary repo checkout (`origin` = the optimusOS GitHub repository).
 
 ## Context
 
-Prior sessions deferred the "Job Compiler" because the existing estimate-creation path runs through the billable AI research orchestrator (`app/orchestrator.py`), which `/goal`'s no-billable-AI rule forbids. `/goal` Priority 1 explicitly asks for a **deterministic** compiler that must not require OpenAI. This slice builds exactly that as a **separate standalone domain** (ADR-025), not the AI estimate path. Reusing the AI `EstimateResponse` was rejected because its `SelectedPart` model mandates a retailer `url` that in-house catalog parts do not have (reusing it would mean fabricating URLs).
+Two `/goal` slices this session:
+1. **Priority 1 — Deterministic Job Compiler (MERGED, PR #89).** Standalone no-OpenAI service compiling an approved diagnostic finding into a priced draft job (labor lines, part needs at customer price, work-order tasks, totals). Idempotent on the computed output, owner-gated, never releases/orders/pays. ADR-025. All 6 CI checks green.
+2. **Priority 2 — customer-optional intake bridge (this branch).** Done additively per `/goal` — **`vehicles.customer_id` is NOT made nullable** (the estimate/work-order/invoice invariants depend on it). Instead the existing `intake_requests` **draft** entity is extended with structured VIN-decoded vehicle fields so it holds an identified vehicle before a customer exists, and conversion is made atomic + attach-aware. ADR-026.
 
-## Active task (implemented, verified locally, awaiting review/merge)
+## Active task (Priority 2 — implemented, verified locally, reviewed on-branch)
 
-Deterministic Job Compiler. Surface and files:
+Customer-optional intake bridge. Surface and files:
 
-- `app/job_compiler.py` — `compile_job` / `get_compiled_job` / `list_compiled_jobs` / `list_compiled_job_events`. Deterministic expansion of an owner-validated `JobCompilationRequest` into labor lines, aggregated part needs (customer `unit_price` only; `unit_cost` never read), work-order task descriptors, reconciled `Decimal` totals. Idempotent via `content_hash`; supersedes on changed inputs; row-locks the finding.
-- `app/models.py` — `JobCompilation*` request/read models (`JobCompilationRequest`, `JobCompilationServiceInput`, `JobCompilationPartInput`, `CompiledJob*`).
-- `app/db_models.py` + `alembic/versions/037_job_compilations.py` — `job_compilations`, `job_compilation_events`.
-- `app/main.py` — 4 owner/manager-gated routes (`OwnerAuthContextDep`): `POST /api/diagnostic-findings/{id}/compile-job`, `GET /api/job-compilations`, `GET /api/job-compilations/{id}`, `GET /api/job-compilations/{id}/events`.
-- `app/static/{index.html,app.js,styles.css}` — owner/manager-only "Compile job from finding" panel in the diagnostics view.
-- Tests: `tests/test_job_compiler_api.py` (12), `tests/e2e/test_job_compilation_migration.py` (real-Postgres round-trip), `tests/test_official_ui.py` (+1 UI wiring test).
-- Docs: ADR-025 (`docs/context/DECISIONS.md`), `CURRENT_STATE.md` section, this handoff, `KNOWN_ISSUES.md` entry.
+- `app/db_models.py` + `alembic/versions/038_intake_vehicle_draft.py` — seven nullable vehicle columns on `intake_requests` (`vehicle_vin`, `vehicle_year/make/model/trim/engine/drivetrain`).
+- `app/models.py` — `IntakeVehicleDraft` mixin (VIN validator requiring a full 17-char VIN or blank) on `IntakeRequestBase`/`IntakeRequestUpdate`/`IntakeRequestConvertRequest`; convert gains `customer_id`.
+- `app/customer_store.py` / `app/vehicle_store.py` — new backward-compatible `commit: bool = True` parameter for atomic composition.
+- `app/intake_store.py` — draft-field persistence; atomic `convert_intake_request` (`_resolve_vehicle_fields` merges draft + payload override; `_resolve_customer` attaches to an existing same-shop non-archived customer or signals new-customer creation; single final commit; dup-VIN/double-conversion → 409; no orphan on failure).
+- `app/static/index.html` / `app.js` — Service Desk intake form gains VIN + Decode-VIN + structured vehicle fields; convert form gains an optional existing-customer-ID attach input.
+- Tests: `tests/test_intake_bridge_api.py` (12), `tests/e2e/test_intake_vehicle_migration.py` (real-Postgres round-trip), `tests/test_official_ui.py` (+1 UI wiring test).
+- Docs: ADR-026 (`DECISIONS.md`), `CURRENT_STATE.md` section, this handoff, `KNOWN_ISSUES.md` entry.
 
-Out of scope (deliberately not done): releasing a compiled draft into the canonical Estimate/WorkOrder/Invoice via the existing owner-approved approval flow (the compiler produces its deterministic input; the release step is the next slice); AI-proposed compile inputs; a per-service parts picker in the UI (the API fully supports parts and is tested; v1 UI covers labor services + fees); optional severity-priority ordering.
+Out of scope (deliberately not done): making `vehicles.customer_id` nullable (forbidden by `/goal`; not needed); a full customer-typeahead picker in the convert UI (v1 uses a numeric existing-customer-ID input); auto-decoding a VIN on paste.
 
 ## Verified baseline
 
-- `git diff --check` clean; `ruff format --check app tests`, `ruff check app tests`, `pyright` — all clean (0 errors).
+- `git diff --check` clean; `ruff format --check app tests`, `ruff check app tests`, `pyright` — all clean.
 - `node --check app/static/app.js` — clean.
-- `pytest --ignore=tests/e2e` — **819 passed, 2 skipped** (+12 API tests, +1 UI test; no pre-existing test weakened).
-- `tests/test_role_isolation.py`, `tests/test_capability_gate_safeguards.py` — green (new routes auto-classified owner-gated; no `CapabilityGateMode.ENFORCE`).
-- `alembic heads` — single head `037_job_compilations`.
-- **Real Postgres round-trip verified locally on Docker Postgres 16** (`tests/e2e/test_job_compilation_migration.py`): 036→037 creates `job_compilations`/`job_compilation_events` + the status CHECK, downgrade to 036 removes both, re-upgrade restores.
-- OpenAPI builds; 4 new paths; `CompiledJobPartLine` exposes `unit_price` only (no `unit_cost`).
+- `pytest --ignore=tests/e2e` — **832 passed, 2 skipped** at the first commit; +1 (partial-VIN regression) after the review fix. No pre-existing test weakened.
+- `alembic heads` — single head `038_intake_vehicle_draft`.
+- **Real Postgres 16 round-trip verified locally** (`tests/e2e/test_intake_vehicle_migration.py`): 037→038 adds the seven columns, downgrade removes them, re-upgrade restores.
+- `tests/test_role_isolation.py` green (intake routes unchanged, owner/manager-gated).
 
-## Evidence (key acceptance tests)
+## Reviews (on-branch)
 
-- Deterministic reconciliation: `test_compile_produces_labor_parts_tasks_totals`, `test_compile_with_fees_reconciles` (labor 1.5h×$120=$180; parts $48×2=$96; supplies 5%=$9; tax 8%=$7.68; total $292.68).
-- Idempotency: `test_recompile_identical_inputs_is_idempotent` (same id, one row). Supersession/revisions: `test_recompile_changed_inputs_supersedes_and_revisions` (`superseded_by_id` set, one active draft, events compiled/superseded/recompiled). Changed diagnosis forces a revision: `test_changed_diagnosis_forces_new_revision`.
-- Safeguards: rejects finding without conclusion / archived finding / part without customer price; rejects cross-shop part (422) and cross-shop finding (404); aggregates a duplicate part across services; creates no Estimate/Notification (`test_compile_creates_no_estimate_or_notification`).
+- **Security (optimus-security-reviewer): PASS** on cross-tenant isolation of the attach-to-existing-customer path, authorization gating, and orphan/duplicate-VIN/silent-merge prevention. No Critical/High. Low nits (optional): cross-shop/missing `customer_id` returns 422 rather than 404 (accepted — it's invalid conversion input, and the message is identical for missing-vs-cross-shop so there's no enumeration signal); a pre-existing VIN concurrency race surfaces as 503.
+- **Correctness (optimus-reviewer): one issue fixed** — the draft VIN validator originally allowed a partial (1–16 char) VIN, which conversion's `normalize_vin` (exactly 17) would then reject with a 422; fixed so the draft requires a full 17-char VIN or blank (`test_draft_rejects_partial_vin`).
 
 ## Unverified
 
-- Full Docker/Playwright authenticated E2E of the compile UI was **not** run in a live browser this session; verified via `node --check`, the `tests/test_official_ui.py` markup-wiring regression test, and static review (the repo's established bar for a slice without a live browser). CI's authenticated e2e job covers the app end to end.
-- Independent correctness + security reviews were run on-branch (optimus-reviewer / optimus-security-reviewer); apply any findings before merge.
+- Full Docker/Playwright authenticated E2E of the new intake UI was not run in a live browser this session; verified via `node --check`, the `tests/test_official_ui.py` markup-wiring test, and static review. CI's authenticated e2e job covers the app end to end.
 
 ## Unrelated preexisting changes
 
-- None. Every change is scoped to this slice: additive migration `037` (two new tables), one new service, four new owner-gated routes, new UI panel, new tests, new ADR/doc updates. No existing route's default behavior changed.
+- The `commit=False` path added to `create_customer`/`create_vehicle` also fixes a **pre-existing latent orphan-customer bug** in the prior always-commit conversion flow (a vehicle-creation failure after the customer was already committed). This is a real improvement, disclosed here, scoped to the same conversion path.
 
 ## Blockers and risks
 
-- No engineering blocker. Additive and revert-safe: revert the two commits + `alembic downgrade 036_diagnostic_evidence`.
-- Merge coordination: sync `main` and re-run gates before merge (other agent worktrees may have moved `main`).
+- No engineering blocker. Additive and revert-safe: revert the commit(s) + `alembic downgrade 037_job_compilations`.
+- Merge coordination: sync `main` and re-run gates before merge.
 
 ## Exact next task
 
-1. Push `agent/claude/job-compiler`, open a draft PR, confirm CI green, address any review findings, mark ready, merge, and sync `main`.
-2. `/goal` Priority 2 — customer-optional intake bridge. Per `/goal`, do **not** make `vehicles.customer_id` nullable directly. Build a bounded **draft intake entity** holding VIN-decoded vehicle data + complaint before a customer exists, with atomic customer-attachment/conversion into the canonical vehicle, preventing duplicate VINs/conversion, silent merges, orphan records, and cross-shop attachment, and preserving estimate/work-order/invoice invariants. If unsafe to do fully, produce the ADR + migration plan + invariants + failing tests instead of forcing the nullable-FK change. Note there is an existing `intake_requests` table (`app/intake_store.py`, migration `014`) and a VIN-decode endpoint (`POST /api/vehicles/decode-vin`, PR #85) to build on.
-3. Job Compiler follow-ups (each its own slice): release a compiled draft into the canonical Estimate/WorkOrder/Invoice through the existing approval flow; per-service parts picker in the compile UI; AI-proposed compile inputs (validated deterministically); severity-priority ordering.
+1. Push `agent/claude/intake-bridge`, open a draft PR, confirm CI green, mark ready, merge, sync `main`.
+2. Natural follow-ups (each its own slice): release a Job Compiler compiled draft into the canonical Estimate/WorkOrder/Invoice via the existing owner-approved approval flow; per-service parts picker in the compile UI; a full customer-typeahead picker in the intake convert form; auto-decode VIN on paste at intake; surfacing diagnostic severity/confidence in reports.
