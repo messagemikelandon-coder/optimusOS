@@ -1228,8 +1228,9 @@
                   <p>Select an intake request from the list or create a new one.</p>
                 </div>
                 <form class="estimate-submit-row" id="service-desk-convert-form">
-                  <div><strong>Convert to customer</strong><span>Creates a real customer record (and optionally a vehicle) from this request.</span></div>
+                  <div><strong>Convert to customer</strong><span>Creates a real customer record (and optionally a vehicle) from this request. Vehicle fields default to the draft's decoded values; leave the existing-customer ID blank to create a new customer.</span></div>
                   <div class="customers-form-actions">
+                    <input id="service-desk-convert-customer-id" class="convert-field-narrow" type="number" min="1" placeholder="Existing customer ID (optional)">
                     <input id="service-desk-convert-vehicle-year" class="convert-field-narrow" type="number" min="1900" max="2100" placeholder="Year">
                     <input id="service-desk-convert-vehicle-make" class="convert-field-narrow" placeholder="Make">
                     <input id="service-desk-convert-vehicle-model" class="convert-field-narrow" placeholder="Model">
@@ -1264,7 +1265,27 @@
                   </div>
                 </fieldset>
                 <fieldset>
-                  <legend><span>02</span> Complaint</legend>
+                  <legend><span>02</span> Vehicle (decode before a customer exists)</legend>
+                  <div class="form-grid two">
+                    <label class="field">VIN <input id="service-desk-vehicle-vin" maxlength="17" placeholder="17-character VIN"></label>
+                    <div class="vin-decode-row">
+                      <button class="text-button" type="button" id="service-desk-decode-vin">Decode VIN</button>
+                      <span class="vin-decode-status" id="service-desk-decode-status" role="status" aria-live="polite"></span>
+                    </div>
+                  </div>
+                  <div class="form-grid three">
+                    <label class="field">Year <input id="service-desk-vehicle-year" type="number" min="1900" max="2100"></label>
+                    <label class="field">Make <input id="service-desk-vehicle-make" maxlength="100"></label>
+                    <label class="field">Model <input id="service-desk-vehicle-model" maxlength="100"></label>
+                  </div>
+                  <div class="form-grid three">
+                    <label class="field">Trim <input id="service-desk-vehicle-trim" maxlength="120"></label>
+                    <label class="field">Engine <input id="service-desk-vehicle-engine" maxlength="120"></label>
+                    <label class="field">Drivetrain <input id="service-desk-vehicle-drivetrain" maxlength="80"></label>
+                  </div>
+                </fieldset>
+                <fieldset>
+                  <legend><span>03</span> Complaint</legend>
                   <label class="field full">Complaint <textarea id="service-desk-complaint" maxlength="4000"></textarea></label>
                   <label class="field full">Internal notes <textarea id="service-desk-notes" maxlength="4000"></textarea></label>
                 </fieldset>

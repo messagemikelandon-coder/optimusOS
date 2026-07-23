@@ -4888,11 +4888,78 @@ function populateServiceDeskForm(request = null) {
   $("service-desk-phone").value = request ? request.phone || "" : "";
   $("service-desk-email").value = request ? request.email || "" : "";
   $("service-desk-vehicle-description").value = request ? request.vehicle_description || "" : "";
+  $("service-desk-vehicle-vin").value = request ? request.vehicle_vin || "" : "";
+  $("service-desk-vehicle-year").value = request && request.vehicle_year ? String(request.vehicle_year) : "";
+  $("service-desk-vehicle-make").value = request ? request.vehicle_make || "" : "";
+  $("service-desk-vehicle-model").value = request ? request.vehicle_model || "" : "";
+  $("service-desk-vehicle-trim").value = request ? request.vehicle_trim || "" : "";
+  $("service-desk-vehicle-engine").value = request ? request.vehicle_engine || "" : "";
+  $("service-desk-vehicle-drivetrain").value = request ? request.vehicle_drivetrain || "" : "";
+  setIntakeVinDecodeStatus("");
   $("service-desk-source").value = request ? request.source : "phone";
   $("service-desk-complaint").value = request ? request.complaint : "";
   $("service-desk-notes").value = request ? request.notes || "" : "";
   $("service-desk-form-title").textContent = request ? "Edit intake request" : "Create intake request";
   $("service-desk-form-mode").textContent = request ? "EDIT" : "CREATE";
+}
+
+function setIntakeVinDecodeStatus(message, tone = "") {
+  const el = $("service-desk-decode-status");
+  if (!el) return;
+  el.textContent = message || "";
+  el.dataset.tone = tone;
+}
+
+function applyDecodedIntakeVehicleFields(decoded) {
+  // Only populate empty fields, so a decode never clobbers hand-entered detail.
+  const mapping = {
+    "service-desk-vehicle-year": decoded.year,
+    "service-desk-vehicle-make": decoded.make,
+    "service-desk-vehicle-model": decoded.model,
+    "service-desk-vehicle-trim": decoded.trim,
+    "service-desk-vehicle-engine": decoded.engine,
+    "service-desk-vehicle-drivetrain": decoded.drivetrain,
+  };
+  let filled = 0;
+  for (const [id, value] of Object.entries(mapping)) {
+    const field = $(id);
+    if (!field || value === null || value === undefined || value === "") continue;
+    if (field.value.trim() !== "") continue;
+    field.value = String(value);
+    filled += 1;
+  }
+  return filled;
+}
+
+async function decodeIntakeVin() {
+  const button = $("service-desk-decode-vin");
+  const vin = $("service-desk-vehicle-vin").value.trim().toUpperCase();
+  if (vin.length !== 17) {
+    setIntakeVinDecodeStatus("Enter a full 17-character VIN to decode.", "error");
+    return;
+  }
+  button.disabled = true;
+  setIntakeVinDecodeStatus("Decoding VIN…", "");
+  try {
+    const response = await apiFetch("/api/vehicles/decode-vin", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ vin }),
+    });
+    const data = await readApiPayload(response);
+    if (!response.ok || !data) throw apiError(response, data, "VIN decode failed");
+    if (data.status === "unavailable" || !data.decoded) {
+      setIntakeVinDecodeStatus(data.message || "VIN could not be decoded. Enter details manually.", "warn");
+      return;
+    }
+    const filled = applyDecodedIntakeVehicleFields(data.decoded);
+    const suffix = filled ? ` Populated ${filled} empty field${filled === 1 ? "" : "s"}.` : " No empty fields to fill.";
+    setIntakeVinDecodeStatus((data.message || "VIN decoded.") + suffix, data.status === "partial" ? "warn" : "success");
+  } catch (error) {
+    setIntakeVinDecodeStatus(`VIN decode failed: ${error.message}`, "error");
+  } finally {
+    button.disabled = false;
+  }
 }
 
 async function submitServiceDeskForm(event) {
@@ -4902,11 +4969,20 @@ async function submitServiceDeskForm(event) {
   const submit = $("service-desk-save");
   submit.disabled = true;
   submit.textContent = requestId ? "Saving…" : "Creating…";
+  const vinValue = $("service-desk-vehicle-vin").value.trim().toUpperCase();
+  const yearValue = $("service-desk-vehicle-year").value.trim();
   const payload = {
     customer_name: $("service-desk-customer-name").value.trim(),
     phone: $("service-desk-phone").value.trim() || null,
     email: $("service-desk-email").value.trim() || null,
     vehicle_description: $("service-desk-vehicle-description").value.trim() || null,
+    vehicle_vin: vinValue || null,
+    vehicle_year: yearValue ? Number(yearValue) : null,
+    vehicle_make: $("service-desk-vehicle-make").value.trim() || null,
+    vehicle_model: $("service-desk-vehicle-model").value.trim() || null,
+    vehicle_trim: $("service-desk-vehicle-trim").value.trim() || null,
+    vehicle_engine: $("service-desk-vehicle-engine").value.trim() || null,
+    vehicle_drivetrain: $("service-desk-vehicle-drivetrain").value.trim() || null,
     source: $("service-desk-source").value,
     complaint: $("service-desk-complaint").value.trim(),
     notes: $("service-desk-notes").value.trim() || null,
@@ -4941,7 +5017,9 @@ async function submitServiceDeskConvert(event) {
   const submit = $("service-desk-convert-save");
   submit.disabled = true;
   try {
+    const existingCustomerId = $("service-desk-convert-customer-id").value.trim();
     const payload = {
+      customer_id: existingCustomerId ? Number(existingCustomerId) : null,
       vehicle_year: $("service-desk-convert-vehicle-year").value ? Number($("service-desk-convert-vehicle-year").value) : null,
       vehicle_make: $("service-desk-convert-vehicle-make").value.trim() || null,
       vehicle_model: $("service-desk-convert-vehicle-model").value.trim() || null,
@@ -4976,6 +5054,7 @@ function initializeServiceDesk() {
     populateServiceDeskForm(state.serviceDesk.selectedRequest);
   });
   $("service-desk-form").addEventListener("submit", submitServiceDeskForm);
+  $("service-desk-decode-vin").addEventListener("click", () => void decodeIntakeVin());
   $("service-desk-convert-form").addEventListener("submit", submitServiceDeskConvert);
   $("service-desk-refresh").addEventListener("click", () => void loadServiceDesk());
   $("service-desk-search").addEventListener("input", () => {

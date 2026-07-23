@@ -7,10 +7,11 @@ from sqlalchemy.orm import Session
 
 from app.auth import AuthContext, effective_shop_id, effective_shop_owner_id, ensure_utc
 from app.config import Settings
-from app.customer_store import create_customer
+from app.customer_store import CustomerNotFoundError, create_customer, get_customer
 from app.db_models import IntakeRequest
 from app.models import (
     CustomerCreate,
+    CustomerRead,
     IntakeRequestConvertRequest,
     IntakeRequestConvertResponse,
     IntakeRequestCreate,
@@ -20,7 +21,7 @@ from app.models import (
     VehicleCreate,
 )
 from app.shop_store import resolve_shop_id
-from app.vehicle_store import create_vehicle
+from app.vehicle_store import VehicleStoreError, create_vehicle
 
 _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
@@ -84,6 +85,13 @@ def _to_read(intake_request: IntakeRequest) -> IntakeRequestRead:
         phone=intake_request.phone,
         email=intake_request.email,
         vehicle_description=intake_request.vehicle_description,
+        vehicle_vin=intake_request.vehicle_vin,
+        vehicle_year=intake_request.vehicle_year,
+        vehicle_make=intake_request.vehicle_make,
+        vehicle_model=intake_request.vehicle_model,
+        vehicle_trim=intake_request.vehicle_trim,
+        vehicle_engine=intake_request.vehicle_engine,
+        vehicle_drivetrain=intake_request.vehicle_drivetrain,
         complaint=intake_request.complaint,
         source=intake_request.source,  # type: ignore[arg-type]
         status=intake_request.status,  # type: ignore[arg-type]
@@ -109,6 +117,13 @@ def create_intake_request(
         email=email,
         email_normalized=email,
         vehicle_description=payload.vehicle_description,
+        vehicle_vin=payload.vehicle_vin,
+        vehicle_year=payload.vehicle_year,
+        vehicle_make=payload.vehicle_make,
+        vehicle_model=payload.vehicle_model,
+        vehicle_trim=payload.vehicle_trim,
+        vehicle_engine=payload.vehicle_engine,
+        vehicle_drivetrain=payload.vehicle_drivetrain,
         complaint=payload.complaint,
         source=payload.source.value,
         status="new",
@@ -147,6 +162,17 @@ def update_intake_request(
         intake_request.email_normalized = email
     if "vehicle_description" in fields_set:
         intake_request.vehicle_description = payload.vehicle_description
+    for vehicle_field in (
+        "vehicle_vin",
+        "vehicle_year",
+        "vehicle_make",
+        "vehicle_model",
+        "vehicle_trim",
+        "vehicle_engine",
+        "vehicle_drivetrain",
+    ):
+        if vehicle_field in fields_set:
+            setattr(intake_request, vehicle_field, getattr(payload, vehicle_field))
     if "complaint" in fields_set and payload.complaint is not None:
         intake_request.complaint = payload.complaint
     if "source" in fields_set and payload.source is not None:
@@ -240,40 +266,113 @@ def convert_intake_request(
     if intake_request.status == "converted":
         raise IntakeConflictError("This intake request has already been converted.")
 
-    first_name, last_name = _split_customer_name(intake_request.customer_name)
-    customer = create_customer(
-        db=db,
-        auth=auth,
-        payload=CustomerCreate(
-            first_name=first_name,
-            last_name=last_name,
-            email=intake_request.email,
-            phone=intake_request.phone,
-        ),
-    )
+    # Resolve the vehicle to build: each conversion-payload field overrides the
+    # value stored on the draft; omitted fields fall back to the draft. This
+    # lets a shop decode a VIN at intake and convert without re-entering it.
+    vehicle_input = _resolve_vehicle_fields(intake_request, payload)
 
-    vehicle = None
-    if payload.vehicle_make and payload.vehicle_model:
-        vehicle = create_vehicle(
-            db=db,
-            auth=auth,
-            customer_id=customer.id,
-            payload=VehicleCreate(
-                year=payload.vehicle_year,
-                make=payload.vehicle_make,
-                model=payload.vehicle_model,
-                vin=payload.vehicle_vin,
-            ),
-        )
+    # Resolve the customer: attach to an explicit existing same-shop customer,
+    # or create a new one from the draft. Attachment is never silent -- a
+    # cross-shop or missing customer is rejected (not found), and an archived
+    # customer is rejected, so conversion can never point a vehicle at another
+    # shop's customer or a soft-deleted one.
+    customer = _resolve_customer(db, auth, intake_request, payload.customer_id)
 
-    intake_request.status = "converted"
-    intake_request.converted_customer_id = customer.id
-    intake_request.converted_vehicle_id = vehicle.id if vehicle else None
-    db.add(intake_request)
-    db.commit()
+    # Create the customer (if new) and the vehicle in ONE transaction using the
+    # non-committing paths, so a duplicate-VIN (or any) failure rolls the whole
+    # thing back and never leaves an orphan customer.
+    try:
+        if customer is None:
+            first_name, last_name = _split_customer_name(intake_request.customer_name)
+            customer = create_customer(
+                db=db,
+                auth=auth,
+                payload=CustomerCreate(
+                    first_name=first_name,
+                    last_name=last_name,
+                    email=intake_request.email,
+                    phone=intake_request.phone,
+                ),
+                commit=False,
+            )
+
+        vehicle = None
+        if vehicle_input is not None:
+            vehicle = create_vehicle(
+                db=db,
+                auth=auth,
+                customer_id=customer.id,
+                payload=vehicle_input,
+                commit=False,
+            )
+
+        intake_request.status = "converted"
+        intake_request.converted_customer_id = customer.id
+        intake_request.converted_vehicle_id = vehicle.id if vehicle else None
+        db.add(intake_request)
+        db.commit()
+    except VehicleStoreError as exc:
+        db.rollback()
+        # A duplicate active VIN (the most common case) surfaces as a clean
+        # conflict rather than an orphaned customer; other vehicle-validation
+        # failures surface as a 422 via IntakeStoreError.
+        if "already exists" in str(exc):
+            raise IntakeConflictError(str(exc)) from exc
+        raise IntakeStoreError(str(exc)) from exc
+
     db.refresh(intake_request)
     return IntakeRequestConvertResponse(
         intake_request=_to_read(intake_request),
         customer=customer,
         vehicle=vehicle,
     )
+
+
+def _resolve_vehicle_fields(
+    intake_request: IntakeRequest, payload: IntakeRequestConvertRequest
+) -> VehicleCreate | None:
+    """Merge draft-stored vehicle fields with conversion-payload overrides. A
+    canonical vehicle requires make + model; if neither the draft nor the
+    payload supplies both, no vehicle is created (customer-only conversion)."""
+
+    def pick(field: str) -> object:
+        value = getattr(payload, field)
+        return value if value is not None else getattr(intake_request, field)
+
+    make = pick("vehicle_make")
+    model = pick("vehicle_model")
+    if not (make and model):
+        return None
+    return VehicleCreate(
+        vin=pick("vehicle_vin"),  # type: ignore[arg-type]
+        year=pick("vehicle_year"),  # type: ignore[arg-type]
+        make=make,  # type: ignore[arg-type]
+        model=model,  # type: ignore[arg-type]
+        trim=pick("vehicle_trim"),  # type: ignore[arg-type]
+        engine=pick("vehicle_engine"),  # type: ignore[arg-type]
+        drivetrain=pick("vehicle_drivetrain"),  # type: ignore[arg-type]
+    )
+
+
+def _resolve_customer(
+    db: Session,
+    auth: AuthContext,
+    intake_request: IntakeRequest,
+    customer_id: int | None,
+) -> CustomerRead | None:
+    """Return the existing customer to attach to (validated same-shop and not
+    archived), or ``None`` to signal a new customer should be created. Rejects a
+    cross-shop/missing customer as not-found and an archived customer as a
+    conflict, so attachment is always explicit and safe."""
+    if customer_id is None:
+        return None
+    if intake_request.converted_customer_id is not None:
+        # Belt-and-suspenders: a converted request is already rejected above.
+        raise IntakeConflictError("This intake request has already been converted.")
+    try:
+        customer = get_customer(db=db, auth=auth, customer_id=customer_id)
+    except CustomerNotFoundError as exc:
+        raise IntakeStoreError("Selected customer was not found.") from exc
+    if customer.is_archived:
+        raise IntakeConflictError("Cannot attach an intake request to an archived customer.")
+    return customer

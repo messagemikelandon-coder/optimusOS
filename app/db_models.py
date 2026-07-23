@@ -1623,6 +1623,18 @@ class IntakeRequest(Base):
     email: Mapped[str | None] = mapped_column(String(180))
     email_normalized: Mapped[str | None] = mapped_column(String(180))
     vehicle_description: Mapped[str | None] = mapped_column(String(300))
+    # Structured, VIN-decodable vehicle draft fields (/goal Priority 2): let an
+    # intake request hold identified vehicle data before any customer or
+    # canonical `vehicles` row exists, so a shop can decode a VIN at intake and
+    # carry the result through to atomic conversion. All nullable -- a draft may
+    # have only a free-text `vehicle_description`, only a VIN, or nothing yet.
+    vehicle_vin: Mapped[str | None] = mapped_column(String(17))
+    vehicle_year: Mapped[int | None] = mapped_column()
+    vehicle_make: Mapped[str | None] = mapped_column(String(100))
+    vehicle_model: Mapped[str | None] = mapped_column(String(100))
+    vehicle_trim: Mapped[str | None] = mapped_column(String(120))
+    vehicle_engine: Mapped[str | None] = mapped_column(String(120))
+    vehicle_drivetrain: Mapped[str | None] = mapped_column(String(80))
     complaint: Mapped[str] = mapped_column(Text, nullable=False)
     source: Mapped[str] = mapped_column(String(40), nullable=False, default="phone")
     status: Mapped[str] = mapped_column(String(40), nullable=False, default="new")

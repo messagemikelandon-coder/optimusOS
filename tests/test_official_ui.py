@@ -252,6 +252,29 @@ def test_overview_dashboard_and_approval_queue_markup() -> None:
     assert ".gauge-ring" in css
 
 
+def test_intake_bridge_ui_is_connected() -> None:
+    """The customer-optional intake bridge is wired into the Service Desk view:
+    the intake form captures structured VIN-decoded vehicle fields (with a
+    Decode VIN affordance) before a customer exists, and the convert form can
+    attach to an existing customer."""
+    html = (STATIC / "index.html").read_text(encoding="utf-8")
+    javascript = (STATIC / "app.js").read_text(encoding="utf-8")
+    for element_id in (
+        "service-desk-vehicle-vin",
+        "service-desk-decode-vin",
+        "service-desk-vehicle-make",
+        "service-desk-vehicle-model",
+        "service-desk-vehicle-trim",
+        "service-desk-vehicle-engine",
+        "service-desk-vehicle-drivetrain",
+        "service-desk-convert-customer-id",
+    ):
+        assert f'id="{element_id}"' in html, element_id
+    assert "decodeIntakeVin" in javascript
+    assert "vehicle_vin" in javascript
+    assert "customer_id" in javascript
+
+
 def test_job_compiler_ui_is_connected() -> None:
     """The deterministic Job Compiler panel is wired into the diagnostics view:
     its markup exists, is owner-gated, and app.js connects the compile form to
