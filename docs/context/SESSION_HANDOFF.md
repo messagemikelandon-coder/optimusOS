@@ -8,63 +8,63 @@ Last verified date: 2026-07-23.
 
 ## Identity
 
-- Agent/task owner: Claude — `/goal` release + AI program. **Canonical release bridge (P1) is implemented on branch `agent/claude/release-bridge`** (draft PR pending). Builds on the merged Job Compiler (PR #89, migration 037) and intake bridge (PR #90, migration 038).
-- Branch/HEAD: `agent/claude/release-bridge`, off `main` at `9b4b2fc`. Commit `4eca5d5`. **Migration head advances to `039_job_compilation_release`.**
+- Agent/task owner: Claude — `/goal` release + AI program. **Canonical release bridge (P1) merged** (PR #91, migration 039). **Recommendation-only AI (P2) implemented on branch `agent/claude/ai-job-proposals`** (draft PR pending). **P3 (customer typeahead) not started.**
+- Branch/HEAD: `agent/claude/ai-job-proposals`, off `main` at `e419aaf`. Commits `4c76e49` (remove stray wordlist.txt) + `69a62c4` (P2). **Migration head advances to `040_job_input_proposals`.**
 - Working directory: primary repo checkout (`origin` = the optimusOS GitHub repository).
 
 ## Context
 
-This `/goal` has three slices: **P1** canonical release bridge (this branch), **P2** recommendation-only AI proposing Job Compiler inputs (not started), **P3** same-shop customer typeahead for draft conversion (not started). P1 completes the compiler→estimate connective step that ADR-025 deferred, reusing the estimate/approval/work-order/invoice pipeline rather than building a parallel record.
+Three `/goal` slices: **P1** canonical release bridge (MERGED, PR #91, ADR-027), **P2** recommendation-only AI proposing Job Compiler inputs (this branch, ADR-028), **P3** same-shop customer typeahead for the intake convert flow (not started). P2 gives shops an AI *draft* of recommended services + labor-hour estimates + part categories that feeds the deterministic compiler — the AI never invents prices/VIN/availability/approval and writes nothing autonomously.
 
-## Active task (P1 — implemented, verified locally, reviewed on-branch)
+## Active task (P2 — implemented, verified locally, reviewed on-branch)
 
-Canonical release bridge (ADR-027). Surface and files:
+Recommendation-only AI (ADR-028). Surface and files:
 
-- `app/job_release.py` — `release_job_compilation` + `_build_estimate_response`/`_build_estimate_request` (deterministic `EstimateResponse` from the compilation snapshot; confidence/severity/conclusion preserved into the research bundle).
-- `app/estimate_store.py` — `create_estimate_from_payload` (deterministic, no-orchestrator estimate persistence reusing `_validate_generated_estimate`/snapshot/numbering/content-hash; `commit=False` capable).
-- `app/models.py` — `SelectedPart.url` and `EstimateRequest.location` made optional (backward compatible); `CompiledJobRead.released_estimate_id`; `JobCompilationReleaseResponse`.
-- `app/db_models.py` + `alembic/versions/039_job_compilation_release.py` — `released_estimate_id`/`released_at`/`released_by_user_id` on `job_compilations`; `job_compilation_events` CHECK widened to allow `released`.
-- `app/orchestrator.py` — defensive guard for the now-optional `request.location` (AI path unchanged).
-- `app/main.py` — `POST /api/job-compilations/{id}/release` (owner/manager-gated).
-- `app/static/index.html`/`app.js`/`styles.css` — "Release to estimate" button + in-house-catalog part display.
-- Tests: `tests/test_job_release_api.py` (7), `tests/e2e/test_job_compilation_release_migration.py` (real-Postgres round-trip), `tests/test_official_ui.py` (+1 UI wiring test).
-- Docs: ADR-027 (`DECISIONS.md`), `CURRENT_STATE.md` section, this handoff, `KNOWN_ISSUES.md` entry.
+- `app/job_proposal.py` — provider-neutral `JobInputProposer` ABC + `propose`; `OpenAIJobInputProposer` (structured output, safe-failure, never called in CI); `build_job_input_proposer` factory (tests inject a fake); `validate_proposed_inputs` deterministic gate; shop-scoped `propose_job_inputs`/`list`/`get`/`set_disposition`.
+- `app/models.py` — `ProposedJobInputs`/`ProposedJobService` (`extra='forbid'`; no price/VIN/availability/approval field; bounded labor-hour suggestion; generic part categories) + `JobInputProposal*` read/list/disposition models.
+- `app/db_models.py` + `alembic/versions/040_job_input_proposals.py` — `job_input_proposals` audit table.
+- `app/main.py` — 4 owner/manager-gated routes: `POST /api/diagnostic-findings/{id}/propose-job-inputs` (503 when unconfigured; finding loaded shop-scoped before the provider is called), `GET /api/job-input-proposals`, `GET /api/job-input-proposals/{id}`, `PATCH /api/job-input-proposals/{id}` (disposition).
+- `app/static/index.html`/`app.js`/`styles.css` — "Suggest inputs (AI draft)" button populating the compile form; states the AI sets no prices; all proposal text escaped.
+- Tests: `tests/test_job_proposals_api.py` (13), `tests/e2e/test_job_input_proposals_migration.py` (real-Postgres round-trip), `tests/test_official_ui.py` (+1 UI wiring test).
+- Docs: ADR-028 (`DECISIONS.md`), `CURRENT_STATE.md` section, this handoff, `KNOWN_ISSUES.md` entry.
 
-Out of scope (deliberately not done): regenerating a released estimate as a new revision of the same estimate (each compilation revision → at most one new estimate); auto-sending for customer approval (release creates a DRAFT only); P2 (AI) and P3 (customer picker).
+Out of scope (deliberately not done): auto-applying a proposal into a compilation/estimate (draft-only; the owner drives the deterministic compile); a second AI provider (implement the ABC); a golden/replay harness for the real provider; P3 (customer typeahead).
 
 ## Verified baseline
 
 - `git diff --check` clean; `ruff format --check app tests`, `ruff check app tests`, `pyright` — all clean.
 - `node --check app/static/app.js` — clean.
-- `pytest --ignore=tests/e2e` — **842 passed, 2 skipped** (+7 release API tests, +1 UI test; no pre-existing test weakened, incl. all estimate/invoice/approval tests with the optional url/location).
-- `alembic heads` — single head `039_job_compilation_release`.
-- **Real Postgres 16 round-trip verified locally** (`tests/e2e/test_job_compilation_release_migration.py`): 038→039 adds the three columns + widens the event CHECK to allow `released`; downgrade reverses; re-upgrade restores.
-- `tests/test_role_isolation.py` green (the new release route is owner/manager-gated).
+- `pytest --ignore=tests/e2e` — **858 passed, 2 skipped** (+13 API/safety tests, +1 UI test; no pre-existing test weakened).
+- `alembic heads` — single head `040_job_input_proposals`.
+- **Real Postgres 16 round-trip verified locally** (`tests/e2e/test_job_input_proposals_migration.py`): 039→040 adds `job_input_proposals` + the status CHECK; downgrade drops it; re-upgrade restores.
+- `tests/test_role_isolation.py` green (all 4 proposal routes owner/manager-gated).
+- **CI uses a deterministic fake** injected via `build_job_input_proposer`; `OpenAIJobInputProposer` with no key raises rather than calling — no paid/live call.
 
-## Evidence (key acceptance tests, `tests/test_job_release_api.py`)
+## Evidence (key acceptance/safety tests, `tests/test_job_proposals_api.py`)
 
-- Release creates a real DRAFT estimate carrying the compiled totals/labor/customer-priced parts (no `unit_cost`, no retailer URL): `test_release_creates_draft_estimate`.
-- Idempotent (one estimate, one `released` event on re-release): `test_release_is_idempotent`.
-- Rejects a superseded/stale compilation (422): `test_release_rejects_superseded_compilation`. Cross-shop compilation is not found (404, no estimate leaked): `test_release_rejects_cross_shop_compilation`.
-- Preserves severity/confidence into the estimate research bundle: `test_release_preserves_severity_and_confidence`.
-- The released estimate is a real canonical estimate — it sends through the existing approval pipeline (DRAFT → AWAITING_APPROVAL): `test_released_estimate_flows_through_approval_pipeline`.
-- Migration: `tests/e2e/test_job_compilation_release_migration.py` proves the 038↔039 round-trip and the `released` CHECK value on real Postgres.
+- Schema forbids invented facts: `test_schema_forbids_injected_price_field`, `test_schema_forbids_top_level_injected_fields` (price/approved/vin rejected by `extra='forbid'`); `test_validator_rejects_malformed_payload`; `test_schema_bounds_labor_hours`.
+- No provider configured is safe: `test_openai_proposer_without_key_is_unavailable`.
+- Draft-only / no autonomous writes: `test_propose_persists_draft_and_creates_nothing_else` (0 Estimate, 0 JobCompilation). Prompt injection contained: `test_prompt_injection_in_evidence_cannot_trigger_autonomous_action`.
+- Cross-shop finding → 404 and provider NOT called: `test_propose_cross_shop_finding_is_not_found_and_provider_not_called`. Provider failure → safe 503, nothing persisted: `test_provider_failure_is_safe_and_persists_nothing`.
+- Isolation + lifecycle: `test_cross_shop_proposal_access_is_denied`, `test_list_get_and_disposition`, `test_repeated_proposals_are_independent_records`.
+- Migration: `tests/e2e/test_job_input_proposals_migration.py` (real Postgres 039↔040 round-trip).
 
 ## Unverified
 
-- Full Docker/Playwright authenticated E2E of the release UI was not run in a live browser this session; verified via `node --check`, the `tests/test_official_ui.py` markup-wiring test, and static review. CI's authenticated e2e job covers the app end to end.
+- Full Docker/Playwright authenticated E2E of the "Suggest inputs" UI was not run in a live browser this session; verified via `node --check`, the `tests/test_official_ui.py` markup-wiring test, and static review. CI's authenticated e2e job covers the app end to end.
+- The **real** `OpenAIJobInputProposer._propose_sync` OpenAI call path is `# pragma: no cover` — never exercised in CI (no live call). Its safe-failure wrapper IS tested via the injected fake raising.
 
 ## Unrelated preexisting changes
 
-- None. Every change is scoped to the release bridge. The `SelectedPart.url`/`EstimateRequest.location` optional change is a deliberate, backward-compatible enabler (the AI create-input `EstimateRecordBase.location` stays required; the AI path still sets `SelectedPart.url`); the `orchestrator.py` guard is defensive for that change.
+- Commit `4c76e49` removes an empty stray `wordlist.txt` that was accidentally swept onto `main` by a `git add -A` in the release-bridge slice (commit `3c3ffde`). Benign cleanup, disclosed.
 
 ## Blockers and risks
 
-- No engineering blocker. Additive and revert-safe: revert the commit(s) + `alembic downgrade 038_intake_vehicle_draft`.
+- No engineering blocker. Additive and revert-safe: revert the commit(s) + `alembic downgrade 039_job_compilation_release`.
 - Merge coordination: sync `main` and re-run gates before merge.
 
 ## Exact next task
 
-1. Push `agent/claude/release-bridge`, open a draft PR, confirm CI green, address any review findings, mark ready, merge, sync `main`.
-2. `/goal` P2 — recommendation-only AI: a provider-neutral interface proposing structured Job Compiler inputs (services with labor-hour suggestions, part categories, evidence, assumptions, confidence, questions) from a diagnostic finding's evidence. **Draft-only**: deterministic validation + owner approval mandatory; AI never invents diagnosis/VIN/prices/availability/labor truth/approval/payment; no autonomous estimate/WO/invoice writes; CI uses deterministic fakes (no paid/live call); record model/prompt-version/validation/actor/disposition without secrets; test malformed output, prompt injection, unsupported claims, timeout, provider failure, duplicates, cross-shop. Build on the existing provider-neutral OpenAI service pattern (`app/services/openai_web.py`) but keep the AI output strictly a proposal that feeds the deterministic `JobCompilationRequest` validation.
-3. `/goal` P3 — same-shop customer typeahead for the intake convert flow (bounded search, stable order, hard limits, tenant isolation, accessible), replacing the numeric existing-customer-ID input; preserve atomic conversion + duplicate-VIN protection.
+1. Push `agent/claude/ai-job-proposals`, open a draft PR, confirm CI green, address any review findings, mark ready, merge, sync `main`.
+2. `/goal` P3 — same-shop customer typeahead for the intake convert flow (`app/static` Service Desk convert form): replace the numeric existing-customer-ID input with an accessible typeahead backed by the existing `GET /api/customers?search=` (bounded search, stable order, hard limit, tenant isolation, safe empty/loading states). Preserve the atomic conversion + duplicate-VIN protection from ADR-026. Small slice.
+3. Follow-ups: allow a proposal to pre-fill a compilation for one-click owner review (still deterministic-validated); a second AI provider implementing `JobInputProposer`; surfacing severity/confidence in reports.

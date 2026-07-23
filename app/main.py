@@ -164,6 +164,16 @@ from app.job_compiler import (
     list_compiled_job_events,
     list_compiled_jobs,
 )
+from app.job_proposal import (
+    JobInputProposalNotFoundError,
+    JobProposalError,
+    JobProposalUnavailableError,
+    build_job_input_proposer,
+    get_job_input_proposal,
+    list_job_input_proposals,
+    propose_job_inputs,
+    set_job_input_proposal_disposition,
+)
 from app.job_release import JobReleaseError, release_job_compilation
 from app.migration_compat import (
     SchemaCompatibility,
@@ -254,6 +264,10 @@ from app.models import (
     JobCompilationReleaseResponse,
     JobCompilationRequest,
     JobCompilationStatus,
+    JobInputProposalDispositionRequest,
+    JobInputProposalListResponse,
+    JobInputProposalRead,
+    JobInputProposalStatus,
     LocationInput,
     ModeOnboardingCompleteRequest,
     ModeOnboardingResult,
@@ -724,6 +738,28 @@ async def enforce_vin_decode_rate_limit(request: Request, settings: Settings) ->
         )
         raise HTTPException(
             status_code=429, detail="Too many VIN decode requests. Try again shortly."
+        ) from exc
+
+
+def get_job_proposal_rate_limiter(settings: Settings) -> RateLimiter:
+    return _rate_limiters.get(
+        "job-proposal",
+        redis_url=settings.redis_url,
+        limit=settings.max_job_proposal_requests_per_minute,
+    )
+
+
+async def enforce_job_proposal_rate_limit(request: Request, settings: Settings) -> None:
+    client_host = request.client.host if request.client else "unknown"
+    client_key = f"job-proposal:{client_host}"
+    try:
+        await get_job_proposal_rate_limiter(settings).check(client_key)
+    except RateLimitExceeded as exc:
+        log_security_event(
+            logger, SecurityEventType.RATE_LIMIT_EXCEEDED, request=request, limit_key=client_key
+        )
+        raise HTTPException(
+            status_code=429, detail="Too many AI proposal requests. Try again shortly."
         ) from exc
 
 
@@ -3448,6 +3484,122 @@ async def release_job_compilation_record(
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Job compilation storage is unavailable.",
+        ) from exc
+
+
+@app.post(
+    "/api/diagnostic-findings/{finding_id}/propose-job-inputs",
+    response_model=JobInputProposalRead,
+)
+async def propose_job_inputs_record(
+    finding_id: int,
+    request: Request,
+    db: DbSessionDep,
+    settings: SettingsDep,
+    auth: OwnerAuthContextDep,
+) -> JobInputProposalRead:
+    """Recommendation-only AI (/goal): ask the configured provider for a
+    DRAFT-only proposal of Job Compiler inputs for a finding, deterministically
+    validate it, and persist it as an audit record. Owner/manager only,
+    rate-limited per client (it triggers one paid LLM call). Creates NO
+    estimate/work-order/invoice/compilation -- the owner must review and feed it
+    into the deterministic compile flow. 503 when no provider is configured; the
+    finding is loaded shop-scoped before the provider is called."""
+    await enforce_job_proposal_rate_limit(request, settings)
+    try:
+        proposer = await asyncio.to_thread(build_job_input_proposer, settings)
+        return await propose_job_inputs(db=db, auth=auth, finding_id=finding_id, proposer=proposer)
+    except DiagnosticFindingNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except JobProposalUnavailableError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)
+        ) from exc
+    except JobProposalError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Job input proposal failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Job input proposal storage is unavailable.",
+        ) from exc
+
+
+@app.get("/api/job-input-proposals", response_model=JobInputProposalListResponse)
+async def list_job_input_proposal_records(
+    db: DbSessionDep,
+    settings: SettingsDep,
+    auth: OwnerAuthContextDep,
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=1),
+    finding_id: Annotated[int | None, Query(ge=1)] = None,
+    proposal_status: Annotated[JobInputProposalStatus | None, Query()] = None,
+) -> JobInputProposalListResponse:
+    try:
+        return await asyncio.to_thread(
+            list_job_input_proposals,
+            db=db,
+            auth=auth,
+            settings=settings,
+            page=page,
+            page_size=page_size,
+            finding_id=finding_id,
+            status=proposal_status,
+        )
+    except JobProposalError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Job input proposal listing failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Job input proposal storage is unavailable.",
+        ) from exc
+
+
+@app.get("/api/job-input-proposals/{proposal_id}", response_model=JobInputProposalRead)
+async def get_job_input_proposal_record(
+    proposal_id: int,
+    db: DbSessionDep,
+    auth: OwnerAuthContextDep,
+) -> JobInputProposalRead:
+    try:
+        return await asyncio.to_thread(
+            get_job_input_proposal, db=db, auth=auth, proposal_id=proposal_id
+        )
+    except JobInputProposalNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Job input proposal retrieval failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Job input proposal storage is unavailable.",
+        ) from exc
+
+
+@app.patch("/api/job-input-proposals/{proposal_id}", response_model=JobInputProposalRead)
+async def set_job_input_proposal_disposition_record(
+    proposal_id: int,
+    payload: JobInputProposalDispositionRequest,
+    db: DbSessionDep,
+    auth: OwnerAuthContextDep,
+) -> JobInputProposalRead:
+    try:
+        return await asyncio.to_thread(
+            set_job_input_proposal_disposition,
+            db=db,
+            auth=auth,
+            proposal_id=proposal_id,
+            status=JobInputProposalStatus(payload.status),
+        )
+    except JobInputProposalNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except JobProposalError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Job input proposal update failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Job input proposal storage is unavailable.",
         ) from exc
 
 

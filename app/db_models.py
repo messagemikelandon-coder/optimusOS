@@ -1871,6 +1871,55 @@ class JobCompilationEvent(Base):
     )
 
 
+class JobInputProposal(Base):
+    """Audit record of a recommendation-only AI proposal of Job Compiler inputs
+    for a diagnostic finding. Draft-only: the validated proposal is a suggestion
+    the owner reviews and feeds into the deterministic compile flow -- it is
+    never applied automatically and creates no estimate/work-order/invoice.
+    Records provenance (model, prompt version, validation outcome, actor,
+    disposition) with no secret. `payload` is the validated `ProposedJobInputs`
+    JSON (which structurally cannot contain a price/VIN/availability)."""
+
+    __tablename__ = "job_input_proposals"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('proposed', 'accepted', 'dismissed')",
+            name="ck_job_input_proposals_status",
+        ),
+        Index("ix_job_input_proposals_shop_id", "shop_id"),
+        Index("ix_job_input_proposals_finding_created", "finding_id", "created_at"),
+        Index(
+            "ix_job_input_proposals_owner_status_updated", "owner_user_id", "status", "updated_at"
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    owner_user_id: Mapped[int] = mapped_column(
+        ForeignKey("user_accounts.id", ondelete="CASCADE"), nullable=False
+    )
+    shop_id: Mapped[int] = mapped_column(ForeignKey("shops.id", ondelete="CASCADE"), nullable=False)
+    finding_id: Mapped[int] = mapped_column(
+        ForeignKey("diagnostic_findings.id", ondelete="CASCADE"), nullable=False
+    )
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="proposed")
+    model: Mapped[str] = mapped_column(String(120), nullable=False)
+    prompt_version: Mapped[str] = mapped_column(String(60), nullable=False)
+    validation_status: Mapped[str] = mapped_column(String(20), nullable=False, default="valid")
+    payload: Mapped[dict[str, object]] = mapped_column(JSON, nullable=False)
+    created_by_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("user_accounts.id", ondelete="SET NULL"), nullable=True
+    )
+    updated_by_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("user_accounts.id", ondelete="SET NULL"), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+
+
 class Inspection(Base):
     __tablename__ = "inspections"
     __table_args__ = (

@@ -252,6 +252,21 @@ def test_overview_dashboard_and_approval_queue_markup() -> None:
     assert ".gauge-ring" in css
 
 
+def test_job_proposal_ui_is_connected() -> None:
+    """The compile form offers a recommendation-only AI 'Suggest inputs' draft
+    that populates the service rows; the UI makes clear it is a draft and the AI
+    sets no prices."""
+    html = (STATIC / "index.html").read_text(encoding="utf-8")
+    javascript = (STATIC / "app.js").read_text(encoding="utf-8")
+    assert 'id="compile-suggest-inputs"' in html
+    assert 'id="compile-suggestion-note"' in html
+    assert "suggestCompileInputs" in javascript
+    assert "/propose-job-inputs" in javascript
+    assert "applyProposalToCompileForm" in javascript
+    # The UI must state the AI never sets prices / nothing is applied automatically.
+    assert "never sets prices" in html.lower() or "no prices set by ai" in javascript.lower()
+
+
 def test_job_release_ui_is_connected() -> None:
     """The compiled-job panel can release a draft compilation into a canonical
     estimate: app.js wires a release button to the release endpoint and shows
