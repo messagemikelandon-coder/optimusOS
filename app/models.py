@@ -2413,6 +2413,161 @@ class DiagnosticFindingEventsResponse(BaseModel):
     events: list[DiagnosticFindingEventRead]
 
 
+# --- Deterministic Job Compiler (/goal Priority 1) -------------------------
+# Converts an approved diagnostic finding into recommended services and their
+# labor, parts needs, estimate lines, and work-order tasks through one
+# deterministic service -- no OpenAI / paid call. The inputs below may later be
+# proposed by an AI, but the deterministic compiler always validates and prices
+# them from real shop data (the parts catalog's customer price), never
+# fabricating labor, parts, or prices, and never exposing supplier cost/markup.
+
+
+class JobCompilationStatus(StrEnum):
+    """Lifecycle of a compiled job. ``draft`` is the single active compilation
+    for a finding; recompiling with changed inputs supersedes the prior draft
+    (``superseded``) and creates the next revision. A compilation is always an
+    internal draft -- it is never automatically released to the customer, and
+    the compiler never sends, approves, orders parts, or takes payment."""
+
+    DRAFT = "draft"
+    SUPERSEDED = "superseded"
+
+
+class JobCompilationPartInput(BaseModel):
+    """A part need for one recommended service, referencing a catalog part by
+    id. The compiler prices it from the part's customer-facing ``unit_price``
+    only; supplier ``unit_cost``/markup is never read or exposed here."""
+
+    part_id: int = Field(ge=1)
+    quantity: int = Field(ge=1, le=1000)
+
+
+class JobCompilationServiceInput(BaseModel):
+    """One recommended service derived from an approved finding: a labor task
+    with an owner-validated labor-hour estimate and its part needs."""
+
+    title: NonBlank = Field(max_length=200)
+    notes: str | None = Field(default=None, max_length=2000)
+    labor_hours: float = Field(gt=0, le=500)
+    parts: list[JobCompilationPartInput] = Field(default_factory=list, max_length=50)
+
+    @field_validator("notes", mode="before")
+    @classmethod
+    def strip_service_notes(cls, value: object) -> object:
+        if isinstance(value, str):
+            stripped = value.strip()
+            return stripped or None
+        return value
+
+
+class JobCompilationRequest(BaseModel):
+    """The deterministic compile request for one finding. ``labor_rate`` is
+    supplied explicitly by the owner (or a validated proposal) rather than
+    fabricated. Fees are optional and default to none (0)."""
+
+    services: list[JobCompilationServiceInput] = Field(min_length=1, max_length=50)
+    labor_rate: float = Field(gt=0, le=1000)
+    shop_supplies_percent: float | None = Field(default=None, ge=0, le=25)
+    parts_tax_rate: float | None = Field(default=None, ge=0, le=20)
+    notes: str | None = Field(default=None, max_length=2000)
+
+    @field_validator("notes", mode="before")
+    @classmethod
+    def strip_request_notes(cls, value: object) -> object:
+        if isinstance(value, str):
+            stripped = value.strip()
+            return stripped or None
+        return value
+
+
+class CompiledJobLaborLine(BaseModel):
+    title: str
+    notes: str | None = None
+    labor_hours: float
+    labor_rate: float
+    labor_total: float
+
+
+class CompiledJobPartLine(BaseModel):
+    # Deliberately customer-facing only: part id, catalog description/number,
+    # quantity, and the customer ``unit_price`` + extended price. Supplier
+    # ``unit_cost`` and any markup are never included in this projection.
+    part_id: int
+    part_number: str | None = None
+    description: str
+    quantity: int
+    unit_price: float
+    extended_price: float
+
+
+class CompiledJobTask(BaseModel):
+    """A work-order task descriptor generated from a recommended service, in
+    deterministic sequence order."""
+
+    sequence: int
+    title: str
+    notes: str | None = None
+    labor_hours: float
+
+
+class CompiledJobTotals(BaseModel):
+    labor_hours: float
+    labor_rate: float
+    labor_total: float
+    parts_subtotal: float
+    shop_supplies: float
+    parts_tax: float
+    estimated_total: float
+
+
+class CompiledJobRead(BaseModel):
+    id: int
+    finding_id: int
+    vehicle_id: int
+    status: JobCompilationStatus
+    revision_number: int
+    released: bool
+    content_hash: str
+    # Snapshot of the source finding's evidence at compile time so the
+    # compiled job preserves confidence/severity/diagnosis and the derived
+    # unverified signal even if the finding is later edited.
+    source_severity: DiagnosticSeverity | None = None
+    source_confidence: DiagnosticConfidence | None = None
+    source_conclusion: str | None = None
+    source_diagnosis_unverified: bool = False
+    vehicle_display_name: str | None = None
+    labor_rate: float
+    labor_lines: list[CompiledJobLaborLine]
+    part_lines: list[CompiledJobPartLine]
+    tasks: list[CompiledJobTask]
+    totals: CompiledJobTotals
+    superseded_by_id: int | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class CompiledJobListResponse(BaseModel):
+    items: list[CompiledJobRead]
+    page: int
+    page_size: int
+    total: int
+    has_more: bool
+
+
+class CompiledJobEventRead(BaseModel):
+    id: int
+    event_type: str
+    actor_type: str
+    actor_name: str | None = None
+    revision_number: int
+    created_at: datetime
+
+
+class CompiledJobEventsResponse(BaseModel):
+    compilation_id: int
+    events: list[CompiledJobEventRead]
+
+
 class InspectionItem(BaseModel):
     label: NonBlank = Field(max_length=200)
     status: Literal["ok", "attention", "fail"] = "ok"

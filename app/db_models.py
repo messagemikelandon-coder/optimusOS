@@ -1748,6 +1748,106 @@ class DiagnosticFindingEvent(Base):
     )
 
 
+class JobCompilation(Base):
+    """A deterministic compilation of an approved diagnostic finding into a
+    priced draft job: labor lines, aggregated part needs (customer pricing
+    only), work-order task descriptors, and reconciled totals. Produced by
+    ``app/job_compiler.py`` with no OpenAI/paid call. Always an internal draft
+    (``released`` defaults False); the compiler never sends, approves, orders
+    parts, or takes payment. Recompiling is idempotent by ``content_hash``;
+    changed inputs supersede the prior draft and create the next revision."""
+
+    __tablename__ = "job_compilations"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('draft', 'superseded')",
+            name="ck_job_compilations_status",
+        ),
+        Index("ix_job_compilations_shop_id", "shop_id"),
+        Index("ix_job_compilations_finding_status", "finding_id", "status"),
+        Index("ix_job_compilations_owner_status_updated", "owner_user_id", "status", "updated_at"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    owner_user_id: Mapped[int] = mapped_column(
+        ForeignKey("user_accounts.id", ondelete="CASCADE"), nullable=False
+    )
+    shop_id: Mapped[int] = mapped_column(ForeignKey("shops.id", ondelete="CASCADE"), nullable=False)
+    finding_id: Mapped[int] = mapped_column(
+        ForeignKey("diagnostic_findings.id", ondelete="CASCADE"), nullable=False
+    )
+    vehicle_id: Mapped[int] = mapped_column(
+        ForeignKey("vehicles.id", ondelete="CASCADE"), nullable=False
+    )
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="draft")
+    revision_number: Mapped[int] = mapped_column(nullable=False, default=1)
+    content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    released: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
+    source_severity: Mapped[str | None] = mapped_column(String(20))
+    source_confidence: Mapped[str | None] = mapped_column(String(20))
+    source_conclusion: Mapped[str | None] = mapped_column(Text)
+    source_diagnosis_unverified: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
+    labor_rate: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False)
+    labor_lines: Mapped[list[dict[str, object]]] = mapped_column(JSON, nullable=False, default=list)
+    part_lines: Mapped[list[dict[str, object]]] = mapped_column(JSON, nullable=False, default=list)
+    tasks: Mapped[list[dict[str, object]]] = mapped_column(JSON, nullable=False, default=list)
+    totals: Mapped[dict[str, object]] = mapped_column(JSON, nullable=False, default=dict)
+    superseded_by_id: Mapped[int | None] = mapped_column(
+        ForeignKey("job_compilations.id", ondelete="SET NULL"), nullable=True
+    )
+    created_by_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("user_accounts.id", ondelete="SET NULL"), nullable=True
+    )
+    updated_by_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("user_accounts.id", ondelete="SET NULL"), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+
+
+class JobCompilationEvent(Base):
+    __tablename__ = "job_compilation_events"
+    __table_args__ = (
+        CheckConstraint(
+            "event_type IN ('compiled', 'recompiled', 'superseded')",
+            name="ck_job_compilation_events_type",
+        ),
+        CheckConstraint(
+            "actor_type IN ('owner', 'manager')",
+            name="ck_job_compilation_events_actor_type",
+        ),
+        Index("ix_job_compilation_events_compilation_created", "compilation_id", "created_at"),
+        Index("ix_job_compilation_events_shop_id", "shop_id"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    compilation_id: Mapped[int] = mapped_column(
+        ForeignKey("job_compilations.id", ondelete="CASCADE"), nullable=False
+    )
+    owner_user_id: Mapped[int] = mapped_column(
+        ForeignKey("user_accounts.id", ondelete="CASCADE"), nullable=False
+    )
+    shop_id: Mapped[int] = mapped_column(ForeignKey("shops.id", ondelete="CASCADE"), nullable=False)
+    revision_number: Mapped[int] = mapped_column(nullable=False, default=1)
+    event_type: Mapped[str] = mapped_column(String(20), nullable=False)
+    actor_type: Mapped[str] = mapped_column(String(20), nullable=False)
+    actor_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("user_accounts.id", ondelete="SET NULL"), nullable=True
+    )
+    actor_name: Mapped[str | None] = mapped_column(String(160))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
 class Inspection(Base):
     __tablename__ = "inspections"
     __table_args__ = (
