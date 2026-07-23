@@ -3514,6 +3514,7 @@ async function decodeVehicleVin() {
   try {
     const response = await apiFetch("/api/vehicles/decode-vin", {
       method: "POST",
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ vin }),
     });
     const data = await readApiPayload(response);

@@ -41,10 +41,14 @@ class VinService:
 
         url = f"{VPIC_BASE_URL}/{quote(vehicle.vin, safe='')}"
         payload = await self._http.get_json(url, params={"format": "json"})
+        if not isinstance(payload, dict):
+            raise ValueError("NHTSA returned an unexpected response shape.")
         results = payload.get("Results") or []
         if not results:
             raise ValueError("NHTSA returned no VIN result.")
         item = results[0]
+        if not isinstance(item, dict):
+            raise ValueError("NHTSA returned an unexpected result shape.")
 
         displacement = _first_nonblank(item.get("DisplacementL"))
         cylinders = _first_nonblank(item.get("EngineCylinders"))

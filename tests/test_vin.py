@@ -44,6 +44,22 @@ class EmptyResultsHttp:
         return {"Results": [{"ErrorCode": "11", "ErrorText": "Incomplete VIN"}]}
 
 
+class MalformedShapeHttp:
+    """Upstream returned valid JSON but not the expected object shape.
+
+    ``payload`` is whatever NHTSA sent instead of a ``{"Results": [ {...} ]}``
+    object (e.g. a bare list, a string, or a list where the first result is not a
+    dict). The safe-failure entry point must degrade to UNAVAILABLE rather than
+    raising ``AttributeError`` and surfacing a 5xx.
+    """
+
+    def __init__(self, payload: object) -> None:
+        self._payload = payload
+
+    async def get_json(self, url: str, params=None):  # type: ignore[no-untyped-def]
+        return self._payload
+
+
 @pytest.mark.asyncio
 async def test_decodes_vin() -> None:
     decoded = await VinService(FakeHttp()).decode(  # type: ignore[arg-type]
@@ -96,5 +112,24 @@ async def test_decode_intake_unavailable_when_nothing_resolves() -> None:
     # An upstream response that resolves no identity fields must not be presented
     # as a confirmed vehicle.
     result = await VinService(EmptyResultsHttp()).decode_intake(_GOOD_VIN)  # type: ignore[arg-type]
+    assert result.status is VinDecodeStatus.UNAVAILABLE
+    assert result.decoded is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "payload",
+    [
+        ["Results", "not-a-dict"],  # top-level list instead of an object
+        "unexpected string body",  # top-level string
+        {"Results": ["not-a-dict-item"]},  # first result is not an object
+    ],
+)
+async def test_decode_intake_unavailable_on_malformed_upstream_shape(payload: object) -> None:
+    # Safe-failure: a JSON body of an unexpected shape must degrade to UNAVAILABLE
+    # rather than raising AttributeError and surfacing a 5xx.
+    result = await VinService(MalformedShapeHttp(payload)).decode_intake(  # type: ignore[arg-type]
+        _GOOD_VIN
+    )
     assert result.status is VinDecodeStatus.UNAVAILABLE
     assert result.decoded is None
