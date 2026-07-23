@@ -311,6 +311,58 @@ async def test_archive_diagnostic_finding(settings, db_session: Session) -> None
     ]
 
 
+async def test_diagnostic_finding_list_filters_by_severity(settings, db_session: Session) -> None:
+    # Triage: the list can be narrowed to a single safety severity so a service
+    # advisor can surface every unsafe finding at a glance.
+    _, response = await login_as(settings, db_session)
+    auth = auth_context(settings, db_session, raw_cookie_from_response(response))
+    vehicle = await _create_vehicle(settings, db_session, auth)
+
+    unsafe = await main.create_diagnostic_finding_record(
+        DiagnosticFindingCreate(
+            vehicle_id=vehicle.id, symptoms="Brakes grinding.", severity=DiagnosticSeverity.UNSAFE
+        ),
+        db_session,
+        auth,
+    )
+    advisory = await main.create_diagnostic_finding_record(
+        DiagnosticFindingCreate(
+            vehicle_id=vehicle.id,
+            symptoms="Cabin filter dirty.",
+            severity=DiagnosticSeverity.ADVISORY,
+        ),
+        db_session,
+        auth,
+    )
+    unset = await main.create_diagnostic_finding_record(
+        DiagnosticFindingCreate(vehicle_id=vehicle.id, symptoms="Noise, not yet assessed."),
+        db_session,
+        auth,
+    )
+
+    unsafe_only = await main.list_diagnostic_finding_records(
+        db_session,
+        settings,
+        auth,
+        page=1,
+        page_size=20,
+        vehicle_id=None,
+        work_order_id=None,
+        severity=DiagnosticSeverity.UNSAFE,
+    )
+    ids = [item.id for item in unsafe_only.items]
+    assert unsafe.id in ids
+    assert advisory.id not in ids
+    assert unset.id not in ids
+
+    # No severity filter returns all three, unchanged default behavior.
+    everything = await main.list_diagnostic_finding_records(
+        db_session, settings, auth, page=1, page_size=20, vehicle_id=None, work_order_id=None
+    )
+    all_ids = {item.id for item in everything.items}
+    assert {unsafe.id, advisory.id, unset.id} <= all_ids
+
+
 async def test_diagnostic_finding_archive_is_owner_scoped(settings, db_session: Session) -> None:
     create_user(db_session, username="other-owner", password="other-password-123")
     _, owner_response = await login_as(settings, db_session)

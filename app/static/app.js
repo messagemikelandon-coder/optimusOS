@@ -75,6 +75,7 @@ const state = {
     total: 0,
     hasMore: false,
     vehicleFilterId: null,
+    severityFilter: "",
     archivedOnly: false,
   },
   inspections: {
@@ -5007,11 +5008,29 @@ function renderDiagnosticsList() {
   if (!state.diagnostics.items.length) {
     container.innerHTML = '<div class="empty-card"><strong>No findings</strong><p>Create a diagnostic finding for a vehicle.</p></div>';
   } else {
-    container.innerHTML = state.diagnostics.items.map((item) => `
+    const severityChipLabels = {
+      informational: "Informational",
+      advisory: "Advisory",
+      service_soon: "Service soon",
+      unsafe: "Unsafe",
+    };
+    container.innerHTML = state.diagnostics.items.map((item) => {
+      const severityChip = item.severity
+        ? `<span class="diag-chip diag-severity-${escapeHtml(item.severity)}">${escapeHtml(severityChipLabels[item.severity] || item.severity)}</span>`
+        : "";
+      const unverifiedChip = item.diagnosis_unverified
+        ? '<span class="diag-chip diag-chip-unverified">Unverified</span>'
+        : "";
+      const chips = severityChip || unverifiedChip
+        ? `<span class="diag-chip-row">${severityChip}${unverifiedChip}</span>`
+        : "";
+      return `
       <button type="button" class="customer-list-item${state.diagnostics.selectedFindingId === item.id ? " is-active" : ""}" data-diagnostics-id="${item.id}">
         <strong>${escapeHtml(item.vehicle_display_name || "Vehicle")}</strong>
         <span>${escapeHtml(item.symptoms.slice(0, 80))}</span>
-      </button>`).join("");
+        ${chips}
+      </button>`;
+    }).join("");
     $$("[data-diagnostics-id]", container).forEach((button) => {
       button.addEventListener("click", () => {
         void selectDiagnosticFinding(Number(button.dataset.diagnosticsId));
@@ -5035,6 +5054,7 @@ async function loadDiagnostics() {
     archived: String(state.diagnostics.archivedOnly),
   });
   if (state.diagnostics.vehicleFilterId) searchParams.set("vehicle_id", String(state.diagnostics.vehicleFilterId));
+  if (state.diagnostics.severityFilter) searchParams.set("severity", state.diagnostics.severityFilter);
   try {
     const response = await apiFetch(`/api/diagnostic-findings?${searchParams.toString()}`);
     const data = await readApiPayload(response);
@@ -5207,6 +5227,11 @@ function initializeDiagnostics() {
   $("diagnostics-vehicle-filter").addEventListener("change", () => {
     const value = $("diagnostics-vehicle-filter").value;
     state.diagnostics.vehicleFilterId = value ? Number(value) : null;
+    state.diagnostics.page = 1;
+    void loadDiagnostics();
+  });
+  $("diagnostics-severity-filter").addEventListener("change", () => {
+    state.diagnostics.severityFilter = $("diagnostics-severity-filter").value;
     state.diagnostics.page = 1;
     void loadDiagnostics();
   });

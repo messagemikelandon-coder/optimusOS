@@ -304,6 +304,7 @@ def list_diagnostic_findings(
     page_size: int,
     vehicle_id: int | None = None,
     work_order_id: int | None = None,
+    severity: DiagnosticSeverity | None = None,
     archived: bool = False,
 ) -> DiagnosticFindingListResponse:
     if page_size > settings.customers_max_page_size:
@@ -318,6 +319,8 @@ def list_diagnostic_findings(
         query = query.where(DiagnosticFinding.vehicle_id == vehicle_id)
     if work_order_id is not None:
         query = query.where(DiagnosticFinding.work_order_id == work_order_id)
+    if severity is not None:
+        query = query.where(DiagnosticFinding.severity == severity.value)
 
     total = db.scalar(select(func.count()).select_from(query.subquery())) or 0
     offset = (page - 1) * page_size
