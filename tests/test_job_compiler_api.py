@@ -18,6 +18,7 @@ from app.models import (
     JobCompilationServiceInput,
     JobCompilationStatus,
     PartCreate,
+    PartUpdate,
     VehicleCreate,
     VehicleRead,
 )
@@ -420,6 +421,38 @@ async def test_compile_creates_no_estimate_or_notification(settings, db_session:
     # notifies -- customer release is a separate, explicitly gated step.
     assert db_session.scalar(select(func.count()).select_from(Estimate)) == estimates_before
     assert db_session.scalar(select(func.count()).select_from(Notification)) == notifications_before
+
+
+async def test_changed_part_price_forces_new_revision(settings, db_session: Session) -> None:
+    # Idempotency must key on the computed output (which includes the catalog
+    # customer price), not just the raw request inputs: correcting a part's
+    # price and recompiling the same finding + services must NOT silently
+    # return the stale draft with old totals.
+    auth = await _owner_auth(settings, db_session)
+    vehicle = await _create_vehicle(db_session, auth)
+    finding = await _create_finding(db_session, auth, vehicle.id)
+    part = await _create_part(db_session, auth, unit_price=48.00)
+    request = JobCompilationRequest(
+        labor_rate=120.0,
+        services=[
+            JobCompilationServiceInput(
+                title="Brakes",
+                labor_hours=1.0,
+                parts=[JobCompilationPartInput(part_id=part.id, quantity=1)],
+            )
+        ],
+    )
+    first = await main.compile_job_from_finding(finding.id, request, db_session, auth)
+    assert first.part_lines[0].unit_price == 48.0
+
+    # Correct the customer price in the catalog, then recompile identical inputs.
+    await main.update_part_record(part.id, PartUpdate(unit_price=60.00), db_session, auth)
+    second = await main.compile_job_from_finding(finding.id, request, db_session, auth)
+
+    assert second.id != first.id
+    assert second.revision_number == 2
+    assert second.part_lines[0].unit_price == 60.0
+    assert second.totals.parts_subtotal == 60.0
 
 
 async def test_changed_diagnosis_forces_new_revision(settings, db_session: Session) -> None:

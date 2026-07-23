@@ -221,37 +221,30 @@ def _compile_lines(
     return labor_lines, part_lines, tasks, totals, labor_rate
 
 
-def _content_hash(finding: DiagnosticFinding, payload: JobCompilationRequest) -> str:
-    """Deterministic idempotency key over the normalized inputs *and* the source
-    finding's evidence snapshot: recompiling with identical inputs against an
-    unchanged diagnosis is a no-op, while a changed diagnosis (or changed
-    inputs) forces a new revision."""
+def _content_hash(
+    finding: DiagnosticFinding,
+    labor_lines: list[CompiledJobLaborLine],
+    part_lines: list[CompiledJobPartLine],
+    totals: CompiledJobTotals,
+) -> str:
+    """Deterministic idempotency key over the *computed, reconciled output* plus
+    the source finding's evidence snapshot -- not the raw request inputs. Hashing
+    the resolved labor lines, part lines (which carry the catalog customer
+    ``unit_price`` and extended price at compile time), and totals means that
+    *anything* affecting the output changes the hash: a changed labor rate/hours,
+    a changed service list, a changed fee, and -- critically -- a changed catalog
+    part price. Recompiling with an identical resolved output against an
+    unchanged diagnosis is a true no-op; if a part's customer price is corrected
+    in the catalog, the recompiled output differs and a fresh revision is
+    created (the prior draft is never silently returned with stale pricing)."""
     canonical = {
         "finding_id": finding.id,
         "severity": finding.severity,
         "confidence": finding.confidence,
         "conclusion": finding.conclusion,
-        "labor_rate": str(_money(payload.labor_rate)),
-        "shop_supplies_percent": (
-            str(payload.shop_supplies_percent)
-            if payload.shop_supplies_percent is not None
-            else None
-        ),
-        "parts_tax_rate": (
-            str(payload.parts_tax_rate) if payload.parts_tax_rate is not None else None
-        ),
-        "services": [
-            {
-                "title": service.title,
-                "notes": service.notes,
-                "labor_hours": str(_hours(service.labor_hours)),
-                "parts": sorted(
-                    ({"part_id": p.part_id, "quantity": p.quantity} for p in service.parts),
-                    key=lambda item: item["part_id"],
-                ),
-            }
-            for service in payload.services
-        ],
+        "labor_lines": [line.model_dump(mode="json") for line in labor_lines],
+        "part_lines": [line.model_dump(mode="json") for line in part_lines],
+        "totals": totals.model_dump(mode="json"),
     }
     return hashlib.sha256(
         json.dumps(canonical, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
@@ -330,7 +323,7 @@ def compile_job(
     approves, orders parts, alters customer records, or takes payment."""
     finding = _get_compilable_finding(db, auth, finding_id)
     labor_lines, part_lines, tasks, totals, labor_rate = _compile_lines(db, auth, payload)
-    content_hash = _content_hash(finding, payload)
+    content_hash = _content_hash(finding, labor_lines, part_lines, totals)
     diagnosis_unverified = _diagnosis_is_unverified(finding.conclusion, finding.confidence)
 
     existing = db.scalar(
