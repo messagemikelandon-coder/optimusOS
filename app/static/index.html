@@ -1379,6 +1379,36 @@
                   </div>
                 </div>
               </form>
+
+              <section class="panel estimate-form-panel" id="diagnostics-compile-panel" data-owner-only="true" hidden>
+                <div class="panel-heading">
+                  <div><span class="section-kicker"><i></i> Job compiler</span><h3>Compile job from finding</h3></div>
+                  <span class="estimate-number">DETERMINISTIC</span>
+                </div>
+                <p class="diag-compile-hint" id="diagnostics-compile-hint">Select a finding with a recorded conclusion to compile it into a draft job.</p>
+                <form id="diagnostics-compile-form" hidden>
+                  <fieldset>
+                    <legend><span>01</span> Labor &amp; fees</legend>
+                    <div class="form-grid two">
+                      <label class="field">Labor rate ($/hr) <input id="compile-labor-rate" type="number" min="0.01" max="1000" step="0.01" value="120"></label>
+                      <label class="field">Shop supplies (%) <input id="compile-shop-supplies" type="number" min="0" max="25" step="0.1" placeholder="Optional"></label>
+                    </div>
+                    <div class="form-grid two">
+                      <label class="field">Parts tax (%) <input id="compile-parts-tax" type="number" min="0" max="20" step="0.1" placeholder="Optional"></label>
+                    </div>
+                  </fieldset>
+                  <fieldset>
+                    <legend><span>02</span> Recommended services</legend>
+                    <div id="compile-services"></div>
+                    <button class="secondary-button compact" type="button" id="compile-add-service">Add service</button>
+                  </fieldset>
+                  <div class="estimate-submit-row">
+                    <div><strong>Deterministic — no AI</strong><span>Prices come from your parts catalog. Customer release stays a separate, owner-approved step.</span></div>
+                    <button class="primary-button compact" type="submit" id="compile-submit">Compile job</button>
+                  </div>
+                </form>
+                <div id="compile-result" class="customer-detail-card" aria-live="polite"></div>
+              </section>
             </section>
           </div>
         </section>

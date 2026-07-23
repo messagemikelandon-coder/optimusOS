@@ -33,8 +33,7 @@ def _tables(engine) -> set[str]:  # type: ignore[no-untyped-def]
             row[0]
             for row in connection.execute(
                 text(
-                    "SELECT table_name FROM information_schema.tables "
-                    "WHERE table_schema = 'public'"
+                    "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'"
                 )
             )
         }
