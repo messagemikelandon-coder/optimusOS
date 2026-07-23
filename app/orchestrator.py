@@ -34,8 +34,8 @@ class OptimusResearchOrchestrator:
         # the deterministic Job Compiler release path can build a location-less
         # estimate without going through this orchestrator; that path never
         # calls estimate_job. Guard defensively.
-        if request.location is None:
-            raise ValueError("An estimate location is required for AI research.")
+        if request.location is None or request.vehicle is None:
+            raise ValueError("An estimate location and vehicle are required for AI research.")
         location_task = asyncio.create_task(self._location.resolve(request.location))
         vehicle_task = asyncio.create_task(self._vin.decode(request.vehicle))
         location, vehicle = await asyncio.gather(location_task, vehicle_task)

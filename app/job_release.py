@@ -30,7 +30,6 @@ from app.models import (
     ResearchBundle,
     ResolvedLocation,
     SelectedPart,
-    VehicleInput,
 )
 from app.vehicle_store import get_vehicle_model, vehicle_display_name
 
@@ -189,16 +188,13 @@ def _job_text(compilation: JobCompilation, vehicle) -> str:  # type: ignore[no-u
 
 
 def _build_estimate_request(compilation: JobCompilation, vehicle) -> EstimateRequest:  # type: ignore[no-untyped-def]
+    # The canonical vehicle (make+model, possibly no year/VIN) is carried by the
+    # response's DecodedVehicle and estimate.vehicle_id; the request's vehicle is
+    # redundant metadata and is omitted rather than forced through VehicleInput's
+    # stricter require-vin-or-year+make+model rule (which a make+model-only
+    # vehicle cannot satisfy).
     return EstimateRequest(
-        vehicle=VehicleInput(
-            vin=vehicle.vin,
-            year=vehicle.year,
-            make=vehicle.make,
-            model=vehicle.model,
-            trim=vehicle.trim,
-            engine=vehicle.engine,
-            drivetrain=vehicle.drivetrain,
-        ),
+        vehicle=None,
         job=_job_text(compilation, vehicle),
         location=None,
         labor_rate=float(compilation.labor_rate),

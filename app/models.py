@@ -266,7 +266,15 @@ class ResearchBundle(BaseModel):
 
 
 class EstimateRequest(BaseModel):
-    vehicle: VehicleInput
+    # Optional: the AI research path always builds a full VehicleInput (it needs
+    # a decodable identity), but a deterministically released compiled job's
+    # canonical vehicle may legitimately have only make+model (no year/VIN),
+    # which cannot satisfy VehicleInput's require-vin-or-year+make+model rule.
+    # The released estimate carries the real vehicle via its response's
+    # DecodedVehicle and the canonical estimate.vehicle_id, so the request's
+    # vehicle is redundant metadata and may be omitted. The AI create-input
+    # still supplies it.
+    vehicle: VehicleInput | None = None
     job: NonBlank = Field(max_length=500)
     # Optional: the AI research path always resolves a location (parts
     # availability / store distance depend on it), but a deterministically

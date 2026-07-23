@@ -8,11 +8,13 @@ from sqlalchemy.orm import Session
 import app.main as main
 from app.db_models import Estimate, JobCompilation
 from app.models import (
+    CustomerCreate,
     EstimateSendForApprovalRequest,
     EstimateStatus,
     JobCompilationPartInput,
     JobCompilationRequest,
     JobCompilationServiceInput,
+    VehicleCreate,
 )
 from tests.test_api import request_for
 from tests.test_context_api import auth_context, create_user, login_as, raw_cookie_from_response
@@ -167,6 +169,33 @@ async def test_release_rejects_compilation_from_another_shop_not_found(
     with pytest.raises(HTTPException) as excinfo:
         await main.release_job_compilation_record(999999, db_session, auth)
     assert excinfo.value.status_code == 404
+
+
+async def test_release_vehicle_without_year_or_vin(settings, db_session: Session) -> None:
+    # A canonical vehicle with only make+model (no year, no VIN) is valid in the
+    # system; releasing a compilation for it must not fail building the estimate
+    # request (the request's vehicle is optional; the response's DecodedVehicle
+    # + estimate.vehicle_id carry identity).
+    auth = await _owner_auth(settings, db_session)
+    customer = await main.create_customer_record(
+        CustomerCreate(first_name="No", last_name="Year"), db_session, auth
+    )
+    vehicle = await main.create_vehicle_record(
+        customer.id, VehicleCreate(make="Honda", model="Civic"), db_session, auth
+    )
+    finding = await _create_finding(db_session, auth, vehicle.id)
+    compiled = await main.compile_job_from_finding(
+        finding.id,
+        JobCompilationRequest(
+            labor_rate=100.0,
+            services=[JobCompilationServiceInput(title="Diagnose", labor_hours=1.0)],
+        ),
+        db_session,
+        auth,
+    )
+    result = await main.release_job_compilation_record(compiled.id, db_session, auth)
+    assert result.estimate.status is EstimateStatus.DRAFT
+    assert result.estimate.vehicle_id == vehicle.id
 
 
 async def test_release_labor_only_compilation(settings, db_session: Session) -> None:
