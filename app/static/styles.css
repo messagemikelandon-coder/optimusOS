@@ -488,6 +488,23 @@ button[disabled] { cursor: wait; opacity: .6; transform: none !important; }
 .compile-task-list li { margin: 2px 0; }
 .compile-release-row { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-top: 12px; }
 .compile-suggest-row { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-bottom: 8px; }
+
+/* Convert-to-customer same-shop typeahead. */
+.customer-typeahead { position: relative; }
+.customer-typeahead-results {
+  position: absolute; top: 100%; left: 0; right: 0; z-index: 30;
+  background: var(--panel, #111827); border: 1px solid var(--border, #334155);
+  border-radius: 8px; max-height: 240px; overflow-y: auto; margin-top: 4px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
+}
+.customer-typeahead-option {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 2px;
+  width: 100%; text-align: left; background: transparent; border: none;
+  padding: 8px 10px; cursor: pointer; color: inherit;
+}
+.customer-typeahead-option:hover, .customer-typeahead-option.is-active { background: var(--surface-hover, rgba(148, 163, 184, 0.15)); }
+.customer-typeahead-option span { color: var(--muted, #94a3b8); font-size: 0.8rem; }
+.customer-typeahead-status { padding: 8px 10px; margin: 0; color: var(--muted, #94a3b8); font-size: 0.85rem; }
 .part-source-note { color: var(--muted, #94a3b8); font-size: 0.85rem; }
 
 /* Compact severity/status chips shown on diagnostic-finding list rows for triage. */

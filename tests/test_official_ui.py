@@ -281,6 +281,26 @@ def test_job_release_ui_is_connected() -> None:
     )
 
 
+def test_convert_customer_typeahead_is_connected() -> None:
+    """The intake convert form uses an accessible same-shop customer typeahead
+    (backed by the existing bounded, shop-scoped /api/customers?search=) instead
+    of a raw customer-id input; it preserves the hidden customer_id the atomic
+    conversion reads."""
+    html = (STATIC / "index.html").read_text(encoding="utf-8")
+    javascript = (STATIC / "app.js").read_text(encoding="utf-8")
+    css = (STATIC / "styles.css").read_text(encoding="utf-8")
+    assert 'id="service-desk-convert-customer-search"' in html
+    assert 'role="combobox"' in html
+    assert 'id="service-desk-convert-customer-results"' in html
+    assert 'role="listbox"' in html
+    # The hidden id the convert POST reads is preserved.
+    assert 'id="service-desk-convert-customer-id"' in html
+    assert "searchConvertCustomers" in javascript
+    assert "/api/customers?search=" in javascript
+    assert "page_size=8" in javascript  # bounded / hard limit
+    assert ".customer-typeahead-results" in css
+
+
 def test_intake_bridge_ui_is_connected() -> None:
     """The customer-optional intake bridge is wired into the Service Desk view:
     the intake form captures structured VIN-decoded vehicle fields (with a
