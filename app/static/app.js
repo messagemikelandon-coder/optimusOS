@@ -5341,6 +5341,8 @@ function renderCompilePanel(finding = null) {
   }
   const container = $("compile-services");
   if (container) container.innerHTML = "";
+  const suggestionNote = $("compile-suggestion-note");
+  if (suggestionNote) suggestionNote.innerHTML = "";
   state.diagnostics.compileResult = null;
   renderCompiledJob(null);
   if (canCompile) {
@@ -5363,6 +5365,56 @@ function collectCompileServices() {
   }
   if (!services.length) throw new Error("Add at least one recommended service.");
   return services;
+}
+
+function applyProposalToCompileForm(proposal) {
+  const container = $("compile-services");
+  container.innerHTML = "";
+  for (const service of proposal.proposed_services) {
+    addCompileServiceRow(service.title, service.labor_hours_suggestion);
+  }
+  const note = $("compile-suggestion-note");
+  if (!note) return;
+  const questions = (proposal.clarifying_questions || [])
+    .map((q) => `<li>${escapeHtml(q)}</li>`)
+    .join("");
+  const categories = new Set();
+  for (const service of proposal.proposed_services) {
+    (service.part_categories || []).forEach((category) => categories.add(category));
+  }
+  const categoryList = [...categories].map((c) => `<li>${escapeHtml(c)}</li>`).join("") || "<li>None suggested</li>";
+  note.innerHTML = `
+    <div class="customer-detail-header"><strong>AI draft — review before compiling</strong><span>No prices set by AI</span></div>
+    <div class="customer-detail-notes"><span>Evidence summary</span><p>${escapeHtml(proposal.evidence_summary)}</p></div>
+    <div class="customer-detail-notes"><span>Suggested part categories (pick real catalog parts)</span><ul class="compile-task-list">${categoryList}</ul></div>
+    ${questions ? `<div class="customer-detail-notes"><span>Clarifying questions</span><ul class="compile-task-list">${questions}</ul></div>` : ""}`;
+}
+
+async function suggestCompileInputs() {
+  if (!await requireAuthenticated("login")) return;
+  const finding = state.diagnostics.selectedFinding;
+  if (!finding) {
+    showToast("Select a finding first.", "error");
+    return;
+  }
+  const button = $("compile-suggest-inputs");
+  button.disabled = true;
+  button.textContent = "Proposing…";
+  try {
+    const response = await apiFetch(`/api/diagnostic-findings/${finding.id}/propose-job-inputs`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+    });
+    const data = await readApiPayload(response);
+    if (!response.ok || !data) throw apiError(response, data, "Proposal failed");
+    applyProposalToCompileForm(data.proposal);
+    showToast("AI draft proposed. Review, pick real parts, then compile.", "success");
+  } catch (error) {
+    showToast(`Proposal failed: ${error.message}`, "error");
+  } finally {
+    button.disabled = false;
+    button.textContent = "Suggest inputs (AI draft)";
+  }
 }
 
 async function submitCompileForm(event) {
@@ -5531,6 +5583,7 @@ function initializeDiagnostics() {
   $("diagnostics-form").addEventListener("submit", submitDiagnosticsForm);
   $("diagnostics-compile-form").addEventListener("submit", submitCompileForm);
   $("compile-add-service").addEventListener("click", () => addCompileServiceRow());
+  $("compile-suggest-inputs").addEventListener("click", () => void suggestCompileInputs());
   $("diagnostics-archive").addEventListener("click", () => void archiveSelectedDiagnosticFinding());
   $("diagnostics-refresh").addEventListener("click", () => void loadDiagnostics());
   $("diagnostics-archived-only").addEventListener("change", () => {

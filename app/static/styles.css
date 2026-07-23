@@ -487,6 +487,7 @@ button[disabled] { cursor: wait; opacity: .6; transform: none !important; }
 .compile-task-list { margin: 6px 0 0; padding-left: 18px; }
 .compile-task-list li { margin: 2px 0; }
 .compile-release-row { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-top: 12px; }
+.compile-suggest-row { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-bottom: 8px; }
 .part-source-note { color: var(--muted, #94a3b8); font-size: 0.85rem; }
 
 /* Compact severity/status chips shown on diagnostic-finding list rows for triage. */

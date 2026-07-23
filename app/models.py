@@ -2655,6 +2655,81 @@ class JobCompilationReleaseResponse(BaseModel):
     estimate: EstimateRead
 
 
+# --- Recommendation-only AI: proposed Job Compiler inputs (/goal) -----------
+# A provider-neutral AI proposes STRUCTURED, draft-only inputs for the
+# deterministic Job Compiler from a diagnostic finding's evidence. The schema is
+# deliberately narrow so the model structurally CANNOT invent a price,
+# availability, a VIN fact, or an approval/payment state: it may only suggest
+# service titles + labor-hour estimates + part *categories* + questions. The
+# output is never applied automatically -- deterministic validation and owner
+# approval (re-entering/confirming inputs through the compile flow) are
+# mandatory before anything is priced or persisted as a job.
+
+_ProposalShortText = Annotated[
+    str, StringConstraints(strip_whitespace=True, min_length=1, max_length=200)
+]
+
+
+class ProposedJobService(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    title: NonBlank = Field(max_length=200)
+    # A SUGGESTION only, bounded; the owner confirms/edits real labor hours in
+    # the deterministic compile flow. Never presented as authoritative truth.
+    labor_hours_suggestion: float = Field(gt=0, le=100)
+    rationale: str | None = Field(default=None, max_length=1000)
+    # Part *categories* (e.g. "front brake pads"), never specific priced parts:
+    # the owner maps these to real catalog parts (which carry the customer
+    # price) in the compiler. The AI never sees or emits a price.
+    part_categories: list[_ProposalShortText] = Field(default_factory=list, max_length=20)
+
+
+class ProposedJobInputs(BaseModel):
+    # `extra="forbid"` is a load-bearing safety control: it rejects any field the
+    # model tries to smuggle in beyond this schema (e.g. a `price`, `vin`,
+    # `availability`, or `approved` field), so an AI cannot invent those facts
+    # through the structured output.
+    model_config = ConfigDict(extra="forbid")
+
+    evidence_summary: NonBlank = Field(max_length=2000)
+    assumptions: list[_ProposalShortText] = Field(default_factory=list, max_length=20)
+    overall_confidence: Confidence
+    proposed_services: list[ProposedJobService] = Field(min_length=1, max_length=20)
+    clarifying_questions: list[_ProposalShortText] = Field(default_factory=list, max_length=20)
+
+
+class JobInputProposalStatus(StrEnum):
+    PROPOSED = "proposed"
+    ACCEPTED = "accepted"
+    DISMISSED = "dismissed"
+
+
+class JobInputProposalRead(BaseModel):
+    id: int
+    finding_id: int
+    status: JobInputProposalStatus
+    # Provenance recorded for audit -- model + prompt version + validation
+    # outcome + actor -- never any secret or raw API key.
+    model: str
+    prompt_version: str
+    validation_status: str
+    proposal: ProposedJobInputs
+    created_at: datetime
+    updated_at: datetime
+
+
+class JobInputProposalListResponse(BaseModel):
+    items: list[JobInputProposalRead]
+    page: int
+    page_size: int
+    total: int
+    has_more: bool
+
+
+class JobInputProposalDispositionRequest(BaseModel):
+    status: Literal["accepted", "dismissed"]
+
+
 class InspectionItem(BaseModel):
     label: NonBlank = Field(max_length=200)
     status: Literal["ok", "attention", "fail"] = "ok"
