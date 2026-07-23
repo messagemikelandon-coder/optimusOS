@@ -37,10 +37,22 @@ Out of scope (deliberately not done): customer-less estimates/diagnostics (a lar
 - `pytest --ignore=tests/e2e` — **799 passed, 2 skipped** (was 786; +13 net-new tests; no pre-existing test weakened). `tests/test_role_isolation.py` and `tests/test_capability_gate_safeguards.py` green — new route correctly owner-gated, no `CapabilityGateMode.ENFORCE`.
 - `alembic` head unchanged: `035_operating_mode_confirmed_at` (no migration).
 
+## Evidence
+
+- Authorization: `tests/test_vin_decode_api.py` proves an unauthenticated caller gets 401 and an owner gets a 200 decoded response; `tests/test_role_isolation.py` (static route audit) classifies the new route as owner-gated with no allowlist change, so a technician/other role is denied by the same mechanism as every other business route.
+- Safe-failure: `tests/test_vin.py` proves `decode_intake` returns `unavailable` (never raises) for `httpx.ConnectError`/`ReadTimeout`/`HTTPStatusError` and a non-JSON `ValueError`, and for a decoded-but-empty upstream result; `tests/test_vin_decode_api.py` proves the endpoint returns HTTP 200 (not 5xx) on `unavailable`.
+- Input safety: strict 17-char `VinDecodeRequest` rejects short/long/`I,O,Q` VINs (422, ×3); the VIN is URL-quoted and host-allowlisted to `vpic.nhtsa.dot.gov` (no SSRF/path-injection surface).
+- Bounded/outbound: per-client rate limit returns 429 on the second call at limit 1; `Cache-Control: no-store` asserted; the `vin_decode.unavailable` warning log carries only the error type, never the VIN.
+- No test makes a real outbound call — `get_vin_service` is overridden with a fake in API tests and `VinService.decode` is driven by fake HTTP clients in unit tests.
+
 ## Unverified
 
 - Full Docker/Playwright `tests/e2e` not run in this container (no Docker/Postgres/Redis) — CI's job. This slice adds no e2e test.
 - No real outbound NHTSA call was made; the decode path is proven through injected boundaries plus the safe-failure design and the existing `VinService.decode` tests, not exercised against live vPIC here.
+
+## Unrelated preexisting changes
+
+- None functional. Every code change is scoped to this VIN-decode intake slice — no migration, no schema change, no edit to any existing route's behavior. Ruff's import-sorter reordered the first-party import block in `app/main.py` when the new `from app.services.vin import VinService` line was added; that is a formatting-only change with no behavioral effect. A pre-existing staleness in `CURRENT_STATE.md` (the Phase 2B section still says "draft PR pending" though PR #84 merged) was left untouched to avoid scope creep; it is called out here rather than silently edited.
 
 ## Blockers and risks
 
