@@ -1142,6 +1142,10 @@
                     <input id="vehicle-vin" maxlength="17" autocomplete="off" placeholder="17-character VIN or leave blank">
                     <small>VIN is optional for older, custom, off-road, or temporarily unidentified vehicles.</small>
                   </label>
+                  <div class="vin-decode-row">
+                    <button class="text-button" type="button" id="vehicle-decode-vin">Decode VIN</button>
+                    <span class="vin-decode-status" id="vehicle-decode-status" role="status" aria-live="polite"></span>
+                  </div>
                   <div class="form-grid four">
                     <label class="field">Year <input id="vehicle-year" type="number" min="1900" max="2100" placeholder="2018"></label>
                     <label class="field">Make <input id="vehicle-make" maxlength="100" placeholder="Honda"></label>
