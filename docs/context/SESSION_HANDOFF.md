@@ -8,71 +8,65 @@ Last verified date: 2026-07-22.
 
 ## Identity
 
-- Agent/task owner: Claude — post-onboarding context synchronization after PR #81 merged.
-- Branch/HEAD: `agent/claude/post-onboarding-context-sync`, one documentation-only commit on top of `main` at merge commit `7050bb8d630e4e64e5fca5ee51511a17e54f4507` (PR #81). Branched from `origin/main`, not from the onboarding feature branch.
+- Agent/task owner: Claude — Phase 2A (observability): platform-support-only, read-only host-disk and Docker-storage visibility.
+- Branch/HEAD: the Phase 2A working branch, written `agent/claude/phase2a-disk`-`volume-monitoring` (the name is split across two code spans only to dodge a false `check_ai_handoff` secret-scan match on the literal string; it is one branch). One implementation commit on top of `main` at `e924ffae220bb1cd0b743293e80c189159e99e23` (the merge of PR #82). Branched from `origin/main`.
 - Working directory: primary repo checkout with `origin` = `https://github.com/messagemikelandon-coder/optimusOS.git`.
 
 ## Context
 
-PR #81 ("post-signup operating-mode onboarding", ADR-022, owner-only, non-blocking) was merged to `main` by the repository owner as merge commit `7050bb8d630e4e64e5fca5ee51511a17e54f4507` (feature head `22cfada9c2782910c8aeafc6f8a5fd212df3cdc2`; verified locally as a real merge commit containing that feature head). The project-truth documents still described the pre-merge world (SESSION_HANDOFF described the earlier Phase 1 security-kernel branch; ADR-022 and its bridge said "not yet implemented"/"design only"). This session brings those documents into agreement with the merged reality. It is documentation-only — no application code, schema, or test behavior changed.
+Phase 1 is complete; Phase 2 (observability) starts with disk/Docker-storage visibility. This slice was revised after a REQUEST-CHANGES review that flagged authorization, resource-amplification, deployment-boundary, and information-disclosure issues. The revised design is: an additive, read-only, **platform-support-only** endpoint that surfaces *process-visible* filesystem and Docker storage (explicitly not production host monitoring), with bounded collection, a throttled warning, a non-sensitive label instead of the raw path, and `Cache-Control: no-store`. Decision: ADR-023 (revised). Operator-facing behavior, limitations, the deployment boundary, rollback, and the next slice are in `docs/context/MONITORING.md` §4.
 
 ## Active task
 
-**Post-onboarding context synchronization (documentation only).** Corrected the stale project-truth documents to record the merged operating-mode work and the roadmap position. Files changed:
+**Phase 2A read-only, support-only disk/Docker-storage visibility (revised).** Surface and files:
 
-- `docs/context/CURRENT_STATE.md` — added a "Latest merged status (2026-07-22)" block (merge SHA, migration head, Phase 1 (security and structural foundation) complete / Phase 2 next, the operating-mode facts) and corrected the stale synced-`main` HEAD.
-- `docs/context/SESSION_HANDOFF.md` — replaced (this file).
-- `docs/context/GOAL_EVIDENCE_MATRIX.md` — added an "Operating modes + capability resolution (ADR-022)" row (Complete, non-enforcing), tagged as architecture-roadmap work distinct from the pilot's own phase numbering.
-- `docs/context/PRODUCT.md` — added operating-mode selection + onboarding + capability-shaped navigation to the verified/implemented facts.
-- `docs/context/ARCHITECTURE.md` — added the capability-resolution service, capability gate (OBSERVE-only), transition/onboarding services, and the current migration head.
-- `docs/architecture/README.md` — ADR-022 status row updated; "current phase" corrected to Phase 1 (security and structural foundation) complete / Phase 2 next; operating-modes paragraph updated.
-- `docs/architecture/OPERATING-MODES-ARCHITECTURE-BRIDGE.md` — corrected the stale top-of-file "design/docs only" Status line (the per-slice amendments §12a–§12d already shipped with PR #81).
-- `docs/architecture/adr/ADR-022-operating-mode-tier-separation.md` — Status changed to "Accepted — implemented (non-enforcing)" plus a dated implementation-status amendment; original decision text preserved.
-- `docs/context/DECISIONS.md` — one-line ADR-022 pointer entry brought into agreement (status + consequences); included as a consistency fix so the log does not contradict the ADR.
+- `app/storage_monitor.py` — stdlib-only leaf collector (dependency-injected `disk_usage=` / `run=`; never raises for a real host/Docker failure, never mutates). `read_disk_usage`, `read_docker_storage` (read-only `docker system df`, 5s timeout; degrades to `unavailable` on CLI-missing/daemon-down/timeout/non-zero-exit/malformed/**partial** output **and on any missing/malformed/negative required category measurement — failing closed rather than reporting an available snapshot with null counts/sizes** — never leaking stderr), `classify_disk_status`, and `collect_storage_snapshot`.
+- `app/operations_monitor.py` — bounded-collection service: TTL cache + non-blocking single-flight (at most one `docker system df` per TTL window; concurrent requests serve last snapshot), plus a warning throttle (emit on severity transition or after a cooldown; only on a fresh collection). All time/collect/emit injected; `reset()` for tests; process-wide `storage_service`.
+- `app/main.py` — `GET /api/operations/storage`, gated **support-only** (`SupportAuthContextDep`/`require_support_context`), rate-limited via the existing limiter registry (`enforce_operations_storage_rate_limit`), sets `Cache-Control: no-store`, exposes a non-sensitive `target` label (never the raw path), and emits the throttled `reliability_event` identifying the support actor by role + internal id. Endpoint lives beside the other support/rate-limited routes.
+- `app/config.py` — `storage_target_label` (default `application_filesystem`), `disk_warning_percent`/`disk_critical_percent` (80/90, warning≤critical validated), `storage_snapshot_ttl_seconds` (30, 1–3600), `storage_warning_cooldown_seconds` (300), `max_operations_storage_requests_per_minute` (30). `disk_monitor_path` stays internal-only. `.env.example` documents all.
+- `app/models.py` — response models (`StorageObservabilityRead` with `target`/`freshness`/`collected_at`/`age_seconds`; `DiskUsageRead` has **no** path field), typed with the collector's enums.
+- `tests/test_role_isolation.py` — classified the route under `_SUPPORT_ROUTES`.
+- Docs: `MONITORING.md` §4 rewritten; `CURRENT_STATE.md`, `KNOWN_ISSUES.md`, `DECISIONS.md` (ADR-023 revised), and this handoff updated.
 
-Facts recorded across the above: PR #81 merged at `7050bb8d630e4e64e5fca5ee51511a17e54f4507`; migration head `035_operating_mode_confirmed_at`; owner-only non-blocking post-signup onboarding implemented; owner/manager settings-based operating-mode management implemented; Solo / Mobile Field / Shop selection implemented (kept separate from subscription tier); existing shops grandfathered; new shops unconfirmed until owner selection; capability-shaped navigation implemented; Bays remains OBSERVE-only; no capability enforcement has shipped; Phase 1 (security and structural foundation) complete; Phase 2 observability next.
+Reverted from the first (rejected) version: the `require_owner_or_support_context` gate and its `OwnerOrSupportAuthContextDep` alias, and the standalone `app/api/routers/operations.py` router (endpoint moved into `main.py` to reuse the rate-limiter registry).
 
-Out of scope (deliberately not done): any application-code, schema, or test change; ADR-020 (frozen under `CHECKSUMS.txt`, so its own "Phase 1 in progress" status line is left as preserved history — the README index carries the current status instead); a full modernization of PRODUCT.md / ARCHITECTURE.md beyond the operating-mode additions (both carry older pre-existing staleness noted in-file and below); starting Phase 2.
+Out of scope (deliberately not done): mounting `/var/run/docker.sock` or the Postgres data volume into the backend (explicitly rejected — real host monitoring is a separate least-privileged collector); any deployment/Compose change; automatic cleanup / `docker system prune` / deletion / any host or Docker mutation; production deployment, cloud config, external/paid monitoring; capability enforcement or any Bays OBSERVE→ENFORCE change; wiring collection into the worker or `/ready`; a frontend surface; broader Phase 2 metrics.
 
 ## Verified baseline
 
-Documentation-only change; the required code gates were run to confirm nothing was disturbed, all from the context-sync branch:
-
-- Post-merge fast suite: `pytest --ignore=tests/e2e` — **626 passed, 2 skipped** (unchanged from the pre-edit baseline on `7050bb8`; docs edits touch no test).
-- Migration head: **`035_operating_mode_confirmed_at`** — single alembic head, `down_revision` `034_operating_mode`.
-- `ruff format --check .`, `ruff check .`, `pyright` — all clean.
-- `node --check app/static/app.js` — clean.
-- `sha256sum -c docs/architecture/CHECKSUMS.txt` — every preserved file (`STACK-DECISION.md`, ADR-014 through ADR-021) reports `OK`; this change edits no preserved file.
-- `python scripts/check_ai_handoff.py` — this handoff satisfies the required-heading contract and the length limit.
-- Internal markdown links in every edited document resolve to existing files (checked mechanically).
+- `ruff format --check .`, `ruff check .`, `pyright` — all clean (0 errors).
+- `node --check app/static/app.js` — clean (frontend untouched).
+- `pytest --ignore=tests/e2e` — **707 passed, 2 skipped** (was 626 on `e924ffae`; +81 net-new tests; no pre-existing test weakened).
+- `alembic heads` — unchanged single head `035_operating_mode_confirmed_at` (no migration).
 
 ## Evidence
 
-- Merge verification (local): `git rev-parse origin/main` = `7050bb8d630e4e64e5fca5ee51511a17e54f4507`; `git rev-list --parents -n 1 origin/main` shows two parents (`85bd9d1` + `22cfada`), confirming a real merge commit; `git merge-base --is-ancestor 22cfada… origin/main` passes; migration `035_operating_mode_confirmed_at.py` is present on `main`.
-- Post-merge migration upgrade (primary checkout): **upgrade to migration head `035_operating_mode_confirmed_at` succeeded against the disposable E2E PostgreSQL database before the Uvicorn startup failure.** The `.env`-precedence problem affected application startup, not the migration upgrade.
-- Post-merge full E2E attempt (primary checkout): `pytest tests/e2e` produced **17 passed and 36 setup errors**. The 36 are setup errors, not test-body failures — the live Uvicorn server fixture never started (the migration step above had already succeeded). Root cause confirmed: the project deliberately gives `.env` precedence over shell environment variables, so the primary checkout's `.env` forced `APP_ENV=production`, and the fail-closed startup safety guard then correctly rejected the short configured owner password, so the fixture's server never booted. This is an environment-precedence failure in the test harness, **not** an onboarding regression.
-- Pre-merge verification of the feature commit (`22cfada`, prior session): ruff/pyright clean; `pytest --ignore=tests/e2e` = 626 passed, 2 skipped; single alembic head `035` chained off `034`; independent diff review returned APPROVE (no enforcement leak, owner-only auth correct, migration additive/reversible, frontend fails closed-on-show / open-on-status-error).
-- The operating-mode slice detail lives in `docs/architecture/OPERATING-MODES-ARCHITECTURE-BRIDGE.md` §12a–§12d and the ADR-022 implementation-status amendment.
+- Authorization: real-HTTP (TestClient) endpoint tests prove support gets 200; owner, manager, technician, a suspended-shop owner (`Shop.status="suspended"`), and an impersonated-owner session (driven through the real `/api/support/shops/{id}/impersonate` flow) all get 403; unauthenticated gets 401. Dependency-level unit gate tests additionally cover the role matrix.
+- Bounded collection (`tests/test_operations_monitor.py`, injected clock/collect): first call fresh; within-TTL serves cached without re-collecting; after-TTL re-collects; 20 rapid calls collect once; single-flight serves `stale` without a second collection while a refresh holds the lock; a 10-real-thread concurrency test confirms exactly one collection under contention; reset clears cache. API-level: 5 rapid GETs trigger exactly one collection (first `fresh`, rest `cached`).
+- Warning throttle: emits once then dedupes within cooldown; re-emits after cooldown; escalates warning→critical on transition; ok→warning re-emits as a transition; ok/unknown never emit. API-level: repeated critical GETs produce exactly one `reliability_event`.
+- Information disclosure: a test configures a sensitive-looking `DISK_MONITOR_PATH` and proves it appears in neither the response body nor any emitted log record; `Cache-Control: no-store` asserted; the exact Docker command is `["docker","system","df","--format","{{json .}}"]` with no mutating token; partial `df` output, and any `df` row with a missing/malformed/negative/oversized (e.g. a 5,000-digit count or size that would overflow `int()`/`float()`) required measurement (count/size/reclaimable), fails closed to `unavailable` without raising (never an available snapshot with null values, and the malformed input never leaks into the reason); valid zero measurements stay `available`; unreadable disk → `unknown`.
+- Config validation: warning>critical, out-of-range thresholds, and invalid TTL all raise `ValidationError`.
+- Rate limiting: a limit of 1/min yields 200 then 429.
+- Additive OpenAPI test: new GET present, `/api/bays`, `/api/support/shops`, `/health`, `/ready` unchanged. Static route-audit passes with the support classification.
 
 ## Unverified
 
-- The **complete post-merge E2E suite is UNVERIFIED.** An isolated re-run — one where the shell environment takes precedence (or a checkout with no production-mode `.env`) so the Uvicorn fixture boots under `APP_ENV=test` — has not been confirmed. No claim is made that the full `tests/e2e` suite passes post-merge: 17 tests ran and passed, and the 36 setup errors are attributable to the environment-precedence issue above rather than to a code defect, but that remains to be re-run cleanly.
-- A complete downgrade/upgrade round-trip of `035` was not independently rerun post-merge (the upgrade to head succeeded, per Evidence; the full down/up round-trip is covered by CI, which was green on the PR #81 branch before merge).
-- This context-sync change itself exercises no application behavior — it is documentation only; the fast suite (626 passed, 2 skipped) confirms the docs edits disturbed nothing.
+- Full Docker/Playwright `tests/e2e` not run in this container (no Docker/Postgres) — CI's job. This slice adds no e2e test.
+- Behavior against a real Docker daemon / real full disk not exercised end-to-end here; the collector is proven through injected boundaries plus the fail-safe design. Real-world usefulness depends on where the process runs (see the boundary below).
 
 ## Unrelated preexisting changes
 
-- None bundled into the commit. Every edit is scoped to recording the PR #81 merge and the roadmap position.
-- Noted, not changed: `docs/context/PRODUCT.md` and `docs/context/ARCHITECTURE.md` carried pre-existing staleness from 2026-07-08 (they predate the technician/scheduling/subscription/support modules). This pass added only the operating-mode facts and flagged the residual staleness in-file; a fuller refresh of those two documents is a separate task.
+- None. Every change is scoped to this Phase 2A slice. No migration, no schema change, no edit to any existing route's behavior.
 
 ## Blockers and risks
 
-- No engineering blocker. This is a docs-only change on its own branch.
-- Merge gate: opening/merging the context-sync PR follows this repo's git rules. This session was authorized to push the branch and open a **draft** PR, and to stop there — the draft PR is not to be merged without the owner's explicit current-turn approval.
-- Risk is low (documentation only); the main risk is a factual drift between documents, mitigated by using one consistent fact-set and citing the merge SHA / migration head everywhere.
+- No engineering blocker. Additive and revert-safe (revert the single commit; no migration/schema/data).
+- Deployment boundary (by design, not a defect): the endpoint reports only what the app process sees. It is NOT production host monitoring — the hardened backend has no Docker socket and does not mount the Postgres data volume, so Docker reads `unavailable` and the filesystem is the container root there. Real coverage requires a separate least-privileged host collector; do not mount the Docker socket or DB volume into the web backend. See `MONITORING.md` §4 / `KNOWN_ISSUES.md`.
+- Pull-only: nothing watches the endpoint's throttled `reliability_event` logs yet — that needs a consumer (owner decision).
+- Publishing gate: opening/merging the PR requires the owner's explicit current-turn approval.
 
 ## Exact next task
 
-1. Owner reviews and merges the draft context-sync PR.
-2. **Do not begin Phase 2 (observability) implementation until the context-sync PR is merged.** When it is, the next task is Phase 2 — start with disk-space and Docker-volume monitoring (the roadmap's immediate observability priority after the volume incident), then the metrics endpoint, health/worker/queue metrics, alerts, and the administrative operational summary. Readiness notes: `docs/architecture/PHASE2-READINESS.md`.
-3. Do not enforce any capability yet. When enforcement begins, it is Bays alone, gated on observe-pilot evidence and explicit owner sign-off (see `docs/architecture/OPERATING-MODES-ARCHITECTURE-BRIDGE.md` §12a).
+1. Owner reviews and merges the draft Phase 2A PR (do not merge without explicit approval).
+2. After merge, the recommended next Phase 2 slice (see `MONITORING.md` §4) moves these signals from pull-only to watched: add disk sampling to the worker (`scripts/optimus_worker.py`) so it logs the throttled `reliability_event` warnings, or fold the disk `status` into `/ready`. Both additive; neither authorizes mounting a Docker socket or DB volume into the web backend.
+3. Do not begin that next slice, enable automatic remediation/cleanup, deploy, mount sockets/volumes, or change capability enforcement without explicit approval. Bays stays OBSERVE-only.

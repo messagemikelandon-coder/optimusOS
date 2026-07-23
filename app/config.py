@@ -4,7 +4,7 @@ import re
 from functools import lru_cache
 from typing import Annotated, Literal
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import (
     BaseSettings,
     NoDecode,
@@ -86,6 +86,30 @@ class Settings(BaseSettings):
     account_lockout_minutes: int = Field(default=15, ge=1, le=1440)
     shop_invitation_token_ttl_hours: int = Field(default=72, ge=1, le=720)
     log_level: str = "INFO"
+    # Phase 2A: read-only host-disk / Docker-storage observability thresholds.
+    # `disk_monitor_path` is the filesystem the /api/operations/storage endpoint
+    # samples via shutil.disk_usage from inside the app process. Default "/" is
+    # the container root; point it at a mounted data-volume path if one is
+    # mounted into this container. NOTE: the Postgres data volume is not mounted
+    # into the backend container by default, so from inside the backend this
+    # sees the container filesystem, not the Postgres volume host disk -- see
+    # docs/context/MONITORING.md for that operational limitation.
+    # used_percent >= critical => "critical"; >= warning => "warning".
+    # `disk_monitor_path` is used internally to choose which filesystem to
+    # sample; it is NEVER returned in a response or written to a log. The
+    # non-sensitive `storage_target_label` is exposed instead, so a sensitive
+    # host path can't leak through the support endpoint.
+    disk_monitor_path: str = "/"
+    storage_target_label: str = "application_filesystem"
+    disk_warning_percent: float = Field(default=80.0, ge=0, le=100)
+    disk_critical_percent: float = Field(default=90.0, ge=0, le=100)
+    # Bounded collection: reuse a snapshot for this TTL (one Docker subprocess
+    # per window at most), and throttle repeated reliability warnings during a
+    # sustained elevated state to at most once per cooldown. The support
+    # endpoint is additionally rate-limited per client.
+    storage_snapshot_ttl_seconds: int = Field(default=30, ge=1, le=3600)
+    storage_warning_cooldown_seconds: int = Field(default=300, ge=0, le=86_400)
+    max_operations_storage_requests_per_minute: int = Field(default=30, ge=1, le=240)
     session_ttl_hours: int = Field(default=12, ge=1, le=168)
     frontend_origin: str = "http://127.0.0.1:5173"
     session_cookie_name: str = "optimus_session"
@@ -183,6 +207,17 @@ class Settings(BaseSettings):
     @classmethod
     def strip_key(cls, value: str) -> str:
         return value.strip()
+
+    @model_validator(mode="after")
+    def _validate_disk_thresholds(self) -> Settings:
+        # A warning threshold above the critical threshold would silently
+        # swallow the whole "warning" band (critical is checked first), so
+        # reject the misconfiguration at startup rather than degrade quietly.
+        if self.disk_warning_percent > self.disk_critical_percent:
+            raise ValueError(
+                "DISK_WARNING_PERCENT must be less than or equal to DISK_CRITICAL_PERCENT"
+            )
+        return self
 
     @field_validator("openai_model", "openai_estimator_model", "openai_fallback_model")
     @classmethod

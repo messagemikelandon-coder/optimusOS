@@ -144,6 +144,11 @@ _BILLING_ROUTES = {
 _SUPPORT_ROUTES = {
     ("GET", "/api/support/shops"),
     ("POST", "/api/support/shops/{shop_id}/impersonate"),
+    # Phase 2A: read-only host-disk / Docker-storage observability is
+    # platform-infrastructure telemetry, so it is gated support-only (not
+    # owner/manager/technician). It reads no shop data -- host/Docker
+    # aggregates only.
+    ("GET", "/api/operations/storage"),
 }
 
 

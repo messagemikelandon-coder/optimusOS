@@ -15,6 +15,16 @@ from pydantic import (
     model_validator,
 )
 
+# Phase 2A storage-observability enums/category type reused as response-model
+# field types (keeps the OpenAPI schema and the collector in one vocabulary).
+# app.storage_monitor is a stdlib-only leaf, so this import introduces no cycle.
+from app.storage_monitor import (
+    DiskThresholdStatus,
+    DockerAvailability,
+    DockerCategory,
+    Freshness,
+)
+
 NonBlank = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
 # A separate type, not `NonBlank = Field(min_length=8, ...)`: that combination
 # silently never enforced 8 characters anywhere it was used (AuthLoginRequest,
@@ -3118,3 +3128,55 @@ class ModeOnboardingResult(BaseModel):
     confirmed_at: datetime
     capability_changes: list[ModeTransitionCapabilityChange]
     capabilities: CapabilitiesRead
+
+
+# --- Phase 2A: read-only host-disk / Docker-storage observability -------------
+# Response models for GET /api/operations/storage. All fields are aggregate,
+# non-sensitive metrics: byte totals, counts, percentages, enum states, a
+# non-sensitive target label, and timing -- never the raw configured host
+# path, container/image/volume names, secrets, or raw environment values.
+
+
+class DiskUsageRead(BaseModel):
+    # No path field -- the raw filesystem path is intentionally never exposed;
+    # the top-level `target` label identifies what was measured.
+    total_bytes: int | None
+    used_bytes: int | None
+    available_bytes: int | None
+    used_percent: float | None
+    status: DiskThresholdStatus
+
+
+class DockerCategoryUsageRead(BaseModel):
+    category: DockerCategory
+    count: int | None
+    size_bytes: int | None
+    reclaimable_bytes: int | None
+
+
+class DockerStorageRead(BaseModel):
+    # "available" (df queried and parsed, even if all-zero) vs "unavailable"
+    # (docker missing/unreachable/error) -- a healthy empty host is never
+    # reported as unavailable.
+    availability: DockerAvailability
+    reason: str | None
+    categories: list[DockerCategoryUsageRead]
+
+
+class DiskThresholdsRead(BaseModel):
+    warning_percent: float
+    critical_percent: float
+
+
+class StorageObservabilityRead(BaseModel):
+    # Non-sensitive label for the measured filesystem (e.g.
+    # "application_filesystem"); the raw path is never included.
+    target: str
+    # Bounded-collection metadata: whether this was freshly collected, served
+    # from cache, or served stale, plus when it was collected and its age.
+    freshness: Freshness
+    collected_at: datetime
+    age_seconds: float
+    disk: DiskUsageRead
+    docker: DockerStorageRead
+    thresholds: DiskThresholdsRead

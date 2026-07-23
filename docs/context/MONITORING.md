@@ -4,8 +4,8 @@ Purpose: the Phase 6 Part H deliverable for production monitoring — what Optim
 Information owner: repository maintainers and the owner responsible for production infrastructure decisions.
 Read when: before any production deployment decision; when diagnosing a real outage; when choosing an external monitoring/alerting service.
 Update when: an external monitoring service is actually configured, a new health signal is added to `/health`/`/ready`, or a disk-space/alerting gap is closed.
-Last verified date: 2026-07-17.
-Relevant sources: `app/main.py` (`/health`, `/ready`), `app/observability.py`, `app/security_events.py`, `docker-compose.yml`, `docs/context/RELEASE_CHECKLIST.md`.
+Last verified date: 2026-07-22.
+Relevant sources: `app/main.py` (`/health`, `/ready`, `/api/operations/storage`), `app/operations_monitor.py`, `app/storage_monitor.py`, `app/observability.py`, `app/security_events.py`, `docker-compose.yml`, `docs/context/RELEASE_CHECKLIST.md`.
 
 ## Status today: what exists vs. what's active
 
@@ -18,7 +18,7 @@ Relevant sources: `app/main.py` (`/health`, `/ready`), `app/observability.py`, `
 **Does not exist / is not active today:**
 - No external uptime/health-check service is configured against `/health` or `/ready` on any real deployment. Nothing currently pages anyone if the app goes down.
 - No log aggregation destination is configured. Structured JSON logs go to stdout (captured by `docker compose logs` locally, or whatever the deployment host does with container stdout) — there is no shipped-to-a-dashboard pipeline today.
-- No disk-space monitoring exists anywhere in this codebase. A full disk on the Postgres data volume or the application host would not be detected by `/health`, `/ready`, or anything else here before it caused a real outage.
+- Disk/Docker-storage *visibility* now exists in-app as a read-only endpoint (Phase 2A — `GET /api/operations/storage`, Section 4), but nothing yet *watches* it: there is no scheduler polling it and no alert on its threshold events, so a full disk is now inspectable on demand but still not automatically detected. Note also the container-visibility limitation in Section 4.
 - No alerting (email/SMS/Slack/PagerDuty/etc.) is wired to any of the above. A `"degraded"` `/ready` response or a logged `security_event` today is only visible to someone actively looking.
 
 ## Required monitoring surface, and how to close each gap
@@ -36,10 +36,29 @@ Relevant sources: `app/main.py` (`/health`, `/ready`), `app/observability.py`, `
 ### 3. Security events
 **Real as of this Part H pass**, same caveat as #2: the events are logged and structurally filterable (`security_event` field), but nothing currently watches the log stream for them. Once a log destination exists, alerting on `security_event: rate_limit.exceeded` occurring repeatedly from one source, or any `auth.login_failed` volume spike, is a reasonable first alerting rule to add.
 
-### 4. Disk space
-**Not implemented at all — the most concrete, easiest-to-close gap in this document.** Recommended minimum: a scheduled check (cron, or the hosting platform's own disk-usage alerting if it has one) on the host running the Postgres data volume, alerting below some free-space threshold (e.g. 15-20% free, adjusted for actual data growth rate once real usage history exists). This does not require any application code change — it's an infrastructure-level check against the host/volume, not something `/health` or `/ready` can see from inside the app container.
+### 4. Disk space and Docker storage
 
-**Open, needs an owner decision**: the hosting platform's own disk-alerting capability (if the target host has one) vs. a small custom script; either is reasonable, neither is built yet.
+**A read-only, in-app *process-visibility* endpoint exists (Phase 2A). It is NOT production host monitoring, and it is not wired to any alert.**
+
+`GET /api/operations/storage` is **platform-support-only** (`require_support_context`; a shop owner, manager, technician, suspended-shop account, unauthenticated caller, or impersonated-owner session cannot reach it — it exposes platform infrastructure telemetry, not shop data). It returns, on demand:
+- Host filesystem total / used / available bytes and used-percent for the process's configured filesystem, plus an `ok` / `warning` / `critical` / `unknown` status against `DISK_WARNING_PERCENT` (default 80) and `DISK_CRITICAL_PERCENT` (default 90). The measured filesystem is identified by a non-sensitive **label** (`STORAGE_TARGET_LABEL`, default `application_filesystem`) — the raw path (`DISK_MONITOR_PATH`) is used internally only and is never returned or logged.
+- Aggregate Docker storage usage — images, containers, volumes, build cache (count, size, reclaimable) — via a read-only `docker system df`, with an explicit `available` vs `unavailable` state so an inaccessible Docker daemon is never mistaken for a healthy empty host. Partial/truncated `df` output is treated as `unavailable`, never presented as a complete healthy snapshot.
+
+**Bounded collection.** The snapshot is cached for `STORAGE_SNAPSHOT_TTL_SECONDS` (default 30) with single-flight refresh, so at most one `docker system df` (5-second timeout) runs per TTL window regardless of request volume; concurrent requests serve the last snapshot rather than launching duplicate subprocesses. The response includes `freshness` (`fresh`/`cached`/`stale`), `collected_at`, and `age_seconds`. The endpoint is rate-limited (`MAX_OPERATIONS_STORAGE_REQUESTS_PER_MINUTE`, default 30, per client) and sets `Cache-Control: no-store`.
+
+**Warning signal (throttled).** On a fresh collection at/above a threshold, one structured log line is emitted (`reliability_event: disk.usage_warning` / `disk.usage_critical`) carrying only the target label, numeric percentages, and the support actor's role and internal id (never the raw path, username, or email). It is emitted on a severity transition or at most once per `STORAGE_WARNING_COOLDOWN_SECONDS` (default 300) while elevated — repeated requests in the same state do not amplify into repeated events.
+
+**Behavior guarantees:** strictly read-only — it never deletes, prunes, restarts, resizes, or mutates any host or Docker resource (`docker system df` reports usage only; no other docker subcommand is ever invoked). Every host/Docker call fails safe: an unreadable path degrades to `unknown` (never a fabricated healthy zero), and any Docker failure (CLI absent, daemon down, timeout, malformed/partial output) degrades to `unavailable` with a short static reason that never includes raw stderr.
+
+**This endpoint reports only what the application process can see — it does NOT monitor the production host.** By default the `backend` container is `read_only: true`, has no Docker socket, and does not mount the Postgres data volume, so from inside it the filesystem reading is the container root and `docker.availability` is `unavailable`. That is expected: the in-process probe is a convenience for a support operator, not host monitoring, and the endpoint must not be read as monitoring the production host when it cannot.
+
+**Real host/Docker monitoring requires a separate least-privileged collector — NOT changes to this internet-facing backend.** Do **not** mount `/var/run/docker.sock` into the web backend, and do **not** expose raw PostgreSQL data files to the web backend just to read filesystem statistics — either would materially widen the attack surface of an internet-facing service. Instead, run one of: a dedicated least-privileged host collector or sidecar with only the access it needs, the hosting platform's own disk/volume metric, or a small host-side script (alerting below ~15–20% free). No deployment or Compose change is made or authorized by this slice.
+
+**Rollback:** the whole slice is additive and revert-safe. A `git revert` of the Phase 2A commit removes the `/api/operations/storage` route, the `app/storage_monitor.py` collector and `app/operations_monitor.py` bounded-collection service, the support-endpoint rate limiter, and the `STORAGE_*`/`DISK_*` settings (safe defaults, read only by this endpoint). No migration, no schema change, no data, and no change to any existing route or behavior — the OpenAPI change is purely additive (one new GET).
+
+**Next recommended Phase 2 slice:** surface these signals where they are watched rather than pulled — either (a) a small addition to the existing background worker (`scripts/optimus_worker.py`) that samples disk on its existing loop and logs the same throttled `reliability_event` warnings so they reach the log stream without a manual GET, or (b) fold the disk `status` into `/ready` so the existing readiness signal degrades on a full disk. Both are additive; neither authorizes mounting a Docker socket or database volume into the web backend — production host/Docker coverage remains the separate least-privileged-collector work above.
+
+**Open, needs an owner decision**: the separate least-privileged host/Docker collector (or hosting-platform metric / host script) that actually watches the production host, plus a consumer for the endpoint's `reliability_event` logs (a log-based alert rule) if the in-app signal is used.
 
 ### 5. Database health
 **Partially real** — `/ready`'s Postgres check confirms real TCP reachability and a real schema-compatibility comparison, which catches "Postgres is down" and "the database schema doesn't match this app version" (both real, previously-tested failure modes — see `app/migration_compat.py` and its test suite). **Not covered**: connection-pool exhaustion, replication lag (not applicable today, single-instance Postgres), or slow-query buildup. None of these have been a real problem at this app's current single-shop scale; revisit if usage grows enough to make them plausible.
