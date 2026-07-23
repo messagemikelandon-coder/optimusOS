@@ -741,6 +741,28 @@ async def enforce_vin_decode_rate_limit(request: Request, settings: Settings) ->
         ) from exc
 
 
+def get_job_proposal_rate_limiter(settings: Settings) -> RateLimiter:
+    return _rate_limiters.get(
+        "job-proposal",
+        redis_url=settings.redis_url,
+        limit=settings.max_job_proposal_requests_per_minute,
+    )
+
+
+async def enforce_job_proposal_rate_limit(request: Request, settings: Settings) -> None:
+    client_host = request.client.host if request.client else "unknown"
+    client_key = f"job-proposal:{client_host}"
+    try:
+        await get_job_proposal_rate_limiter(settings).check(client_key)
+    except RateLimitExceeded as exc:
+        log_security_event(
+            logger, SecurityEventType.RATE_LIMIT_EXCEEDED, request=request, limit_key=client_key
+        )
+        raise HTTPException(
+            status_code=429, detail="Too many AI proposal requests. Try again shortly."
+        ) from exc
+
+
 def get_vin_service(settings: SettingsDep) -> VinService:
     """VIN decode service restricted to the NHTSA vPIC host, matching the
     outbound-host allowlist the research orchestrator already uses. Provided as a
@@ -3471,16 +3493,19 @@ async def release_job_compilation_record(
 )
 async def propose_job_inputs_record(
     finding_id: int,
+    request: Request,
     db: DbSessionDep,
     settings: SettingsDep,
     auth: OwnerAuthContextDep,
 ) -> JobInputProposalRead:
     """Recommendation-only AI (/goal): ask the configured provider for a
     DRAFT-only proposal of Job Compiler inputs for a finding, deterministically
-    validate it, and persist it as an audit record. Owner/manager only. Creates
-    NO estimate/work-order/invoice/compilation -- the owner must review and feed
-    it into the deterministic compile flow. 503 when no provider is configured;
-    the finding is loaded shop-scoped before the provider is called."""
+    validate it, and persist it as an audit record. Owner/manager only,
+    rate-limited per client (it triggers one paid LLM call). Creates NO
+    estimate/work-order/invoice/compilation -- the owner must review and feed it
+    into the deterministic compile flow. 503 when no provider is configured; the
+    finding is loaded shop-scoped before the provider is called."""
+    await enforce_job_proposal_rate_limit(request, settings)
     try:
         proposer = await asyncio.to_thread(build_job_input_proposer, settings)
         return await propose_job_inputs(db=db, auth=auth, finding_id=finding_id, proposer=proposer)
@@ -3505,8 +3530,8 @@ async def list_job_input_proposal_records(
     db: DbSessionDep,
     settings: SettingsDep,
     auth: OwnerAuthContextDep,
-    page: int = Query(default=1),
-    page_size: int = Query(default=20),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=1),
     finding_id: Annotated[int | None, Query(ge=1)] = None,
     proposal_status: Annotated[JobInputProposalStatus | None, Query()] = None,
 ) -> JobInputProposalListResponse:

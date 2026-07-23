@@ -135,6 +135,9 @@ class Settings(BaseSettings):
     # Vehicle-first intake: standalone VIN decode triggers one outbound NHTSA
     # vPIC lookup, so it is throttled per client to bound the outbound-call rate.
     max_vin_decode_requests_per_minute: int = Field(default=20, ge=1, le=240)
+    # Recommendation-only AI job-input proposals trigger one outbound (paid) LLM
+    # call per request, so they are throttled per client to bound cost/abuse.
+    max_job_proposal_requests_per_minute: int = Field(default=10, ge=1, le=120)
     session_ttl_hours: int = Field(default=12, ge=1, le=168)
     frontend_origin: str = "http://127.0.0.1:5173"
     session_cookie_name: str = "optimus_session"
