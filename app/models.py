@@ -2203,7 +2203,59 @@ class IntakeStatus(StrEnum):
     DISMISSED = "dismissed"
 
 
-class IntakeRequestBase(BaseModel):
+def _normalize_intake_vin(value: object) -> object:
+    """Normalize a draft VIN: uppercase, strip whitespace, allow None/blank.
+    A stored VIN must be a full, valid 17-character VIN -- exactly what the
+    canonical `vehicle_store.normalize_vin` requires at conversion -- so an
+    intake draft never carries a partial or invalid VIN that conversion would
+    then reject. A shop that only has a partial VIN simply leaves it blank until
+    it has the full number (the Decode-VIN affordance also needs the full 17)."""
+    if not isinstance(value, str):
+        return value
+    cleaned = "".join(value.upper().split())
+    if not cleaned:
+        return None
+    if not re.fullmatch(r"[A-HJ-NPR-Z0-9]{17}", cleaned):
+        raise ValueError(
+            "VIN must be exactly 17 valid letters and digits and cannot contain I, O, or Q."
+        )
+    return cleaned
+
+
+class IntakeVehicleDraft(BaseModel):
+    """Structured, VIN-decodable vehicle draft fields carried by an intake
+    request before any customer or canonical vehicle exists (/goal Priority 2)."""
+
+    vehicle_vin: str | None = Field(default=None, max_length=17)
+    vehicle_year: int | None = Field(default=None, ge=1900, le=2100)
+    vehicle_make: str | None = Field(default=None, max_length=100)
+    vehicle_model: str | None = Field(default=None, max_length=100)
+    vehicle_trim: str | None = Field(default=None, max_length=120)
+    vehicle_engine: str | None = Field(default=None, max_length=120)
+    vehicle_drivetrain: str | None = Field(default=None, max_length=80)
+
+    @field_validator("vehicle_vin", mode="before")
+    @classmethod
+    def normalize_draft_vin(cls, value: object) -> object:
+        return _normalize_intake_vin(value)
+
+    @field_validator(
+        "vehicle_make",
+        "vehicle_model",
+        "vehicle_trim",
+        "vehicle_engine",
+        "vehicle_drivetrain",
+        mode="before",
+    )
+    @classmethod
+    def strip_draft_vehicle_strings(cls, value: object) -> object:
+        if isinstance(value, str):
+            stripped = value.strip()
+            return stripped or None
+        return value
+
+
+class IntakeRequestBase(IntakeVehicleDraft):
     customer_name: NonBlank = Field(max_length=200)
     phone: str | None = Field(default=None, max_length=40)
     email: str | None = Field(default=None, max_length=180)
@@ -2225,7 +2277,7 @@ class IntakeRequestCreate(IntakeRequestBase):
     pass
 
 
-class IntakeRequestUpdate(BaseModel):
+class IntakeRequestUpdate(IntakeVehicleDraft):
     customer_name: str | None = Field(default=None, min_length=1, max_length=200)
     phone: str | None = Field(default=None, max_length=40)
     email: str | None = Field(default=None, max_length=180)
@@ -2263,14 +2315,17 @@ class IntakeRequestListResponse(BaseModel):
     has_more: bool
 
 
-class IntakeRequestConvertRequest(BaseModel):
-    """Vehicle fields are optional -- an intake request can convert to just
-    a customer record when no vehicle detail was captured yet."""
+class IntakeRequestConvertRequest(IntakeVehicleDraft):
+    """Conversion inputs. All vehicle fields are optional overrides -- when a
+    field is omitted, the value stored on the intake draft is used, so a shop
+    that already decoded a VIN at intake need not re-enter it. An intake request
+    can still convert to just a customer record when no vehicle detail exists.
 
-    vehicle_year: int | None = Field(default=None, ge=1900, le=2100)
-    vehicle_make: str | None = Field(default=None, max_length=100)
-    vehicle_model: str | None = Field(default=None, max_length=100)
-    vehicle_vin: str | None = Field(default=None, max_length=17)
+    ``customer_id`` (optional): attach the converted vehicle to an EXISTING
+    same-shop customer instead of creating a new one. This is an explicit,
+    non-silent attachment -- a cross-shop or archived customer is rejected."""
+
+    customer_id: int | None = Field(default=None, ge=1)
 
 
 class IntakeRequestConvertResponse(BaseModel):

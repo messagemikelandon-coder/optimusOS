@@ -150,6 +150,7 @@ def create_customer(
     db: Session,
     auth: AuthContext,
     payload: CustomerCreate,
+    commit: bool = True,
 ) -> CustomerRead:
     normalized = normalize_customer_fields(payload)
     validate_name_or_company(
@@ -163,7 +164,14 @@ def create_customer(
         **normalized,
     )
     db.add(customer)
-    db.commit()
+    # `commit=False` lets a caller compose this create with others in one atomic
+    # transaction (e.g. intake conversion creating a customer + vehicle together
+    # so a later failure never leaves an orphan customer). The flush still
+    # assigns the primary key and populates server defaults on refresh.
+    if commit:
+        db.commit()
+    else:
+        db.flush()
     db.refresh(customer)
     return _to_read(customer)
 

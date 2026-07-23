@@ -158,6 +158,7 @@ def create_vehicle(
     auth: AuthContext,
     customer_id: int,
     payload: VehicleCreate,
+    commit: bool = True,
 ) -> VehicleRead:
     customer = get_customer_model(db=db, auth=auth, customer_id=customer_id)
     normalized = normalize_vehicle_fields(payload)
@@ -171,7 +172,13 @@ def create_vehicle(
         **normalized,
     )
     db.add(vehicle)
-    db.commit()
+    # `commit=False` lets a caller compose this create atomically with a
+    # customer create (see intake conversion) so a duplicate-VIN rejection here
+    # rolls back the whole transaction and never leaves an orphan customer.
+    if commit:
+        db.commit()
+    else:
+        db.flush()
     db.refresh(vehicle)
     return _to_read(vehicle)
 
