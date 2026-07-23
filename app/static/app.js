@@ -5151,6 +5151,11 @@ function initConvertCustomerTypeahead() {
   const search = $("service-desk-convert-customer-search");
   if (!search) return;
   search.addEventListener("input", () => {
+    // Clear any prior selection SYNCHRONOUSLY on the keystroke (not inside the
+    // debounced search), so a name edited away can never leave a stale
+    // customer_id that a fast submit would attach. Programmatic `.value` sets
+    // (selectConvertCustomer) do not fire 'input', so a real selection stands.
+    $("service-desk-convert-customer-id").value = "";
     if (convertCustomerTypeahead.timer) clearTimeout(convertCustomerTypeahead.timer);
     const value = search.value;
     convertCustomerTypeahead.timer = setTimeout(() => void searchConvertCustomers(value), 250);
