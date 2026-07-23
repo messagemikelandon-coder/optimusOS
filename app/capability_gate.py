@@ -40,6 +40,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.auth import AuthContext, effective_shop_id
+from app.capability_metrics import capability_metrics
 from app.capability_store import CapabilityStoreError, resolve_capabilities
 from app.models import CapabilityId, CapabilityLevel
 from app.security_events import (
@@ -116,6 +117,12 @@ def _emit(
     through the existing security-event mechanism. Every value here is a
     role/mode/tier/capability enum or an id -- never a token, password, or
     provider secret."""
+    # Roll this decision into the process-wide OBSERVE-only counters (Phase 2B)
+    # that back the support operational summary. Additive telemetry beside the
+    # per-request event below; record() is total (cannot raise) so it never
+    # disturbs the gate's outcome, and the counter is OBSERVE-only -- it holds no
+    # enforcement semantics.
+    capability_metrics.record(str(decision))
     result = (
         EventResult.SUCCESS
         if decision is not CapabilityDecision.RESOLUTION_ERROR

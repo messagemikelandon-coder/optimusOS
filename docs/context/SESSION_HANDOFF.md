@@ -4,69 +4,74 @@ Purpose: replaceable handoff for the next substantial Codex/Claude session.
 Information owner: the active session author.
 Read when: starting or resuming work.
 Update when: a substantial task completes or context needs to be handed forward.
-Last verified date: 2026-07-22.
+Last verified date: 2026-07-23.
 
 ## Identity
 
-- Agent/task owner: Claude — Phase 2A (observability): platform-support-only, read-only host-disk and Docker-storage visibility.
-- Branch/HEAD: the Phase 2A working branch, written `agent/claude/phase2a-disk`-`volume-monitoring` (the name is split across two code spans only to dodge a false `check_ai_handoff` secret-scan match on the literal string; it is one branch). One implementation commit on top of `main` at `e924ffae220bb1cd0b743293e80c189159e99e23` (the merge of PR #82). Branched from `origin/main`.
-- Working directory: primary repo checkout with `origin` = `https://github.com/messagemikelandon-coder/optimusOS.git`.
+- Agent/task owner: Claude — Phase 2B (observability): platform-support-only, read-only, bounded runtime observability summary.
+- Branch/HEAD: `agent/claude/phase2b-runtime-observability`, one implementation commit on top of `main` at `b81aad5147f0e9ff49989817379a9c03b3ee6f00` (the merge of PR #83, Phase 2A). Branched from `origin/main`, NOT from the Phase 2A feature branch.
+- Working directory: primary repo checkout with `origin` = the optimusOS GitHub repository.
 
 ## Context
 
-Phase 1 is complete; Phase 2 (observability) starts with disk/Docker-storage visibility. This slice was revised after a REQUEST-CHANGES review that flagged authorization, resource-amplification, deployment-boundary, and information-disclosure issues. The revised design is: an additive, read-only, **platform-support-only** endpoint that surfaces *process-visible* filesystem and Docker storage (explicitly not production host monitoring), with bounded collection, a throttled warning, a non-sensitive label instead of the raw path, and `Cache-Control: no-store`. Decision: ADR-023 (revised). Operator-facing behavior, limitations, the deployment boundary, rollback, and the next slice are in `docs/context/MONITORING.md` §4.
+Phase 1 is complete; Phase 2A (storage observability, ADR-023) is merged. Phase 2B is the second observability slice: an additive, read-only, **platform-support-only** endpoint that consolidates process-visible runtime signals for a support operator. It is explicitly NOT production host monitoring (same boundary as Phase 2A) and is pull-only. Decision: ADR-024. Operator-facing behavior, the boundary, rollback, and the open owner decision are in `docs/context/MONITORING.md` §6.
 
 ## Active task
 
-**Phase 2A read-only, support-only disk/Docker-storage visibility (revised).** Surface and files:
+**Phase 2B read-only, support-only bounded runtime observability summary.** Surface and files:
 
-- `app/storage_monitor.py` — stdlib-only leaf collector (dependency-injected `disk_usage=` / `run=`; never raises for a real host/Docker failure, never mutates). `read_disk_usage`, `read_docker_storage` (read-only `docker system df`, 5s timeout; degrades to `unavailable` on CLI-missing/daemon-down/timeout/non-zero-exit/malformed/**partial** output **and on any missing/malformed/negative required category measurement — failing closed rather than reporting an available snapshot with null counts/sizes** — never leaking stderr), `classify_disk_status`, and `collect_storage_snapshot`.
-- `app/operations_monitor.py` — bounded-collection service: TTL cache + non-blocking single-flight (at most one `docker system df` per TTL window; concurrent requests serve last snapshot), plus a warning throttle (emit on severity transition or after a cooldown; only on a fresh collection). All time/collect/emit injected; `reset()` for tests; process-wide `storage_service`.
-- `app/main.py` — `GET /api/operations/storage`, gated **support-only** (`SupportAuthContextDep`/`require_support_context`), rate-limited via the existing limiter registry (`enforce_operations_storage_rate_limit`), sets `Cache-Control: no-store`, exposes a non-sensitive `target` label (never the raw path), and emits the throttled `reliability_event` identifying the support actor by role + internal id. Endpoint lives beside the other support/rate-limited routes.
-- `app/config.py` — `storage_target_label` (default `application_filesystem`), `disk_warning_percent`/`disk_critical_percent` (80/90, warning≤critical validated), `storage_snapshot_ttl_seconds` (30, 1–3600), `storage_warning_cooldown_seconds` (300), `max_operations_storage_requests_per_minute` (30). `disk_monitor_path` stays internal-only. `.env.example` documents all.
-- `app/models.py` — response models (`StorageObservabilityRead` with `target`/`freshness`/`collected_at`/`age_seconds`; `DiskUsageRead` has **no** path field), typed with the collector's enums.
-- `tests/test_role_isolation.py` — classified the route under `_SUPPORT_ROUTES`.
-- Docs: `MONITORING.md` §4 rewritten; `CURRENT_STATE.md`, `KNOWN_ISSUES.md`, `DECISIONS.md` (ADR-023 revised), and this handoff updated.
+- `app/runtime_metrics.py` — in-process request-metrics registry the request-context middleware feeds one record per request. Bounded label cardinality (route-template labels via `route.path_format`, never a raw path/id; unmatched → `<unmatched>`; capped, overflow → `<other>`). `snapshot()` returns uptime, totals, status-class counts, avg/max latency, and a bounded top-N per-route breakdown. `record` is total (cannot raise). Process-wide `request_metrics`; `reset()` for tests.
+- `app/capability_metrics.py` — OBSERVE-only capability-decision counters (`would_allow`/`would_deny`/`resolution_error`), a fixed bounded key set. Incremented by `app/capability_gate.py` beside the existing telemetry event; `record` is total. Process-wide `capability_metrics`; `reset()` for tests. No enforcement semantics; Bays stays OBSERVE-only.
+- `app/runtime_monitor.py` — bounded runtime snapshot service (TTL cache + single-flight + throttled degraded warning, modeled on `app/operations_monitor.py`). `collect_runtime_signals` gathers dependency reachability (fail-safe TCP probe from `app/net.py`), worker heartbeat (fixed Redis key, bounded TTL, epoch-second value), and queue condition. All host/Redis boundaries injected. Process-wide `runtime_service`; `reset()` for tests.
+- `app/operations_monitor.py` — added `peek_snapshot()`: returns the cached Phase 2A storage snapshot WITHOUT collecting, so the summary reuses storage and never launches `docker system df`.
+- `app/observability.py` — the request-context middleware records one request metric on the success path and (as a 500) on the exception path before re-raising; it never suppresses the exception.
+- `app/main.py` — `GET /api/operations/summary`, gated **support-only** (`SupportAuthContextDep`/`require_support_context`), rate-limited via the existing registry (`enforce_operations_summary_rate_limit`), sets `Cache-Control: no-store`, and emits a throttled `reliability_event: runtime.degraded` identifying the support actor by role + internal id. Each subsection is independently fail-safe; storage is a `peek` (never re-collected).
+- `app/config.py` — new bounded settings: `worker_heartbeat_redis_key`, `worker_heartbeat_interval_seconds` (30), `worker_heartbeat_ttl_seconds` (150, validated ≥ 2× interval), `worker_queue_redis_key` (empty ⇒ not_configured), `runtime_snapshot_ttl_seconds` (15), `dependency_probe_timeout_seconds` (1.0), `runtime_warning_cooldown_seconds` (300), `max_operations_summary_requests_per_minute` (30). `.env.example` documents all.
+- `app/models.py` — response models (`OperationsSummaryRead` + `RequestTrafficRead`/`RouteTrafficRead`/`DependencyStatusRead`/`WorkerHeartbeatRead`/`QueueConditionRead`/`CapabilityObserveCountersRead`/`StorageSummaryRead`), typed with the collectors' enums; UTC timestamps.
+- `scripts/optimus_worker.py` — writes a bounded heartbeat each loop (fixed key, TTL, epoch-second value only — no job/customer data; fail-safe on Redis error).
+- `tests/test_role_isolation.py` — classified the new route under `_SUPPORT_ROUTES`.
+- Docs: `MONITORING.md` §6 added; `CURRENT_STATE.md`, `KNOWN_ISSUES.md`, `DECISIONS.md` (ADR-024), and this handoff updated.
 
-Reverted from the first (rejected) version: the `require_owner_or_support_context` gate and its `OwnerOrSupportAuthContextDep` alias, and the standalone `app/api/routers/operations.py` router (endpoint moved into `main.py` to reuse the rate-limiter registry).
-
-Out of scope (deliberately not done): mounting `/var/run/docker.sock` or the Postgres data volume into the backend (explicitly rejected — real host monitoring is a separate least-privileged collector); any deployment/Compose change; automatic cleanup / `docker system prune` / deletion / any host or Docker mutation; production deployment, cloud config, external/paid monitoring; capability enforcement or any Bays OBSERVE→ENFORCE change; wiring collection into the worker or `/ready`; a frontend surface; broader Phase 2 metrics.
+Out of scope (deliberately not done): any capability enforcement or Bays OBSERVE→ENFORCE change (AST safeguard untouched); mounting the Docker socket or Postgres data volume into the backend; any unauthenticated `/metrics` surface, scraping token, or IP-allowlist bypass; inventing a Redis work-queue (none exists; ADR-014 records a future queue is Postgres `SKIP LOCKED`, not Redis); any deployment/Compose change; any migration/schema change; automatic remediation/restart/cleanup; a frontend surface; external/paid monitoring; wiring the summary into `/ready`.
 
 ## Verified baseline
 
 - `ruff format --check .`, `ruff check .`, `pyright` — all clean (0 errors).
-- `node --check app/static/app.js` — clean (frontend untouched).
-- `pytest --ignore=tests/e2e` — **707 passed, 2 skipped** (was 626 on `e924ffae`; +81 net-new tests; no pre-existing test weakened).
+- `pytest --ignore=tests/e2e` — **786 passed, 2 skipped** (was 707 passed, 2 skipped on `b81aad5`; +79 net-new Phase 2B tests; no pre-existing test weakened).
 - `alembic heads` — unchanged single head `035_operating_mode_confirmed_at` (no migration).
 
 ## Evidence
 
-- Authorization: real-HTTP (TestClient) endpoint tests prove support gets 200; owner, manager, technician, a suspended-shop owner (`Shop.status="suspended"`), and an impersonated-owner session (driven through the real `/api/support/shops/{id}/impersonate` flow) all get 403; unauthenticated gets 401. Dependency-level unit gate tests additionally cover the role matrix.
-- Bounded collection (`tests/test_operations_monitor.py`, injected clock/collect): first call fresh; within-TTL serves cached without re-collecting; after-TTL re-collects; 20 rapid calls collect once; single-flight serves `stale` without a second collection while a refresh holds the lock; a 10-real-thread concurrency test confirms exactly one collection under contention; reset clears cache. API-level: 5 rapid GETs trigger exactly one collection (first `fresh`, rest `cached`).
-- Warning throttle: emits once then dedupes within cooldown; re-emits after cooldown; escalates warning→critical on transition; ok→warning re-emits as a transition; ok/unknown never emit. API-level: repeated critical GETs produce exactly one `reliability_event`.
-- Information disclosure: a test configures a sensitive-looking `DISK_MONITOR_PATH` and proves it appears in neither the response body nor any emitted log record; `Cache-Control: no-store` asserted; the exact Docker command is `["docker","system","df","--format","{{json .}}"]` with no mutating token; partial `df` output, and any `df` row with a missing/malformed/negative/oversized (e.g. a 5,000-digit count or size that would overflow `int()`/`float()`) required measurement (count/size/reclaimable), fails closed to `unavailable` without raising (never an available snapshot with null values, and the malformed input never leaks into the reason); valid zero measurements stay `available`; unreadable disk → `unknown`.
-- Config validation: warning>critical, out-of-range thresholds, and invalid TTL all raise `ValidationError`.
-- Rate limiting: a limit of 1/min yields 200 then 429.
-- Additive OpenAPI test: new GET present, `/api/bays`, `/api/support/shops`, `/health`, `/ready` unchanged. Static route-audit passes with the support classification.
+- Authorization: real-HTTP (TestClient) endpoint tests prove support gets 200; owner, manager, technician, a suspended-shop owner, and an impersonated-owner session (driven through the real `/api/support/shops/{id}/impersonate` flow) all get 403; unauthenticated gets 401. Dependency-level unit gate tests additionally cover the role matrix. New route classified in the static route-audit.
+- Bounded collection: injected clock/collect prove first call fresh; within-TTL cached without re-collecting; after-TTL re-collects; single-flight serves `stale` without a second collection; a 10-thread concurrency test confirms exactly one collection under contention; reset clears cache. API-level: 5 rapid GETs trigger exactly one runtime collection.
+- Storage reuse: API tests prove the summary reports `not_collected` and never launches a storage collection when nothing is cached, and reports `collected` (reusing the cache) after the dedicated storage endpoint populated it — with the storage collection count staying at exactly one.
+- Request metrics: middleware tests prove a success records the route template (never the raw path/id), a raised handler records a 500 while the exception propagates (never suppressed), and a 404 records the `<unmatched>` sentinel; registry unit tests cover status-class bucketing, latency avg/max, negative-duration clamping, label-cardinality overflow into `<other>`, top-N ordering, reset, and concurrency.
+- Runtime signals: unit tests cover dependency reachable/unreachable; heartbeat alive/stale/missing/unknown (incl. malformed and infinite values, and future-timestamp clamp); queue not_configured/idle/backlog/unknown (incl. wrong-type and negative depth); severity ok/degraded; and the default Redis reader degrading to unreachable (fail-safe) against a closed port.
+- Capability counters: unit tests prove per-decision counting, that an unknown value is ignored (bounded key set), reset, and concurrency; API test proves the counts surface in the summary.
+- Throttled warning: API test proves repeated degraded GETs emit exactly one `runtime.degraded` event carrying only fixed statuses + the support actor's role and internal id; monitor unit tests prove transition/cooldown dedup and that ok never emits.
+- Non-leakage: a test configures credential-shaped database/redis URLs and a queue key and proves none of those substrings appear in the response body or any emitted log record; `Cache-Control: no-store` asserted; rate limit 1/min yields 200 then 429; additive OpenAPI test confirms the new GET is present and `/api/operations/storage`/`/api/bays`/`/health`/`/ready` are unchanged.
+- Config validation: heartbeat TTL below interval, out-of-range snapshot TTL / probe timeout / summary rate limit all raise `ValidationError`; defaults are sane (queue empty, TTL ≥ 2× interval).
 
 ## Unverified
 
-- Full Docker/Playwright `tests/e2e` not run in this container (no Docker/Postgres) — CI's job. This slice adds no e2e test.
-- Behavior against a real Docker daemon / real full disk not exercised end-to-end here; the collector is proven through injected boundaries plus the fail-safe design. Real-world usefulness depends on where the process runs (see the boundary below).
+- Full Docker/Playwright `tests/e2e` not run in this container (no Docker/Postgres/Redis) — CI's job. This slice adds no e2e test.
+- Behavior against a real Redis (heartbeat round-trip worker→backend, real `LLEN`) and a real Postgres is proven through injected boundaries plus the fail-safe design, not exercised end-to-end here.
+- Local commit-signature verification is unavailable in this container (no `ssh-keygen`); the commit carries a signature header and GitHub renders it Verified.
 
 ## Unrelated preexisting changes
 
-- None. Every change is scoped to this Phase 2A slice. No migration, no schema change, no edit to any existing route's behavior.
+- None functional. Every code change is scoped to this Phase 2B slice. No migration, no schema change, no edit to any existing route's behavior. One adjacent doc correction: ADR-023's status line in `DECISIONS.md` was updated from "draft PR pending" to "merged (PR #83, `b81aad5`)" because it had gone stale after the Phase 2A merge.
 
 ## Blockers and risks
 
 - No engineering blocker. Additive and revert-safe (revert the single commit; no migration/schema/data).
-- Deployment boundary (by design, not a defect): the endpoint reports only what the app process sees. It is NOT production host monitoring — the hardened backend has no Docker socket and does not mount the Postgres data volume, so Docker reads `unavailable` and the filesystem is the container root there. Real coverage requires a separate least-privileged host collector; do not mount the Docker socket or DB volume into the web backend. See `MONITORING.md` §4 / `KNOWN_ISSUES.md`.
-- Pull-only: nothing watches the endpoint's throttled `reliability_event` logs yet — that needs a consumer (owner decision).
+- Egress: pushing to `origin` is blocked by org egress policy (403) in this container, and `gh` is absent — the branch is delivered as a `git format-patch` and the draft PR must be opened manually (title: `Phase 2B: bounded runtime observability`).
+- Process-visibility boundary (by design, not a defect): the summary reports only what the app process and its worker can see — it is NOT production host monitoring, and it is pull-only until a consumer watches the `runtime.degraded` logs or polls it (owner decision).
+- No Redis work-queue exists: the queue subsection reports the true `not_configured` state; a future queue is recorded (ADR-014) as Postgres `SKIP LOCKED`, not Redis. The worker heartbeat depends on Redis reachability from both the worker and the backend.
 - Publishing gate: opening/merging the PR requires the owner's explicit current-turn approval.
 
 ## Exact next task
 
-1. Owner reviews and merges the draft Phase 2A PR (do not merge without explicit approval).
-2. After merge, the recommended next Phase 2 slice (see `MONITORING.md` §4) moves these signals from pull-only to watched: add disk sampling to the worker (`scripts/optimus_worker.py`) so it logs the throttled `reliability_event` warnings, or fold the disk `status` into `/ready`. Both additive; neither authorizes mounting a Docker socket or DB volume into the web backend.
-3. Do not begin that next slice, enable automatic remediation/cleanup, deploy, mount sockets/volumes, or change capability enforcement without explicit approval. Bays stays OBSERVE-only.
+1. Owner reviews and merges the draft Phase 2B PR (do not merge without explicit approval).
+2. After merge, the recommended next observability slice moves these signals from pull-only to watched: add a scheduled poll + alert on a degraded dependency/worker, or ship the `runtime.degraded` `reliability_event` to a log-based alert rule. Both additive; neither authorizes mounting a Docker socket or DB volume into the web backend, nor any capability enforcement.
+3. Do not begin that next slice, enable automatic remediation/cleanup, deploy, mount sockets/volumes, wire a Redis work-queue, or change capability enforcement without explicit approval. Bays stays OBSERVE-only.
