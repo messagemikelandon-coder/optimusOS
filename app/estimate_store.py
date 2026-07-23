@@ -587,6 +587,86 @@ async def create_estimate(
     return _estimate_to_read(estimate)
 
 
+def create_estimate_from_payload(
+    *,
+    db: Session,
+    auth: AuthContext,
+    customer_id: int,
+    vehicle_id: int,
+    request_model: EstimateRequest,
+    response_model: EstimateResponse,
+    terms_text: str | None = None,
+    payment_options: list[EstimatePaymentOption] | None = None,
+    expires_in_days: int = 30,
+    commit: bool = True,
+) -> Estimate:
+    """Deterministic (no-orchestrator) estimate creation from an already-built
+    request/response payload. Reuses the exact Estimate/EstimateRevision
+    persistence, validation, snapshot, numbering, and content-hash as
+    ``create_estimate`` -- so a caller (the Job Compiler release bridge) creates
+    a real canonical estimate, never a parallel record, that flows through the
+    existing approval/work-order/invoice pipeline. The response is validated with
+    the same ``_validate_generated_estimate`` reconciliation used for AI-built
+    estimates, so an invalid-price / non-reconciling payload is rejected here.
+    ``commit=False`` lets the caller compose this with other writes (e.g.
+    linking the source compilation) in one atomic transaction."""
+    customer = get_customer_model(db=db, auth=auth, customer_id=customer_id)
+    vehicle = get_vehicle_model(db=db, auth=auth, vehicle_id=vehicle_id)
+    if vehicle.customer_id != customer.id:
+        raise EstimateStoreError("Vehicle does not belong to the selected customer.")
+    _validate_generated_estimate(response_model)
+    customer_summary = _customer_summary(customer)
+    vehicle_summary = _vehicle_summary(vehicle)
+    payment_opts = _resolve_payment_options(payment_options)
+    approval_due_at = datetime.now(UTC) + timedelta(days=expires_in_days)
+    resolved_terms = terms_text or DEFAULT_ESTIMATE_TERMS
+    snapshot = _estimate_snapshot_payload(
+        customer_summary=customer_summary,
+        vehicle_summary=vehicle_summary,
+        request_model=request_model,
+        response_model=response_model,
+        terms_text=resolved_terms,
+        payment_options=payment_opts,
+        approval_due_at=approval_due_at,
+    )
+    estimate = Estimate(
+        owner_user_id=effective_shop_owner_id(db, auth),
+        shop_id=resolve_shop_id(db, auth),
+        customer_id=customer.id,
+        vehicle_id=vehicle.id,
+        estimate_number=_next_estimate_number(db, auth),
+        status=EstimateStatus.DRAFT.value,
+        current_revision_number=1,
+        estimate_total=response_model.totals.estimated_total,
+        expires_at=approval_due_at,
+        is_archived=False,
+    )
+    db.add(estimate)
+    db.flush()
+    revision = EstimateRevision(
+        estimate_id=estimate.id,
+        owner_user_id=effective_shop_owner_id(db, auth),
+        shop_id=estimate.shop_id,
+        revision_number=1,
+        status=EstimateStatus.DRAFT.value,
+        customer_snapshot=customer_summary.model_dump(mode="json"),
+        vehicle_snapshot=vehicle_summary.model_dump(mode="json"),
+        estimate_request_payload=request_model.model_dump(mode="json"),
+        estimate_response_payload=response_model.model_dump(mode="json"),
+        terms_text=resolved_terms,
+        payment_options_payload=[option.model_dump(mode="json") for option in payment_opts],
+        approval_due_at=approval_due_at,
+        content_hash=_canonical_hash(snapshot),
+    )
+    db.add(revision)
+    if commit:
+        db.commit()
+        db.refresh(estimate)
+    else:
+        db.flush()
+    return estimate
+
+
 def get_estimate(*, db: Session, auth: AuthContext, estimate_id: int) -> EstimateRead:
     return _estimate_to_read(_require_estimate(db, auth, estimate_id))
 

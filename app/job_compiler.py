@@ -304,6 +304,7 @@ def _to_read(db: Session, compilation: JobCompilation) -> CompiledJobRead:
         tasks=[CompiledJobTask.model_validate(task) for task in compilation.tasks],
         totals=CompiledJobTotals.model_validate(compilation.totals),
         superseded_by_id=compilation.superseded_by_id,
+        released_estimate_id=compilation.released_estimate_id,
         created_at=ensure_utc(compilation.created_at),
         updated_at=ensure_utc(compilation.updated_at),
     )

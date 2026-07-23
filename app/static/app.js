@@ -1670,7 +1670,7 @@ function renderEstimate(data) {
         <span>${escapeHtml([part.brand, part.part_number].filter(Boolean).join(" ") || "Part number not exposed")}</span>
         <span>${escapeHtml(part.retailer)} · ${escapeHtml(part.availability)}${part.store_name ? ` · ${escapeHtml(part.store_name)}` : ""}</span>
       </div>
-      <div class="part-price"><strong>${money(part.extended_price)}</strong><a href="${escapeHtml(part.url)}" target="_blank" rel="noopener noreferrer">Open source</a></div>
+      <div class="part-price"><strong>${money(part.extended_price)}</strong>${part.url ? `<a href="${escapeHtml(part.url)}" target="_blank" rel="noopener noreferrer">Open source</a>` : `<span class="part-source-note">In-house catalog</span>`}</div>
     </article>`).join("");
   const tools = estimate.research.labor.special_tools.map((tool) => `<li>${escapeHtml(tool)}</li>`).join("") || "<li>None identified.</li>";
   const risks = estimate.research.labor.risk_flags.map((risk) => `<li>${escapeHtml(risk)}</li>`).join("") || "<li>None identified.</li>";
@@ -5253,10 +5253,13 @@ function renderCompiledJob(job) {
   const taskRows = job.tasks
     .map((task) => `<li>${escapeHtml(task.title)} — ${Number(task.labor_hours)} h</li>`)
     .join("");
+  const releaseRow = job.released_estimate_id
+    ? `<div class="compile-release-row"><span class="part-source-note">Released to estimate #${Number(job.released_estimate_id)}</span></div>`
+    : `<div class="compile-release-row"><button type="button" class="primary-button compact" id="compile-release-btn" data-compilation-id="${Number(job.id)}">Release to estimate</button><span class="diag-compile-hint">Creates a draft estimate you can review and send for customer approval. Nothing is sent automatically.</span></div>`;
   target.innerHTML = `
     <div class="customer-detail-header">
       <strong>Compiled draft · revision ${Number(job.revision_number)}</strong>
-      <span>${job.released ? "Released" : "Draft (not sent)"}</span>
+      <span>${job.released_estimate_id ? "Released" : "Draft (not sent)"}</span>
     </div>
     <div class="customer-detail-notes"><span>Labor</span>${laborRows}</div>
     <div class="customer-detail-notes"><span>Parts (customer price)</span>${partRows}</div>
@@ -5267,7 +5270,43 @@ function renderCompiledJob(job) {
       <div><span>Shop supplies</span><strong>$${compileMoney(job.totals.shop_supplies)}</strong></div>
       <div><span>Parts tax</span><strong>$${compileMoney(job.totals.parts_tax)}</strong></div>
       <div><span>Estimated total</span><strong>$${compileMoney(job.totals.estimated_total)}</strong></div>
-    </div>`;
+    </div>
+    ${releaseRow}`;
+  const releaseButton = $("compile-release-btn");
+  if (releaseButton) {
+    releaseButton.addEventListener("click", () => void releaseCompiledJob(Number(releaseButton.dataset.compilationId)));
+  }
+}
+
+async function releaseCompiledJob(compilationId) {
+  if (!await requireAuthenticated("login")) return;
+  const button = $("compile-release-btn");
+  if (button) {
+    button.disabled = true;
+    button.textContent = "Releasing…";
+  }
+  try {
+    const response = await apiFetch(`/api/job-compilations/${compilationId}/release`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+    });
+    const data = await readApiPayload(response);
+    if (!response.ok || !data) throw apiError(response, data, "Release failed");
+    state.diagnostics.compileResult = data.compilation;
+    renderCompiledJob(data.compilation);
+    showToast(
+      data.already_released
+        ? `Already released to estimate ${data.estimate.estimate_number}.`
+        : `Released to draft estimate ${data.estimate.estimate_number}. Review it in Estimates before sending.`,
+      "success",
+    );
+  } catch (error) {
+    showToast(`Release failed: ${error.message}`, "error");
+    if (button) {
+      button.disabled = false;
+      button.textContent = "Release to estimate";
+    }
+  }
 }
 
 async function loadDraftCompilation(findingId) {

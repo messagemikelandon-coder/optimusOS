@@ -164,6 +164,7 @@ from app.job_compiler import (
     list_compiled_job_events,
     list_compiled_jobs,
 )
+from app.job_release import JobReleaseError, release_job_compilation
 from app.migration_compat import (
     SchemaCompatibility,
     check_schema_compatibility,
@@ -250,6 +251,7 @@ from app.models import (
     InvoicePaymentVoidRequest,
     InvoiceRead,
     InvoiceStatus,
+    JobCompilationReleaseResponse,
     JobCompilationRequest,
     JobCompilationStatus,
     LocationInput,
@@ -3414,6 +3416,35 @@ async def list_job_compilation_event_records(
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except SQLAlchemyError as exc:
         logger.warning("Job compilation event listing failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Job compilation storage is unavailable.",
+        ) from exc
+
+
+@app.post(
+    "/api/job-compilations/{compilation_id}/release",
+    response_model=JobCompilationReleaseResponse,
+)
+async def release_job_compilation_record(
+    compilation_id: int,
+    db: DbSessionDep,
+    auth: OwnerAuthContextDep,
+) -> JobCompilationReleaseResponse:
+    """Canonical release bridge (/goal): release an owner-reviewed draft
+    compilation into a real DRAFT estimate that flows through the existing
+    approval/work-order/invoice pipeline. Owner/manager only. Idempotent; never
+    auto-sends, auto-approves, orders parts, or captures payment."""
+    try:
+        return await asyncio.to_thread(
+            release_job_compilation, db=db, auth=auth, compilation_id=compilation_id
+        )
+    except JobCompilationNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except (JobReleaseError, EstimateStoreError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Job compilation release failed due to storage error.")
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Job compilation storage is unavailable.",

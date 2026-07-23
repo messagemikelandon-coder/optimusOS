@@ -266,9 +266,23 @@ class ResearchBundle(BaseModel):
 
 
 class EstimateRequest(BaseModel):
-    vehicle: VehicleInput
+    # Optional: the AI research path always builds a full VehicleInput (it needs
+    # a decodable identity), but a deterministically released compiled job's
+    # canonical vehicle may legitimately have only make+model (no year/VIN),
+    # which cannot satisfy VehicleInput's require-vin-or-year+make+model rule.
+    # The released estimate carries the real vehicle via its response's
+    # DecodedVehicle and the canonical estimate.vehicle_id, so the request's
+    # vehicle is redundant metadata and may be omitted. The AI create-input
+    # still supplies it.
+    vehicle: VehicleInput | None = None
     job: NonBlank = Field(max_length=500)
-    location: LocationInput
+    # Optional: the AI research path always resolves a location (parts
+    # availability / store distance depend on it), but a deterministically
+    # released compiled job has no location semantics -- it is priced from the
+    # in-house catalog, not a geographic parts search -- so it stores no
+    # location rather than a fabricated one. The AI create-input
+    # (`EstimateRecordBase.location`) remains required.
+    location: LocationInput | None = None
     labor_rate: float | None = Field(default=None, ge=0, le=1000)
     mobile_service_fee: float | None = Field(default=None, ge=0, le=10_000)
     shop_supplies_percent: float | None = Field(default=None, ge=0, le=25)
@@ -285,7 +299,11 @@ class SelectedPart(BaseModel):
     extended_price: float
     availability: Availability
     store_name: str | None = None
-    url: HttpUrl
+    # Optional: an AI-researched part carries the retailer source URL, but an
+    # in-house catalog part (e.g. a deterministically compiled/released job) has
+    # no external source URL. The customer parts price is always `unit_price`;
+    # supplier cost/markup is never represented here.
+    url: HttpUrl | None = None
     confidence: Confidence
 
 
@@ -2597,6 +2615,9 @@ class CompiledJobRead(BaseModel):
     tasks: list[CompiledJobTask]
     totals: CompiledJobTotals
     superseded_by_id: int | None = None
+    # The canonical estimate this compilation was released into (if any). The
+    # release is idempotent on this link; `released` flips true alongside it.
+    released_estimate_id: int | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -2621,6 +2642,17 @@ class CompiledJobEventRead(BaseModel):
 class CompiledJobEventsResponse(BaseModel):
     compilation_id: int
     events: list[CompiledJobEventRead]
+
+
+class JobCompilationReleaseResponse(BaseModel):
+    """Result of releasing a compiled job into the canonical estimate workflow.
+    ``already_released`` is True when the compilation was previously released and
+    the existing linked estimate is returned unchanged (idempotent)."""
+
+    ok: bool = True
+    already_released: bool = False
+    compilation: CompiledJobRead
+    estimate: EstimateRead
 
 
 class InspectionItem(BaseModel):
