@@ -2280,16 +2280,57 @@ class IntakeRequestConvertResponse(BaseModel):
     vehicle: VehicleRead | None = None
 
 
+class DiagnosticConfidence(StrEnum):
+    """How well the evidence on record supports the stated diagnosis.
+
+    ``theory`` -- a hypothesis not yet verified by a test; explicitly *not* a
+    confirmed fact. ``probable`` -- evidence supports it but it is not proven.
+    ``confirmed`` -- verified by a performed test/measurement. The ordering
+    matters: a ``conclusion`` (final diagnosis) may never be recorded without a
+    confidence level, so an un-evidenced diagnosis is never presented as fact.
+    """
+
+    THEORY = "theory"
+    PROBABLE = "probable"
+    CONFIRMED = "confirmed"
+
+
+class DiagnosticSeverity(StrEnum):
+    """Safety severity of the finding for the vehicle's operator.
+
+    ``informational`` -- no safety impact. ``advisory`` -- should be addressed
+    but not urgent. ``service_soon`` -- address soon to avoid escalation.
+    ``unsafe`` -- a safety-critical condition; the vehicle should not be driven
+    until it is resolved.
+    """
+
+    INFORMATIONAL = "informational"
+    ADVISORY = "advisory"
+    SERVICE_SOON = "service_soon"
+    UNSAFE = "unsafe"
+
+
 class DiagnosticFindingBase(BaseModel):
     vehicle_id: int
     work_order_id: int | None = None
     technician_id: int | None = None
     codes: str | None = Field(default=None, max_length=2000)
+    complaint: str | None = Field(default=None, max_length=4000)
     symptoms: NonBlank = Field(max_length=4000)
     tests_performed: str | None = Field(default=None, max_length=4000)
+    confidence: DiagnosticConfidence | None = None
+    severity: DiagnosticSeverity | None = None
+    recommended_next_test: str | None = Field(default=None, max_length=4000)
     conclusion: str | None = Field(default=None, max_length=4000)
 
-    @field_validator("codes", "tests_performed", "conclusion", mode="before")
+    @field_validator(
+        "codes",
+        "complaint",
+        "tests_performed",
+        "recommended_next_test",
+        "conclusion",
+        mode="before",
+    )
     @classmethod
     def strip_diagnostic_strings(cls, value: object) -> object:
         if isinstance(value, str):
@@ -2306,11 +2347,22 @@ class DiagnosticFindingUpdate(BaseModel):
     work_order_id: int | None = None
     technician_id: int | None = None
     codes: str | None = Field(default=None, max_length=2000)
+    complaint: str | None = Field(default=None, max_length=4000)
     symptoms: str | None = Field(default=None, min_length=1, max_length=4000)
     tests_performed: str | None = Field(default=None, max_length=4000)
+    confidence: DiagnosticConfidence | None = None
+    severity: DiagnosticSeverity | None = None
+    recommended_next_test: str | None = Field(default=None, max_length=4000)
     conclusion: str | None = Field(default=None, max_length=4000)
 
-    @field_validator("codes", "tests_performed", "conclusion", mode="before")
+    @field_validator(
+        "codes",
+        "complaint",
+        "tests_performed",
+        "recommended_next_test",
+        "conclusion",
+        mode="before",
+    )
     @classmethod
     def strip_diagnostic_update_strings(cls, value: object) -> object:
         if isinstance(value, str):
@@ -2323,6 +2375,10 @@ class DiagnosticFindingRead(DiagnosticFindingBase):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
+    # True when a conclusion is on record but no confidence level was stated:
+    # the diagnosis is an unverified working theory and must be presented as
+    # such, never as an established fact.
+    diagnosis_unverified: bool = False
     vehicle_display_name: str | None = None
     technician_display_name: str | None = None
     is_archived: bool

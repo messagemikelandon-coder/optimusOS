@@ -459,6 +459,27 @@ button[disabled] { cursor: wait; opacity: .6; transform: none !important; }
   color: #d8e5ef;
 }
 
+/* Diagnostic evidence badges: safety severity + diagnosis confidence. */
+.diag-badge-row { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0 4px; }
+.diag-badge {
+  display: inline-block;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: .68rem;
+  font-weight: 800;
+  letter-spacing: .04em;
+  border: 1px solid rgba(147,174,198,.28);
+  color: var(--muted);
+}
+.diag-severity-informational { color: #9fb4c6; border-color: rgba(147,174,198,.3); }
+.diag-severity-advisory { color: var(--amber, #fbbf24); border-color: rgba(251,191,36,.4); }
+.diag-severity-service_soon { color: #fb923c; border-color: rgba(251,146,60,.45); }
+.diag-severity-unsafe { color: var(--red, #f87171); border-color: rgba(248,113,113,.55); background: rgba(248,113,113,.08); }
+.diag-confidence-theory { color: #9fb4c6; }
+.diag-confidence-probable { color: var(--amber, #fbbf24); }
+.diag-confidence-confirmed { color: var(--green, #4ade80); border-color: rgba(74,222,128,.4); }
+.diag-unverified { color: var(--amber, #fbbf24); font-style: italic; font-weight: 700; }
+
 /* Shared record-detail layout: a center "main" column for timeline/history/
    line-item content and a narrower right "rail" for facts/status/totals,
    reused by work orders, invoices, and the approval queue. */
