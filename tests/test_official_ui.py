@@ -252,6 +252,20 @@ def test_overview_dashboard_and_approval_queue_markup() -> None:
     assert ".gauge-ring" in css
 
 
+def test_job_release_ui_is_connected() -> None:
+    """The compiled-job panel can release a draft compilation into a canonical
+    estimate: app.js wires a release button to the release endpoint and shows
+    the linked estimate when already released."""
+    javascript = (STATIC / "app.js").read_text(encoding="utf-8")
+    assert "releaseCompiledJob" in javascript
+    assert "/release" in javascript
+    assert "released_estimate_id" in javascript
+    # Release must go through the owner's review, never auto-send.
+    assert (
+        "send for customer approval" in javascript.lower() or "before sending" in javascript.lower()
+    )
+
+
 def test_intake_bridge_ui_is_connected() -> None:
     """The customer-optional intake bridge is wired into the Service Desk view:
     the intake form captures structured VIN-decoded vehicle fields (with a

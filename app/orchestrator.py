@@ -29,6 +29,13 @@ class OptimusResearchOrchestrator:
         self._estimate = EstimateService(settings)
 
     async def estimate_job(self, request: EstimateRequest) -> EstimateResponse:
+        # The AI research path requires a location (parts availability / store
+        # distance depend on it). `EstimateRequest.location` is optional only so
+        # the deterministic Job Compiler release path can build a location-less
+        # estimate without going through this orchestrator; that path never
+        # calls estimate_job. Guard defensively.
+        if request.location is None:
+            raise ValueError("An estimate location is required for AI research.")
         location_task = asyncio.create_task(self._location.resolve(request.location))
         vehicle_task = asyncio.create_task(self._vin.decode(request.vehicle))
         location, vehicle = await asyncio.gather(location_task, vehicle_task)

@@ -1811,6 +1811,17 @@ class JobCompilation(Base):
     superseded_by_id: Mapped[int | None] = mapped_column(
         ForeignKey("job_compilations.id", ondelete="SET NULL"), nullable=True
     )
+    # Canonical release bridge (/goal): the estimate this compilation was
+    # released into, if any. `released` (already present) flips true on release;
+    # the FK provides idempotency + traceability. SET NULL so deleting the
+    # estimate never cascades away the compilation/audit history.
+    released_estimate_id: Mapped[int | None] = mapped_column(
+        ForeignKey("estimates.id", ondelete="SET NULL"), nullable=True
+    )
+    released_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    released_by_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("user_accounts.id", ondelete="SET NULL"), nullable=True
+    )
     created_by_user_id: Mapped[int | None] = mapped_column(
         ForeignKey("user_accounts.id", ondelete="SET NULL"), nullable=True
     )
@@ -1829,7 +1840,7 @@ class JobCompilationEvent(Base):
     __tablename__ = "job_compilation_events"
     __table_args__ = (
         CheckConstraint(
-            "event_type IN ('compiled', 'recompiled', 'superseded')",
+            "event_type IN ('compiled', 'recompiled', 'superseded', 'released')",
             name="ck_job_compilation_events_type",
         ),
         CheckConstraint(
