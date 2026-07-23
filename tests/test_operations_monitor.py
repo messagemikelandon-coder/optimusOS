@@ -256,3 +256,36 @@ def test_ok_and_unknown_never_emit() -> None:
     service.reset()
     _get(service, clock, _Collector(used_percent=None), emit, ttl=1.0)  # unknown
     assert emit.statuses == []
+
+
+# --- peek_snapshot: reuse without ever collecting (Phase 2B) -------------------
+
+
+def test_peek_returns_none_before_any_collection() -> None:
+    service = StorageObservabilityService()
+    clock = _Clock()
+    # Nothing has been collected, so peek must return None -- never triggering a
+    # collection of its own.
+    assert service.peek_snapshot(monotonic=clock.monotonic) is None
+
+
+def test_peek_returns_cached_snapshot_without_collecting() -> None:
+    service = StorageObservabilityService()
+    clock, collect = _Clock(), _Collector(used_percent=42.0)
+    _get(service, clock, collect, _noop_emit)  # one real collection populates cache
+    assert collect.count == 1
+    clock.advance(5.0)
+    peeked = service.peek_snapshot(monotonic=clock.monotonic)
+    assert peeked is not None
+    assert peeked.snapshot.disk.used_percent == 42.0
+    assert peeked.age_seconds == 5.0
+    # peek must never launch a collection.
+    assert collect.count == 1
+
+
+def test_peek_after_reset_returns_none() -> None:
+    service = StorageObservabilityService()
+    clock, collect = _Clock(), _Collector(used_percent=42.0)
+    _get(service, clock, collect, _noop_emit)
+    service.reset()
+    assert service.peek_snapshot(monotonic=clock.monotonic) is None

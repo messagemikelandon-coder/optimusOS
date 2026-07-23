@@ -110,6 +110,28 @@ class Settings(BaseSettings):
     storage_snapshot_ttl_seconds: int = Field(default=30, ge=1, le=3600)
     storage_warning_cooldown_seconds: int = Field(default=300, ge=0, le=86_400)
     max_operations_storage_requests_per_minute: int = Field(default=30, ge=1, le=240)
+    # Phase 2B: bounded runtime observability for GET /api/operations/summary.
+    # The background worker refreshes `worker_heartbeat_redis_key` every
+    # `worker_heartbeat_interval_seconds` with a `worker_heartbeat_ttl_seconds`
+    # expiry (validated >= 2x interval so a live worker's key survives across
+    # beats even with dependency-probe latency in the loop). The value stored is
+    # a single epoch second -- never job/customer
+    # data. `worker_queue_redis_key` is EMPTY by default: there is no application
+    # work queue today (ADR-014 records a future queue would be Postgres
+    # SKIP LOCKED, not Redis), so the summary reports the queue as
+    # "not_configured" and never touches Redis for it unless an operator sets a
+    # real Redis list key here. The runtime snapshot is served from a TTL cache
+    # with single-flight collection (one probe/read pass per window at most),
+    # the degraded reliability warning is throttled by cooldown, and the
+    # endpoint is additionally rate-limited per client.
+    worker_heartbeat_redis_key: str = "optimus:worker:heartbeat"
+    worker_heartbeat_interval_seconds: int = Field(default=30, ge=5, le=3600)
+    worker_heartbeat_ttl_seconds: int = Field(default=150, ge=10, le=86_400)
+    worker_queue_redis_key: str = ""
+    runtime_snapshot_ttl_seconds: int = Field(default=15, ge=1, le=3600)
+    dependency_probe_timeout_seconds: float = Field(default=1.0, ge=0.1, le=10.0)
+    runtime_warning_cooldown_seconds: int = Field(default=300, ge=0, le=86_400)
+    max_operations_summary_requests_per_minute: int = Field(default=30, ge=1, le=240)
     session_ttl_hours: int = Field(default=12, ge=1, le=168)
     frontend_origin: str = "http://127.0.0.1:5173"
     session_cookie_name: str = "optimus_session"
@@ -216,6 +238,25 @@ class Settings(BaseSettings):
         if self.disk_warning_percent > self.disk_critical_percent:
             raise ValueError(
                 "DISK_WARNING_PERCENT must be less than or equal to DISK_CRITICAL_PERCENT"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _validate_worker_heartbeat(self) -> Settings:
+        # The heartbeat key's TTL must comfortably outlast the write interval,
+        # or a healthy worker's key expires between beats and the summary reports
+        # a live worker as "missing" (a false degraded signal). The real gap
+        # between two writes is `interval` PLUS the worker loop's per-cycle
+        # overhead (two TCP dependency probes + the write), so `ttl == interval`
+        # is not enough. Requiring `ttl >= 2 * interval` guarantees no lapse for
+        # every accepted config: the healthy gap (interval + a few seconds of
+        # probe latency) is strictly below 2*interval whenever interval exceeds
+        # that overhead, which holds across the allowed interval range (>= 5s).
+        if self.worker_heartbeat_ttl_seconds < 2 * self.worker_heartbeat_interval_seconds:
+            raise ValueError(
+                "WORKER_HEARTBEAT_TTL_SECONDS must be at least twice "
+                "WORKER_HEARTBEAT_INTERVAL_SECONDS (so a healthy worker's key "
+                "survives across beats, absorbing dependency-probe latency)"
             )
         return self
 

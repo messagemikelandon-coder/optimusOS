@@ -76,6 +76,23 @@ class StorageObservabilityService:
             self._last_emitted_status = None
             self._last_emit_monotonic = None
 
+    def peek_snapshot(self, *, monotonic: Callable[[], float]) -> BoundedSnapshot | None:
+        """Return the currently-cached snapshot WITHOUT ever collecting. Used by
+        the Phase 2B operational summary to reuse the Phase 2A storage snapshot:
+        it must never launch a Docker subprocess of its own, so it reads only
+        what the dedicated ``/api/operations/storage`` endpoint has already
+        collected. Returns ``None`` when nothing has been collected yet. This
+        labels an existing snapshot ``CACHED`` and reports its age; the caller
+        supplies no TTL, so any staleness judgment is left to the caller."""
+        now = monotonic()
+        with self._state_lock:
+            snapshot = self._snapshot
+            collected_mono = self._collected_at_monotonic
+            collected_wall = self._collected_at_wall
+        if snapshot is None or collected_mono is None or collected_wall is None:
+            return None
+        return BoundedSnapshot(snapshot, Freshness.CACHED, collected_wall, now - collected_mono)
+
     def get_snapshot(
         self,
         *,

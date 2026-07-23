@@ -77,6 +77,7 @@ from app.auth import (
 from app.auth import (
     get_current_auth_context as get_current_auth_context,
 )
+from app.capability_metrics import capability_metrics
 from app.capability_store import CapabilityStoreError, resolve_capabilities
 from app.config import Settings, get_settings
 from app.customer_history_store import get_customer_history
@@ -179,6 +180,7 @@ from app.models import (
     AuthUser,
     AvailabilityResponse,
     CapabilitiesRead,
+    CapabilityObserveCountersRead,
     ChatRequest,
     ChatResponse,
     ConcurrencyProbeResponse,
@@ -189,6 +191,7 @@ from app.models import (
     CustomerRead,
     CustomerUpdate,
     DashboardSummaryResponse,
+    DependencyStatusRead,
     DiagnosticFindingArchiveResponse,
     DiagnosticFindingCreate,
     DiagnosticFindingEventsResponse,
@@ -242,6 +245,7 @@ from app.models import (
     ModeTransitionPreview,
     ModeTransitionPreviewRequest,
     ModeTransitionResult,
+    OperationsSummaryRead,
     PartAllocationAllocateRequest,
     PartAllocationCreate,
     PartAllocationEventsResponse,
@@ -261,7 +265,10 @@ from app.models import (
     PurchaseOrderReceiptsResponse,
     PurchaseOrderReceiveRequest,
     PurchaseOrderStatus,
+    QueueConditionRead,
+    RequestTrafficRead,
     ResolvedLocation,
+    RouteTrafficRead,
     ShopInvitationAccept,
     ShopInvitationAcceptResponse,
     ShopInvitationCreate,
@@ -269,6 +276,7 @@ from app.models import (
     ShopMemberRead,
     ShopSignupRequest,
     StorageObservabilityRead,
+    StorageSummaryRead,
     SubscribeRequest,
     SubscriptionEventsResponse,
     SubscriptionRead,
@@ -284,6 +292,7 @@ from app.models import (
     VehicleUpdate,
     VendorPurchasingReportResponse,
     VerifyEmailRequest,
+    WorkerHeartbeatRead,
     WorkflowGapCreate,
     WorkflowGapEventsResponse,
     WorkflowGapListResponse,
@@ -341,6 +350,12 @@ from app.report_store import (
     get_technician_time_report,
     get_vendor_purchasing_report,
     get_work_order_cycle_time_report,
+)
+from app.runtime_metrics import request_metrics
+from app.runtime_monitor import (
+    RuntimeSignals,
+    collect_runtime_signals,
+    runtime_service,
 )
 from app.scheduling_store import (
     SchedulingNotFoundError,
@@ -645,6 +660,28 @@ async def enforce_operations_storage_rate_limit(request: Request, settings: Sett
         )
         raise HTTPException(
             status_code=429, detail="Too many storage-status requests. Try again shortly."
+        ) from exc
+
+
+def get_operations_summary_rate_limiter(settings: Settings) -> RateLimiter:
+    return _rate_limiters.get(
+        "operations-summary",
+        redis_url=settings.redis_url,
+        limit=settings.max_operations_summary_requests_per_minute,
+    )
+
+
+async def enforce_operations_summary_rate_limit(request: Request, settings: Settings) -> None:
+    client_host = request.client.host if request.client else "unknown"
+    client_key = f"operations-summary:{client_host}"
+    try:
+        await get_operations_summary_rate_limiter(settings).check(client_key)
+    except RateLimitExceeded as exc:
+        log_security_event(
+            logger, SecurityEventType.RATE_LIMIT_EXCEEDED, request=request, limit_key=client_key
+        )
+        raise HTTPException(
+            status_code=429, detail="Too many operations-summary requests. Try again shortly."
         ) from exc
 
 
@@ -1779,6 +1816,142 @@ async def get_storage_observability(
             warning_percent=settings.disk_warning_percent,
             critical_percent=settings.disk_critical_percent,
         ),
+    )
+
+
+@app.get("/api/operations/summary", response_model=OperationsSummaryRead)
+async def get_operations_summary(
+    request: Request,
+    response: Response,
+    settings: SettingsDep,
+    auth: SupportAuthContextDep,
+) -> OperationsSummaryRead:
+    """Platform-support-only, read-only, bounded operational summary for the
+    running application process: request traffic/latency (from the in-process
+    metrics registry), Postgres/Redis reachability, background-worker heartbeat,
+    an optional Redis work-queue condition (``not_configured`` by default -- no
+    application queue exists today), OBSERVE-only capability-decision counters,
+    and the Phase 2A storage snapshot *reused from its cache* (this endpoint
+    never launches a Docker subprocess).
+
+    Bounded like the storage endpoint: rate-limited, and the dependency/worker/
+    queue signals are served from a TTL cache with single-flight collection, so
+    at most one probe/Redis-read pass runs per TTL window regardless of request
+    volume. Every field is a non-sensitive aggregate (counts, latencies, ages,
+    fixed enum statuses, static route templates) -- never a raw path, URL, id,
+    username, token, or payload -- and ``Cache-Control: no-store`` is set.
+    Support-only via ``require_support_context``: an impersonated-owner session
+    has role ``owner`` and is rejected, so impersonation cannot reach this
+    platform-infrastructure surface."""
+    await enforce_operations_summary_rate_limit(request, settings)
+
+    def _emit(severity: str, signals: RuntimeSignals) -> None:
+        # Operational reliability warning (not a security/audit event). Carries
+        # only fixed enum statuses and the support actor's role + internal id --
+        # never a URL, host, path, username, or email.
+        logger.warning(
+            "runtime dependency degraded",
+            extra={
+                "reliability_event": f"runtime.{severity}",
+                "postgres_status": signals.dependencies.postgres.value,
+                "redis_status": signals.dependencies.redis.value,
+                "worker_status": signals.worker.status.value,
+                "queue_status": signals.queue.status.value,
+                "actor_role": auth.user.role,
+                "actor_user_id": auth.user.id,
+            },
+        )
+
+    bounded = await asyncio.to_thread(
+        runtime_service.get_snapshot,
+        ttl_seconds=settings.runtime_snapshot_ttl_seconds,
+        cooldown_seconds=settings.runtime_warning_cooldown_seconds,
+        collect=lambda: collect_runtime_signals(
+            database_url=settings.database_url,
+            redis_url=settings.redis_url,
+            probe_timeout_seconds=settings.dependency_probe_timeout_seconds,
+            heartbeat_key=settings.worker_heartbeat_redis_key,
+            heartbeat_ttl_seconds=settings.worker_heartbeat_ttl_seconds,
+            queue_key=settings.worker_queue_redis_key,
+            now_epoch=time.time,
+        ),
+        emit=_emit,
+        monotonic=time.monotonic,
+        now_wall=lambda: datetime.now(UTC),
+    )
+
+    response.headers["Cache-Control"] = "no-store"
+
+    metrics = request_metrics.snapshot()
+    caps = capability_metrics.snapshot()
+    signals = bounded.signals
+
+    # Reuse the Phase 2A storage snapshot WITHOUT re-collecting -- peek returns
+    # only what /api/operations/storage has already cached, so the summary never
+    # launches a Docker subprocess of its own.
+    storage_peek = await asyncio.to_thread(storage_service.peek_snapshot, monotonic=time.monotonic)
+    if storage_peek is None:
+        storage_summary = StorageSummaryRead(
+            status="not_collected",
+            freshness=None,
+            collected_at=None,
+            age_seconds=None,
+            disk_status=None,
+            docker_availability=None,
+        )
+    else:
+        peek_disk = storage_peek.snapshot.disk
+        storage_summary = StorageSummaryRead(
+            status="collected",
+            freshness=storage_peek.freshness,
+            collected_at=storage_peek.collected_at,
+            age_seconds=round(storage_peek.age_seconds, 3),
+            disk_status=classify_disk_status(
+                peek_disk.used_percent,
+                warning_percent=settings.disk_warning_percent,
+                critical_percent=settings.disk_critical_percent,
+            ),
+            docker_availability=storage_peek.snapshot.docker.availability,
+        )
+
+    return OperationsSummaryRead(
+        scope="application_process",
+        generated_at=datetime.now(UTC),
+        freshness=bounded.freshness,
+        collected_at=bounded.collected_at,
+        age_seconds=round(bounded.age_seconds, 3),
+        requests=RequestTrafficRead(
+            uptime_seconds=metrics.uptime_seconds,
+            total_requests=metrics.total_requests,
+            status_classes=metrics.status_classes,
+            average_latency_ms=metrics.average_latency_ms,
+            max_latency_ms=metrics.max_latency_ms,
+            tracked_routes=metrics.tracked_routes,
+            label_overflow=metrics.label_overflow,
+            top_routes=[
+                RouteTrafficRead(
+                    method=route.method,
+                    route=route.route,
+                    count=route.count,
+                    error_count=route.error_count,
+                    average_latency_ms=route.average_latency_ms,
+                    max_latency_ms=route.max_latency_ms,
+                )
+                for route in metrics.top_routes
+            ],
+        ),
+        dependencies=DependencyStatusRead(
+            postgres=signals.dependencies.postgres,
+            redis=signals.dependencies.redis,
+        ),
+        worker=WorkerHeartbeatRead(
+            status=signals.worker.status,
+            age_seconds=signals.worker.age_seconds,
+            ttl_seconds=signals.worker.ttl_seconds,
+        ),
+        queue=QueueConditionRead(status=signals.queue.status, depth=signals.queue.depth),
+        capabilities=CapabilityObserveCountersRead(total=caps.total, decisions=caps.decisions),
+        storage=storage_summary,
     )
 
 

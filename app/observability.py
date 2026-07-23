@@ -10,6 +10,7 @@ from contextvars import ContextVar
 from fastapi import FastAPI, Request, Response
 
 from app.redaction import redact_secrets
+from app.runtime_metrics import UNMATCHED_TEMPLATE, request_metrics
 
 # Standard LogRecord attributes -- anything else on a record was passed via
 # logger.info(..., extra={...}) and belongs in the structured JSON output.
@@ -70,6 +71,16 @@ def configure_structured_logging(log_level: str) -> None:
     root_logger.handlers = [handler]
 
 
+def _route_template(request: Request) -> str:
+    """The matched route's template (e.g. ``/api/customers/{customer_id}``) for
+    bounded, non-sensitive request-metric labels. Uses the router-populated
+    ``route.path_format``, which contains only ``{param}`` placeholders -- never
+    an id, path value, or query string. An unmatched request (404, no route in
+    scope) is labelled with a fixed sentinel, never its raw path."""
+    template = getattr(request.scope.get("route"), "path_format", None)
+    return template if isinstance(template, str) and template else UNMATCHED_TEMPLATE
+
+
 def install_request_context_middleware(app: FastAPI, logger: logging.Logger) -> None:
     @app.middleware("http")
     async def request_context_middleware(
@@ -85,6 +96,7 @@ def install_request_context_middleware(app: FastAPI, logger: logging.Logger) -> 
             # block, while request_id_var is still set for this task --
             # resetting in a finally would run before this log line on the
             # success path below and silently drop the request_id from it.
+            duration_ms = round((time.monotonic() - start) * 1000, 2)
             logger.exception(
                 "Unhandled exception",
                 extra={
@@ -92,6 +104,16 @@ def install_request_context_middleware(app: FastAPI, logger: logging.Logger) -> 
                     "http_path": request.url.path,
                     "error_category": "unhandled_exception",
                 },
+            )
+            # Count the failed request as a 500 for traffic/latency metrics, then
+            # re-raise -- observability must never suppress the exception. record()
+            # is total (cannot raise), so this cannot turn the failure into a
+            # different error.
+            request_metrics.record(
+                method=request.method,
+                route_template=_route_template(request),
+                status_code=500,
+                duration_ms=duration_ms,
             )
             request_id_var.reset(token)
             raise
@@ -105,6 +127,12 @@ def install_request_context_middleware(app: FastAPI, logger: logging.Logger) -> 
                 "http_status_code": response.status_code,
                 "duration_ms": duration_ms,
             },
+        )
+        request_metrics.record(
+            method=request.method,
+            route_template=_route_template(request),
+            status_code=response.status_code,
+            duration_ms=duration_ms,
         )
         request_id_var.reset(token)
         return response

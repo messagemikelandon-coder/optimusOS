@@ -4,8 +4,8 @@ Purpose: the Phase 6 Part H deliverable for production monitoring — what Optim
 Information owner: repository maintainers and the owner responsible for production infrastructure decisions.
 Read when: before any production deployment decision; when diagnosing a real outage; when choosing an external monitoring/alerting service.
 Update when: an external monitoring service is actually configured, a new health signal is added to `/health`/`/ready`, or a disk-space/alerting gap is closed.
-Last verified date: 2026-07-22.
-Relevant sources: `app/main.py` (`/health`, `/ready`, `/api/operations/storage`), `app/operations_monitor.py`, `app/storage_monitor.py`, `app/observability.py`, `app/security_events.py`, `docker-compose.yml`, `docs/context/RELEASE_CHECKLIST.md`.
+Last verified date: 2026-07-23.
+Relevant sources: `app/main.py` (`/health`, `/ready`, `/api/operations/storage`, `/api/operations/summary`), `app/operations_monitor.py`, `app/storage_monitor.py`, `app/runtime_monitor.py`, `app/runtime_metrics.py`, `app/capability_metrics.py`, `app/observability.py`, `app/security_events.py`, `scripts/optimus_worker.py`, `docker-compose.yml`, `docs/context/RELEASE_CHECKLIST.md`.
 
 ## Status today: what exists vs. what's active
 
@@ -19,7 +19,8 @@ Relevant sources: `app/main.py` (`/health`, `/ready`, `/api/operations/storage`)
 - No external uptime/health-check service is configured against `/health` or `/ready` on any real deployment. Nothing currently pages anyone if the app goes down.
 - No log aggregation destination is configured. Structured JSON logs go to stdout (captured by `docker compose logs` locally, or whatever the deployment host does with container stdout) — there is no shipped-to-a-dashboard pipeline today.
 - Disk/Docker-storage *visibility* now exists in-app as a read-only endpoint (Phase 2A — `GET /api/operations/storage`, Section 4), but nothing yet *watches* it: there is no scheduler polling it and no alert on its threshold events, so a full disk is now inspectable on demand but still not automatically detected. Note also the container-visibility limitation in Section 4.
-- No alerting (email/SMS/Slack/PagerDuty/etc.) is wired to any of the above. A `"degraded"` `/ready` response or a logged `security_event` today is only visible to someone actively looking.
+- A consolidated read-only *runtime* summary now exists in-app (Phase 2B — `GET /api/operations/summary`, Section 6): request traffic/latency, Postgres/Redis reachability, background-worker heartbeat, an (off-by-default) work-queue condition, capability-observe counters, and the reused Phase 2A storage snapshot. Like the storage endpoint it is **pull-only** — a support operator can inspect it on demand, but nothing polls it and no alert fires on a degraded value.
+- No alerting (email/SMS/Slack/PagerDuty/etc.) is wired to any of the above. A `"degraded"` `/ready` response, a logged `security_event`, or a `reliability_event` today is only visible to someone actively looking.
 
 ## Required monitoring surface, and how to close each gap
 
@@ -62,6 +63,33 @@ Relevant sources: `app/main.py` (`/health`, `/ready`, `/api/operations/storage`)
 
 ### 5. Database health
 **Partially real** — `/ready`'s Postgres check confirms real TCP reachability and a real schema-compatibility comparison, which catches "Postgres is down" and "the database schema doesn't match this app version" (both real, previously-tested failure modes — see `app/migration_compat.py` and its test suite). **Not covered**: connection-pool exhaustion, replication lag (not applicable today, single-instance Postgres), or slow-query buildup. None of these have been a real problem at this app's current single-shop scale; revisit if usage grows enough to make them plausible.
+
+### 6. Runtime observability summary (Phase 2B)
+
+**A read-only, bounded, in-app *process-visibility* summary exists. Like Section 4 it is NOT production host monitoring, and it is not wired to any alert.**
+
+`GET /api/operations/summary` is **platform-support-only** (`require_support_context`; same gate and rejections as Section 4 — owner/manager/technician/suspended/unauthenticated/impersonated-owner cannot reach it). It consolidates, on demand, six non-sensitive signals about the running application process:
+
+- **Request traffic/latency** — from an in-process metrics registry (`app/runtime_metrics.py`) the request-context middleware feeds one record per request: process uptime, total requests, counts by status class (2xx/3xx/4xx/5xx/…), average and max latency, and a bounded top-N per-route breakdown. Route labels are the **route template** (`/api/customers/{customer_id}`) — never a concrete path or id — and label cardinality is capped (overflow folds into a single `<other>` bucket), so this cannot grow without bound or leak a path/PII.
+- **Dependency status** — Postgres and Redis TCP reachability, via the same fail-safe probe `/ready` uses (`app/net.py`), reported as a fixed `reachable`/`unreachable` enum (never a URL).
+- **Worker heartbeat** — the background worker (`scripts/optimus_worker.py`) now refreshes a single fixed Redis key (`WORKER_HEARTBEAT_REDIS_KEY`) each loop with a bounded TTL (`WORKER_HEARTBEAT_TTL_SECONDS`, validated ≥ 2× `WORKER_HEARTBEAT_INTERVAL_SECONDS`); the value is a single epoch second, never job/customer data. The summary reads it and reports `alive`/`stale`/`missing`/`unknown` plus age.
+- **Work-queue condition** — **off by default.** There is no application work queue today (ADR-014 records that any future queue would be a Postgres `SKIP LOCKED` queue, **not** Redis), so with `WORKER_QUEUE_REDIS_KEY` empty this reports `not_configured` and never touches Redis for a queue. If an operator ever points it at a real Redis list, it is read with a single bounded `LLEN` and reported as `idle`/`backlog`/`unknown` (depth only).
+- **Capability-observe counters** — OBSERVE-only cumulative `would_allow`/`would_deny`/`resolution_error` counts (`app/capability_metrics.py`), the same signal the per-request `authz.capability_observed` event carries, rolled up in-process. Carries **no** enforcement semantics — Bays stays OBSERVE-only.
+- **Storage** — the Phase 2A storage snapshot **reused from its cache** (`peek`, never re-collected): this endpoint never launches a `docker system df`. Reports `collected`/`not_collected`, freshness, disk status, and Docker availability.
+
+**Bounded collection.** The dependency/worker/queue signals are served from a TTL cache with single-flight refresh (`RUNTIME_SNAPSHOT_TTL_SECONDS`, default 15), so at most one probe/Redis-read pass runs per window regardless of request volume; dependency probes use `DEPENDENCY_PROBE_TIMEOUT_SECONDS` (default 1.0). The request-metrics and capability counters are read from cheap in-process registries. The endpoint is rate-limited (`MAX_OPERATIONS_SUMMARY_REQUESTS_PER_MINUTE`, default 30, per client) and sets `Cache-Control: no-store`.
+
+**Warning signal (throttled).** On a fresh collection that is *degraded* (a core dependency unreachable, or the worker `missing`/`stale`) one structured log line is emitted (`reliability_event: runtime.degraded`) carrying only fixed enum statuses and the support actor's role and internal id — never a URL, host, path, username, or email. It is throttled on transition or `RUNTIME_WARNING_COOLDOWN_SECONDS` (default 300), so repeated requests in the same state do not amplify.
+
+**Behavior guarantees:** strictly read-only and additive. Every field is a non-sensitive aggregate (counts, latencies, ages, fixed enum statuses, static route templates). Every dependency/Redis boundary fails safe — an unreachable Postgres/Redis, a missing/malformed heartbeat, or an unreadable queue degrades to a fixed status, never a raised exception and never a leaked value. It performs no enforcement, no mutation, and no host/Docker access.
+
+**This endpoint reports only what the application process (and its worker) can see — it does NOT monitor the production host,** the same boundary as Section 4. The worker heartbeat additionally depends on Redis being reachable from both the worker and the backend; a `unknown` heartbeat means "Redis unreadable from here," not necessarily "worker down."
+
+**Note — worker responsibility vs. the earlier removal evaluation.** `docs/architecture/PHASE2-READINESS.md` §2A (an *evaluation*, never executed) recommended removing the worker as a proven no-op. Phase 2B instead gives the still-present worker a small, real, bounded responsibility (the heartbeat). That is a deliberate, owner-instructed choice: if the worker is later removed, the heartbeat write goes with it and the summary simply reports `missing`/`unknown` (fail-safe) until another heartbeat source exists. The two tracks are reconciled here so neither silently contradicts the other.
+
+**Rollback:** additive and revert-safe. A `git revert` of the Phase 2B commit removes the `/api/operations/summary` route, `app/runtime_monitor.py` / `app/runtime_metrics.py` / `app/capability_metrics.py`, the middleware metric-recording and the capability-counter increment (both behavior-neutral), the worker heartbeat write, and the new settings. No migration, no schema, no data, and no change to any existing route's behavior; the OpenAPI change is purely additive (one new GET).
+
+**Open, needs an owner decision**: a consumer that actually *watches* this summary (a scheduled poll + alert on a degraded dependency/worker, or shipping the `runtime.degraded` `reliability_event` to a log-based alert). Pull-only until then.
 
 ## What "before any production deployment" requires, restated plainly
 

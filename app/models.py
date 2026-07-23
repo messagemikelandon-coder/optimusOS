@@ -15,6 +15,15 @@ from pydantic import (
     model_validator,
 )
 
+# Phase 2B runtime-observability enums reused as response-model field types.
+# app.runtime_monitor is a leaf (imports only app.net / app.storage_monitor /
+# redis), so this import introduces no cycle.
+from app.runtime_monitor import (
+    DependencyStatus,
+    QueueStatus,
+    WorkerHeartbeatStatus,
+)
+
 # Phase 2A storage-observability enums/category type reused as response-model
 # field types (keeps the OpenAPI schema and the collector in one vocabulary).
 # app.storage_monitor is a stdlib-only leaf, so this import introduces no cycle.
@@ -3180,3 +3189,90 @@ class StorageObservabilityRead(BaseModel):
     disk: DiskUsageRead
     docker: DockerStorageRead
     thresholds: DiskThresholdsRead
+
+
+# --- Phase 2B: bounded runtime observability ---------------------------------
+# Response models for GET /api/operations/summary. Every field is an aggregate,
+# non-sensitive operational metric: counts, byte/latency aggregates, ages,
+# fixed enum statuses, and static route templates ({param} placeholders only) --
+# never a raw path/URL, id, username, email, shop/customer name, token, cookie,
+# raw exception, SQL, env value, or any Docker/queue payload.
+
+
+class RouteTrafficRead(BaseModel):
+    # `route` is a static route template (e.g. "/api/customers/{customer_id}")
+    # or a fixed sentinel ("<unmatched>"/"<other>") -- never a concrete path.
+    method: str
+    route: str
+    count: int
+    error_count: int
+    average_latency_ms: float
+    max_latency_ms: float
+
+
+class RequestTrafficRead(BaseModel):
+    uptime_seconds: float
+    total_requests: int
+    # Fixed status-class keys: informational/success/redirect/client_error/
+    # server_error/other -> cumulative counts.
+    status_classes: dict[str, int]
+    average_latency_ms: float
+    max_latency_ms: float
+    tracked_routes: int
+    label_overflow: bool
+    top_routes: list[RouteTrafficRead]
+
+
+class DependencyStatusRead(BaseModel):
+    postgres: DependencyStatus
+    redis: DependencyStatus
+
+
+class WorkerHeartbeatRead(BaseModel):
+    status: WorkerHeartbeatStatus
+    # None unless status is alive/stale.
+    age_seconds: float | None
+    ttl_seconds: int
+
+
+class QueueConditionRead(BaseModel):
+    # "not_configured" (the default -- no application work queue exists today),
+    # "idle"/"backlog" (a configured Redis list was read), or "unknown".
+    status: QueueStatus
+    depth: int | None
+
+
+class CapabilityObserveCountersRead(BaseModel):
+    # OBSERVE-only cumulative decision counts; carries no enforcement semantics.
+    total: int
+    decisions: dict[str, int]
+
+
+class StorageSummaryRead(BaseModel):
+    # Reuses the Phase 2A storage snapshot WITHOUT re-collecting. "not_collected"
+    # means the dedicated /api/operations/storage endpoint has not populated the
+    # cache yet (the summary never launches a Docker subprocess itself).
+    status: Literal["collected", "not_collected"]
+    freshness: Freshness | None
+    collected_at: datetime | None
+    age_seconds: float | None
+    disk_status: DiskThresholdStatus | None
+    docker_availability: DockerAvailability | None
+
+
+class OperationsSummaryRead(BaseModel):
+    # Fixed scope label: this summarizes the running application process, not the
+    # production host.
+    scope: str
+    generated_at: datetime
+    # Bounded-collection metadata for the runtime signals (dependencies/worker/
+    # queue), which are served from a TTL cache with single-flight collection.
+    freshness: Freshness
+    collected_at: datetime
+    age_seconds: float
+    requests: RequestTrafficRead
+    dependencies: DependencyStatusRead
+    worker: WorkerHeartbeatRead
+    queue: QueueConditionRead
+    capabilities: CapabilityObserveCountersRead
+    storage: StorageSummaryRead

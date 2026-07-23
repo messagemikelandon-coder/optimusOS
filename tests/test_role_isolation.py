@@ -149,6 +149,11 @@ _SUPPORT_ROUTES = {
     # owner/manager/technician). It reads no shop data -- host/Docker
     # aggregates only.
     ("GET", "/api/operations/storage"),
+    # Phase 2B: the bounded runtime observability summary (request traffic,
+    # dependency/worker/queue status, capability-observe counters, reused
+    # storage snapshot) is the same platform-infrastructure category -- reads no
+    # shop data -- so it is gated support-only.
+    ("GET", "/api/operations/summary"),
 }
 
 
