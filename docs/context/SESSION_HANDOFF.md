@@ -41,6 +41,15 @@ Out of scope (deliberately not done): making `vehicles.customer_id` nullable (fo
 - **Real Postgres 16 round-trip verified locally** (`tests/e2e/test_intake_vehicle_migration.py`): 037→038 adds the seven columns, downgrade removes them, re-upgrade restores.
 - `tests/test_role_isolation.py` green (intake routes unchanged, owner/manager-gated).
 
+## Evidence (key acceptance tests, `tests/test_intake_bridge_api.py`)
+
+- Draft holds VIN-decoded vehicle before any customer/vehicle exists: `test_draft_holds_vin_decoded_vehicle_before_customer` (asserts zero `Customer`/`Vehicle` rows created by drafting).
+- Conversion defaults the vehicle from the draft: `test_convert_uses_stored_vehicle_fields`; payload overrides it: `test_convert_payload_overrides_draft_vehicle`; customer-only when no vehicle: `test_customer_only_conversion_when_no_vehicle`.
+- Attach to an existing customer (no new customer row): `test_convert_attaches_to_existing_customer`. Cross-shop customer rejected (422, draft untouched): `test_convert_rejects_cross_shop_customer`. Archived customer rejected (409): `test_convert_rejects_archived_customer`.
+- No orphan on duplicate VIN (409, customer count unchanged): `test_convert_rejects_duplicate_vin_without_orphaning_customer`. Concurrent VIN-race → 409 + rollback: `test_convert_vin_race_maps_to_conflict_without_orphan`. Double-conversion blocked (409): `test_double_conversion_is_rejected`.
+- Draft VIN validation: invalid character and partial-length both rejected at draft time: `test_draft_rejects_invalid_vin`, `test_draft_rejects_partial_vin`. Draft vehicle-field round-trip: `test_update_draft_vehicle_fields_round_trip`.
+- Migration: `tests/e2e/test_intake_vehicle_migration.py` proves 037→038 adds the seven columns, downgrade removes them, and re-upgrade restores, on real Postgres 16.
+
 ## Reviews (on-branch)
 
 - **Security (optimus-security-reviewer): PASS** on cross-tenant isolation of the attach-to-existing-customer path, authorization gating, and orphan/duplicate-VIN/silent-merge prevention. No Critical/High. Low nits (optional): cross-shop/missing `customer_id` returns 422 rather than 404 (accepted — it's invalid conversion input, and the message is identical for missing-vs-cross-shop so there's no enumeration signal); a pre-existing VIN concurrency race surfaces as 503.
