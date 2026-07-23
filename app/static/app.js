@@ -77,6 +77,7 @@ const state = {
     vehicleFilterId: null,
     severityFilter: "",
     archivedOnly: false,
+    compileResult: null,
   },
   inspections: {
     items: [],
@@ -5107,6 +5108,193 @@ function renderDiagnosticsDetail(finding = null) {
     ${finding.conclusion ? `<div class="customer-detail-notes"><span>Conclusion (final diagnosis)${finding.diagnosis_unverified ? ' — <em class="diag-unverified">Unverified working theory</em>' : ""}</span><p>${escapeHtml(finding.conclusion)}</p></div>` : ""}`;
 }
 
+function compileMoney(value) {
+  return Number(value || 0).toFixed(2);
+}
+
+function addCompileServiceRow(title = "", hours = "") {
+  const container = $("compile-services");
+  if (!container) return;
+  const row = document.createElement("div");
+  row.className = "compile-service-row form-grid two";
+  const titleLabel = document.createElement("label");
+  titleLabel.className = "field";
+  titleLabel.textContent = "Service ";
+  const titleInput = document.createElement("input");
+  titleInput.className = "compile-service-title";
+  titleInput.maxLength = 200;
+  titleInput.placeholder = "e.g. Replace front brake pads";
+  titleInput.value = title;
+  titleLabel.appendChild(titleInput);
+  const hoursLabel = document.createElement("label");
+  hoursLabel.className = "field";
+  hoursLabel.textContent = "Labor hours ";
+  const hoursInput = document.createElement("input");
+  hoursInput.className = "compile-service-hours";
+  hoursInput.type = "number";
+  hoursInput.min = "0.01";
+  hoursInput.step = "0.05";
+  hoursInput.value = hours;
+  hoursLabel.appendChild(hoursInput);
+  const remove = document.createElement("button");
+  remove.type = "button";
+  remove.className = "text-button compile-remove-service";
+  remove.textContent = "Remove";
+  remove.addEventListener("click", () => {
+    row.remove();
+    if (!$("compile-services").querySelector(".compile-service-row")) addCompileServiceRow();
+  });
+  row.append(titleLabel, hoursLabel, remove);
+  container.appendChild(row);
+}
+
+function renderCompiledJob(job) {
+  const target = $("compile-result");
+  if (!target) return;
+  if (!job) {
+    target.innerHTML = "";
+    return;
+  }
+  const laborRows = job.labor_lines
+    .map(
+      (line) =>
+        `<div><span>${escapeHtml(line.title)}</span><strong>${Number(line.labor_hours)} h · $${compileMoney(line.labor_total)}</strong></div>`,
+    )
+    .join("");
+  const partRows = job.part_lines.length
+    ? job.part_lines
+        .map(
+          (line) =>
+            `<div><span>${escapeHtml(line.description)} ×${Number(line.quantity)}</span><strong>$${compileMoney(line.extended_price)}</strong></div>`,
+        )
+        .join("")
+    : "<div><span>No parts on this job</span><strong>—</strong></div>";
+  const taskRows = job.tasks
+    .map((task) => `<li>${escapeHtml(task.title)} — ${Number(task.labor_hours)} h</li>`)
+    .join("");
+  target.innerHTML = `
+    <div class="customer-detail-header">
+      <strong>Compiled draft · revision ${Number(job.revision_number)}</strong>
+      <span>${job.released ? "Released" : "Draft (not sent)"}</span>
+    </div>
+    <div class="customer-detail-notes"><span>Labor</span>${laborRows}</div>
+    <div class="customer-detail-notes"><span>Parts (customer price)</span>${partRows}</div>
+    <div class="customer-detail-notes"><span>Work-order tasks</span><ol class="compile-task-list">${taskRows}</ol></div>
+    <div class="customer-detail-grid">
+      <div><span>Labor total</span><strong>$${compileMoney(job.totals.labor_total)}</strong></div>
+      <div><span>Parts subtotal</span><strong>$${compileMoney(job.totals.parts_subtotal)}</strong></div>
+      <div><span>Shop supplies</span><strong>$${compileMoney(job.totals.shop_supplies)}</strong></div>
+      <div><span>Parts tax</span><strong>$${compileMoney(job.totals.parts_tax)}</strong></div>
+      <div><span>Estimated total</span><strong>$${compileMoney(job.totals.estimated_total)}</strong></div>
+    </div>`;
+}
+
+async function loadDraftCompilation(findingId) {
+  try {
+    const response = await apiFetch(
+      `/api/job-compilations?finding_id=${findingId}&compilation_status=draft&page_size=1`,
+    );
+    const data = await readApiPayload(response);
+    if (!response.ok || !data) return;
+    const draft = data.items && data.items.length ? data.items[0] : null;
+    state.diagnostics.compileResult = draft;
+    renderCompiledJob(draft);
+  } catch (error) {
+    // A missing draft is not an error state; leave the result area empty.
+    renderCompiledJob(null);
+  }
+}
+
+function renderCompilePanel(finding = null) {
+  const panel = $("diagnostics-compile-panel");
+  if (!panel) return;
+  const canCompile = Boolean(finding) && Boolean(finding.conclusion) && !finding.is_archived && !isTechnicianSession();
+  panel.hidden = !finding || isTechnicianSession();
+  const form = $("diagnostics-compile-form");
+  const hint = $("diagnostics-compile-hint");
+  if (form) form.hidden = !canCompile;
+  if (hint) {
+    if (!finding) hint.textContent = "Select a finding with a recorded conclusion to compile it into a draft job.";
+    else if (finding.is_archived) hint.textContent = "Archived findings cannot be compiled.";
+    else if (!finding.conclusion) hint.textContent = "Record a conclusion (final diagnosis) on this finding before compiling a job.";
+    else hint.textContent = "Compile this diagnosis into a priced draft job. Deterministic — no AI, no automatic customer release.";
+  }
+  const container = $("compile-services");
+  if (container) container.innerHTML = "";
+  state.diagnostics.compileResult = null;
+  renderCompiledJob(null);
+  if (canCompile) {
+    addCompileServiceRow();
+    void loadDraftCompilation(finding.id);
+  }
+}
+
+function collectCompileServices() {
+  const rows = Array.from(document.querySelectorAll("#compile-services .compile-service-row"));
+  const services = [];
+  for (const row of rows) {
+    const title = row.querySelector(".compile-service-title").value.trim();
+    const hoursValue = row.querySelector(".compile-service-hours").value.trim();
+    if (!title && !hoursValue) continue;
+    if (!title) throw new Error("Every service needs a title.");
+    const hours = Number(hoursValue);
+    if (!Number.isFinite(hours) || hours <= 0) throw new Error("Every service needs labor hours greater than zero.");
+    services.push({ title, labor_hours: hours });
+  }
+  if (!services.length) throw new Error("Add at least one recommended service.");
+  return services;
+}
+
+async function submitCompileForm(event) {
+  event.preventDefault();
+  if (!await requireAuthenticated("login")) return;
+  const finding = state.diagnostics.selectedFinding;
+  if (!finding) {
+    showToast("Select a finding first.", "error");
+    return;
+  }
+  const submit = $("compile-submit");
+  let services;
+  try {
+    services = collectCompileServices();
+  } catch (error) {
+    showToast(error.message, "error");
+    return;
+  }
+  const laborRate = Number($("compile-labor-rate").value);
+  if (!Number.isFinite(laborRate) || laborRate <= 0) {
+    showToast("Enter a labor rate greater than zero.", "error");
+    return;
+  }
+  const shopSupplies = $("compile-shop-supplies").value.trim();
+  const partsTax = $("compile-parts-tax").value.trim();
+  const payload = {
+    labor_rate: laborRate,
+    services,
+    shop_supplies_percent: shopSupplies ? Number(shopSupplies) : null,
+    parts_tax_rate: partsTax ? Number(partsTax) : null,
+  };
+  submit.disabled = true;
+  submit.textContent = "Compiling…";
+  try {
+    const response = await apiFetch(`/api/diagnostic-findings/${finding.id}/compile-job`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const data = await readApiPayload(response);
+    if (!response.ok || !data) throw apiError(response, data, "Job compilation failed");
+    state.diagnostics.compileResult = data;
+    renderCompiledJob(data);
+    showToast(`Job compiled (revision ${data.revision_number}).`, "success");
+  } catch (error) {
+    showToast(`Job compilation failed: ${error.message}`, "error");
+  } finally {
+    submit.disabled = false;
+    submit.textContent = "Compile job";
+  }
+}
+
 async function selectDiagnosticFinding(findingId) {
   try {
     const response = await apiFetch(`/api/diagnostic-findings/${findingId}`);
@@ -5116,6 +5304,7 @@ async function selectDiagnosticFinding(findingId) {
     state.diagnostics.selectedFinding = data;
     renderDiagnosticsDetail(data);
     populateDiagnosticsForm(data);
+    renderCompilePanel(data);
     renderDiagnosticsList();
   } catch (error) {
     showToast(`Finding load failed: ${error.message}`, "error");
@@ -5176,6 +5365,7 @@ async function submitDiagnosticsForm(event) {
     state.diagnostics.selectedFinding = data;
     populateDiagnosticsForm(data);
     renderDiagnosticsDetail(data);
+    renderCompilePanel(data);
     state.diagnostics.page = 1;
     await loadDiagnostics();
     showToast(findingId ? "Finding updated." : "Finding created.", "success");
@@ -5198,6 +5388,7 @@ async function archiveSelectedDiagnosticFinding() {
     state.diagnostics.selectedFinding = null;
     populateDiagnosticsForm(null);
     renderDiagnosticsDetail(null);
+    renderCompilePanel(null);
     await loadDiagnostics();
     showToast("Finding archived.", "success");
   } catch (error) {
@@ -5211,12 +5402,15 @@ function initializeDiagnostics() {
     state.diagnostics.selectedFinding = null;
     populateDiagnosticsForm(null);
     renderDiagnosticsDetail(null);
+    renderCompilePanel(null);
     renderDiagnosticsList();
   });
   $("diagnostics-cancel").addEventListener("click", () => {
     populateDiagnosticsForm(state.diagnostics.selectedFinding);
   });
   $("diagnostics-form").addEventListener("submit", submitDiagnosticsForm);
+  $("diagnostics-compile-form").addEventListener("submit", submitCompileForm);
+  $("compile-add-service").addEventListener("click", () => addCompileServiceRow());
   $("diagnostics-archive").addEventListener("click", () => void archiveSelectedDiagnosticFinding());
   $("diagnostics-refresh").addEventListener("click", () => void loadDiagnostics());
   $("diagnostics-archived-only").addEventListener("change", () => {

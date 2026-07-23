@@ -480,6 +480,13 @@ button[disabled] { cursor: wait; opacity: .6; transform: none !important; }
 .diag-confidence-confirmed { color: var(--green, #4ade80); border-color: rgba(74,222,128,.4); }
 .diag-unverified { color: var(--amber, #fbbf24); font-style: italic; font-weight: 700; }
 
+/* Deterministic Job Compiler panel. */
+.diag-compile-hint { color: var(--muted, #94a3b8); font-size: 0.85rem; margin: 4px 0 12px; }
+.compile-service-row { align-items: end; margin-bottom: 10px; }
+.compile-service-row .compile-remove-service { align-self: center; }
+.compile-task-list { margin: 6px 0 0; padding-left: 18px; }
+.compile-task-list li { margin: 2px 0; }
+
 /* Compact severity/status chips shown on diagnostic-finding list rows for triage. */
 .diag-chip-row { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
 .diag-chip {

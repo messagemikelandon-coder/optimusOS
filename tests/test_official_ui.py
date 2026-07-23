@@ -252,6 +252,38 @@ def test_overview_dashboard_and_approval_queue_markup() -> None:
     assert ".gauge-ring" in css
 
 
+def test_job_compiler_ui_is_connected() -> None:
+    """The deterministic Job Compiler panel is wired into the diagnostics view:
+    its markup exists, is owner-gated, and app.js connects the compile form to
+    the POST /api/diagnostic-findings/{id}/compile-job endpoint and renders the
+    returned labor/parts/tasks/totals."""
+    html = (STATIC / "index.html").read_text(encoding="utf-8")
+    javascript = (STATIC / "app.js").read_text(encoding="utf-8")
+    css = (STATIC / "styles.css").read_text(encoding="utf-8")
+
+    assert 'id="diagnostics-compile-panel"' in html
+    # The compiler panel is owner/manager-only, matching the owner-gated route.
+    panel = html.split('id="diagnostics-compile-panel"', 1)[1][:400]
+    assert 'data-owner-only="true"' in panel
+    for element_id in (
+        "diagnostics-compile-form",
+        "compile-labor-rate",
+        "compile-services",
+        "compile-add-service",
+        "compile-submit",
+        "compile-result",
+    ):
+        assert f'id="{element_id}"' in html, element_id
+
+    assert "/compile-job" in javascript
+    assert "submitCompileForm" in javascript
+    assert "renderCompilePanel" in javascript
+    # The result rendering labels parts as customer price and never references
+    # supplier cost in the UI.
+    assert "unit_cost" not in javascript.split("renderCompiledJob", 1)[1][:1500]
+    assert ".compile-service-row" in css
+
+
 def test_ui_preserves_connected_workflows() -> None:
     html = (STATIC / "index.html").read_text(encoding="utf-8")
     javascript = (STATIC / "app.js").read_text(encoding="utf-8")

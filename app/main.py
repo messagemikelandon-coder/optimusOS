@@ -155,6 +155,15 @@ from app.invoice_store import (
     render_invoice_html,
     render_invoice_pdf,
 )
+from app.job_compiler import (
+    CompilableFindingNotFoundError,
+    JobCompilationNotFoundError,
+    JobCompilerError,
+    compile_job,
+    get_compiled_job,
+    list_compiled_job_events,
+    list_compiled_jobs,
+)
 from app.migration_compat import (
     SchemaCompatibility,
     check_schema_compatibility,
@@ -183,6 +192,9 @@ from app.models import (
     CapabilityObserveCountersRead,
     ChatRequest,
     ChatResponse,
+    CompiledJobEventsResponse,
+    CompiledJobListResponse,
+    CompiledJobRead,
     ConcurrencyProbeResponse,
     CustomerArchiveResponse,
     CustomerCreate,
@@ -238,6 +250,8 @@ from app.models import (
     InvoicePaymentVoidRequest,
     InvoiceRead,
     InvoiceStatus,
+    JobCompilationRequest,
+    JobCompilationStatus,
     LocationInput,
     ModeOnboardingCompleteRequest,
     ModeOnboardingResult,
@@ -3299,6 +3313,110 @@ async def list_diagnostic_finding_event_records(
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Diagnostic finding storage is unavailable.",
+        ) from exc
+
+
+@app.post("/api/diagnostic-findings/{finding_id}/compile-job", response_model=CompiledJobRead)
+async def compile_job_from_finding(
+    finding_id: int,
+    payload: JobCompilationRequest,
+    db: DbSessionDep,
+    auth: OwnerAuthContextDep,
+) -> CompiledJobRead:
+    """Deterministic Job Compiler (/goal Priority 1): compile an approved
+    diagnostic finding into a priced draft job (labor lines, part needs,
+    work-order tasks, totals). No OpenAI/paid call. Owner/manager only
+    (`OwnerAuthContextDep`). Idempotent; never sends, approves, orders parts,
+    alters customer records, or takes payment."""
+    try:
+        return await asyncio.to_thread(
+            compile_job, db=db, auth=auth, finding_id=finding_id, payload=payload
+        )
+    except CompilableFindingNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except JobCompilerError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Job compilation failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Job compilation storage is unavailable.",
+        ) from exc
+
+
+@app.get("/api/job-compilations", response_model=CompiledJobListResponse)
+async def list_job_compilation_records(
+    db: DbSessionDep,
+    settings: SettingsDep,
+    auth: OwnerAuthContextDep,
+    page: int = Query(default=1),
+    page_size: int = Query(default=20),
+    finding_id: Annotated[int | None, Query(ge=1)] = None,
+    compilation_status: Annotated[JobCompilationStatus | None, Query()] = None,
+    released: Annotated[bool | None, Query()] = None,
+) -> CompiledJobListResponse:
+    try:
+        return await asyncio.to_thread(
+            list_compiled_jobs,
+            db=db,
+            auth=auth,
+            settings=settings,
+            page=page,
+            page_size=page_size,
+            finding_id=finding_id,
+            status=compilation_status,
+            released=released,
+        )
+    except JobCompilerError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Job compilation listing failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Job compilation storage is unavailable.",
+        ) from exc
+
+
+@app.get("/api/job-compilations/{compilation_id}", response_model=CompiledJobRead)
+async def get_job_compilation_record(
+    compilation_id: int,
+    db: DbSessionDep,
+    auth: OwnerAuthContextDep,
+) -> CompiledJobRead:
+    try:
+        return await asyncio.to_thread(
+            get_compiled_job, db=db, auth=auth, compilation_id=compilation_id
+        )
+    except JobCompilationNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Job compilation retrieval failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Job compilation storage is unavailable.",
+        ) from exc
+
+
+@app.get(
+    "/api/job-compilations/{compilation_id}/events",
+    response_model=CompiledJobEventsResponse,
+)
+async def list_job_compilation_event_records(
+    compilation_id: int,
+    db: DbSessionDep,
+    auth: OwnerAuthContextDep,
+) -> CompiledJobEventsResponse:
+    try:
+        return await asyncio.to_thread(
+            list_compiled_job_events, db=db, auth=auth, compilation_id=compilation_id
+        )
+    except JobCompilationNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        logger.warning("Job compilation event listing failed due to storage error.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Job compilation storage is unavailable.",
         ) from exc
 
 
